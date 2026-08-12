@@ -28,10 +28,16 @@ gramps_db/**/*.sqlite
 gramps_db/**/*.db
 gramps_data/
 
+# 树访客凭据（含密码，勿提交）
+config/tree-api.json
+frontend/public/tree-api.json
+frontend/src/static/tree-api.json
+
 # Gramps 运行时缓存
 request_cache/
 persistent_cache/
 thumbnail_cache/
+indexdir/
 
 # Backups
 *.gramps

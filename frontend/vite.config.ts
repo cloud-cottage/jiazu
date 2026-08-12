@@ -17,7 +17,6 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000", // Gramps-Web 后端
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ""),
       },
     },
   },

@@ -3,16 +3,16 @@
     <view v-if="person" class="person-detail">
       <text class="name">{{ person.name }}</text>
 
-      <view class="info-row" v-if="isLiving">
+      <view class="info-row" v-if="isLivingPerson">
         <text class="living-badge">在世（信息已脱敏）</text>
       </view>
 
-      <view class="info-row" v-if="person.birth_date && !isLiving">
+      <view class="info-row" v-if="person.birth_date && !isLivingPerson">
         <text class="label">生</text>
         <text class="value">{{ person.birth_date }}</text>
       </view>
 
-      <view class="info-row" v-if="person.death_date && !isLiving">
+      <view class="info-row" v-if="person.death_date && !isLivingPerson">
         <text class="label">卒</text>
         <text class="value">{{ person.death_date }}</text>
       </view>
@@ -26,7 +26,7 @@
         </view>
       </view>
 
-      <view v-if="person.attributes && person.attributes.length" class="section">
+      <view v-if="externalRefs.length" class="section">
         <text class="section-title">关联信息</text>
         <view
           v-for="attr in externalRefs"
@@ -60,7 +60,7 @@ onLoad((options: any) => {
   handle.value = options?.handle || '';
 });
 
-const isLivingPerson = computed(() => person.value ? isLiving(person.value) : false);
+const isLivingPerson = computed(() => (person.value ? isLiving(person.value) : false));
 
 const externalRefs = computed(() => {
   if (!person.value?.attributes) return [];

@@ -1,7 +1,7 @@
 <template>
   <view class="container">
     <view class="hero">
-      <text class="title">{{ hallInfo?.title || '加载中...' }}</text>
+      <text class="title">{{ hallInfo?.display_title || '加载中...' }}</text>
       <text class="origin" v-if="hallInfo">堂号发源地：{{ hallInfo.origin }}</text>
       <text class="desc" v-if="hallInfo">{{ hallInfo.description }}</text>
     </view>
