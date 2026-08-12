@@ -149,7 +149,6 @@ const PINYIN_MAP: Record<string, string> = {
   '秦': 'qin',
   '江': 'jiang',
   '史': 'shi',
-  '顾': 'gu',
   '侯': 'hou',
   '邵': 'shao',
   '孟': 'meng',
