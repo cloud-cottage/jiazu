@@ -1,0 +1,24 @@
+/* 家族历史数字馆 — 主题色变量 */
+/* 主色调：古籍棕 */
+$primary: #8B4513;
+$primary-dark: #3E2723;
+$primary-light: #FFF8E1;
+
+/* 文字 */
+$text-primary: #333;
+$text-secondary: #555;
+$text-muted: #999;
+
+/* 背景 */
+$bg-page: #f8f8f8;
+$bg-card: #fff;
+
+/* 尺寸 */
+$radius: 12px;
+$spacing: 16px;
+
+/* uni-app 内置变量覆盖 */
+$uni-color-primary: #8B4513;
+$uni-color-success: #2E7D32;
+$uni-color-warning: #E65100;
+$uni-color-error: #C62828;

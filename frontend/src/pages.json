@@ -1,0 +1,83 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "家族历史数字馆"
+      }
+    },
+    {
+      "path": "pages/about/about",
+      "style": {
+        "navigationBarTitleText": "关于本站"
+      }
+    },
+    {
+      "path": "pages/hall/index",
+      "style": {
+        "navigationBarTitleText": "数字馆"
+      }
+    },
+    {
+      "path": "pages/person/detail",
+      "style": {
+        "navigationBarTitleText": "人物详情"
+      }
+    },
+    {
+      "path": "pages/pedigree/index",
+      "style": {
+        "navigationBarTitleText": "世系图谱"
+      }
+    },
+    {
+      "path": "pages/media/index",
+      "style": {
+        "navigationBarTitleText": "文献浏览"
+      }
+    },
+    {
+      "path": "pages/search/index",
+      "style": {
+        "navigationBarTitleText": "搜索"
+      }
+    }
+  ],
+  "subPackages": [
+    {
+      "root": "pages/special",
+      "pages": [
+        {
+          "path": "generation-poem/index",
+          "style": {
+            "navigationBarTitleText": "字辈检索"
+          }
+        },
+        {
+          "path": "migration-map/index",
+          "style": {
+            "navigationBarTitleText": "迁徙地图"
+          }
+        },
+        {
+          "path": "pdf-export/index",
+          "style": {
+            "navigationBarTitleText": "族谱PDF导出"
+          }
+        }
+      ]
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "家族历史数字馆",
+    "navigationBarBackgroundColor": "#F8F8F8",
+    "backgroundColor": "#F8F8F8"
+  },
+  "easycom": {
+    "autoscan": true,
+    "custom": {
+      "^u-(.*)": "@/components/u-$1/u-$1.vue"
+    }
+  }
+}

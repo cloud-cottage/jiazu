@@ -72,10 +72,10 @@ Unicode 十进制：该姓氏标准简体汉字十进制码点，用于唯一锁
 示例表
 表格
 汉字	拼音	Unicode 十进制	tree‑id	说明
-季	ji	23376	ji_23376_01	季氏‑苏南支
-季	ji	23376	ji_23376_02	季氏‑秦皇岛支
-纪	ji	32452	ji_32452_01	纪氏‑河北支
-顾	gu	39039	gu_39039_01	顾氏主支
+| 季	|ji	|23395	|ji_23395_01	|季氏‑苏南支|
+| 季	|ji	|23395	|ji_23395_02	|季氏‑秦皇岛支|
+| 纪	|ji	|32426	|ji_32426_01	|纪氏‑河北支|
+| 顾	|gu	|39038	|gu_39038_01	|顾氏主支|
 禁止：直接汉字、拼音不带码点、生僻异体字、空格、特殊符号。
 Gramps‑Web 配置开启GRAMPSWEB_MEDIA_PREFIX_TREE=True，媒体资源自动以 tree‑id 为 COS 顶层目录。
 4 元数据映射配置
@@ -84,17 +84,17 @@ Gramps‑Web 配置开启GRAMPSWEB_MEDIA_PREFIX_TREE=True，媒体资源自动�
 json
 {
   "ji.jiazutong.cn": {
-    "tree_id": "ji_23376_01",
-    "path_alias": "/ji_23376_01",
+    "tree_id": "ji_23395_01",
+    "path_alias": "/ji_23395_01",
     "surname_char": "季",
     "display_title": "季氏（苏南支）家族历史数字馆",
     "origin": "江苏苏州洞庭",
     "description": "苏州洞庭季氏支系家谱数字化，收录旧谱与迁徙史料",
     "enable_custom_domain": true
   },
-  "jiazutong.cn/ji_23376_02": {
-    "tree_id": "ji_23376_02",
-    "path_alias": "/ji_23376_02",
+  "jiazutong.cn/ji_23395_02": {
+    "tree_id": "ji_23395_02",
+    "path_alias": "/ji_23395_02",
     "surname_char": "季",
     "display_title": "季氏（秦皇岛闯关东支）家族历史数字馆",
     "origin": "山东迁徙河北秦皇岛",

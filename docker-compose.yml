@@ -1,0 +1,110 @@
+version: "3.8"
+
+# ============================================
+# 家族历史数字馆 (jiazu) — Docker Compose
+# Gramps-Web + Redis + Nginx
+# ============================================
+
+services:
+  # ---- Gramps-Web 家谱内核 ----
+  gramps-web:
+    image: grampsweb/grampsweb:latest
+    container_name: jiazu-gramps
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:5000"          # 仅本地回环，Nginx 反向代理对外
+    environment:
+      # 多语言 / 编码
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+
+      # 多 Tree 模式
+      - GRAMPSWEB_TREE=*                # 允许访问全部 tree
+      - GRAMPSWEB_MEDIA_PREFIX_TREE=true # 媒体按 tree-id 分目录
+
+      # 数据库
+      - GRAMPSWEB_NEW_DB_BACKEND=sqlite
+
+      # 安全
+      - GRAMPSWEB_SECRET_KEY=${GRAMPSWEB_SECRET_KEY}
+      - GRAMPSWEB_ADMIN_EMAIL=${GRAMPSWEB_ADMIN_EMAIL}
+      - GRAMPSWEB_ADMIN_PASSWORD=${GRAMPSWEB_ADMIN_PASSWORD}
+
+      # 腾讯云 COS S3 兼容
+      - GRAMPSWEB_S3_ENDPOINT=${COS_ENDPOINT}
+      - GRAMPSWEB_S3_BUCKET=${COS_BUCKET}
+      - GRAMPSWEB_S3_ACCESS_KEY=${COS_SECRET_ID}
+      - GRAMPSWEB_S3_SECRET_KEY=${COS_SECRET_KEY}
+      - GRAMPSWEB_S3_REGION=${COS_REGION}
+
+      # Celery 异步任务
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+
+    volumes:
+      - ./gramps_db:/gramps_db          # SQLite 数据库持久化
+      - ./gramps_media:/app/media       # 媒体缓存（主存储走 COS）
+      - ./gramps_config:/app/config   # Gramps-Web 配置持久化
+
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ---- Celery Worker (异步任务) ----
+  celery:
+    image: grampsweb/grampsweb:latest
+    container_name: jiazu-celery
+    restart: unless-stopped
+    command: celery -A gramps_webapi.celery worker --loglevel=info
+    environment:
+      - LANG=C.UTF-8
+      - LC_ALL=C.UTF-8
+      - GRAMPSWEB_TREE=*
+      - GRAMPSWEB_MEDIA_PREFIX_TREE=true
+      - GRAMPSWEB_NEW_DB_BACKEND=sqlite
+      - GRAMPSWEB_SECRET_KEY=${GRAMPSWEB_SECRET_KEY}
+      - GRAMPSWEB_S3_ENDPOINT=${COS_ENDPOINT}
+      - GRAMPSWEB_S3_BUCKET=${COS_BUCKET}
+      - GRAMPSWEB_S3_ACCESS_KEY=${COS_SECRET_ID}
+      - GRAMPSWEB_S3_SECRET_KEY=${COS_SECRET_KEY}
+      - GRAMPSWEB_S3_REGION=${COS_REGION}
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+    volumes:
+      - ./gramps_db:/gramps_db
+      - ./gramps_media:/app/media
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ---- Redis ----
+  redis:
+    image: redis:7-alpine
+    container_name: jiazu-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - ./redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---- Nginx 网关 ----
+  nginx:
+    image: nginx:alpine
+    container_name: jiazu-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./frontend/dist/build/h5:/usr/share/nginx/html:ro
+      # tree-meta.json 供 Nginx 做域名 → tree-id 映射
+      - ./config/tree-meta.json:/etc/nginx/tree-meta.json:ro
+    depends_on:
+      - gramps-web

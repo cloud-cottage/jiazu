@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Gramps database files (large binaries)
+gramps_db/**/*.sqlite
+gramps_db/**/*.db
+
+# Backups
+*.gramps
+*.gedcom
+*.bak
+
+# Logs
+*.log
+logs/
+
+# uni-app
+frontend/unpackage/
