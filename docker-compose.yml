@@ -3,56 +3,67 @@ version: "3.8"
 # ============================================
 # 家族历史数字馆 (jiazu) — Docker Compose
 # Gramps-Web + Redis + Nginx
+#
+# 镜像来源: 官方 Docker Hub dmstraub/gramps-webapi
+# 配置项依据: gramps-project/gramps-web-api 官方源码 (config.py / app.py)
 # ============================================
 
 services:
   # ---- Gramps-Web 家谱内核 ----
   gramps-web:
-    image: grampsweb/grampsweb:latest
+    image: dmstraub/gramps-webapi:latest
     container_name: jiazu-gramps
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:5000"          # 仅本地回环，Nginx 反向代理对外
     environment:
-      # 多语言 / 编码
+      # 编码
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
 
-      # 多 Tree 模式
-      - GRAMPSWEB_TREE=*                # 允许访问全部 tree
-      - GRAMPSWEB_MEDIA_PREFIX_TREE=true # 媒体按 tree-id 分目录
+      # ---- 必需配置（缺一不可） ----
+      - GRAMPSWEB_TREE=*                # 多 Tree 模式
+      - GRAMPSWEB_SECRET_KEY=${GRAMPSWEB_SECRET_KEY}
+      - GRAMPSWEB_USER_DB_URI=sqlite:////gramps_db/users.sqlite
 
-      # 数据库
+      # 多 Tree 媒体隔离（强制）
+      - GRAMPSWEB_MEDIA_PREFIX_TREE=true
+
+      # 新建 tree 默认 SQLite 后端
       - GRAMPSWEB_NEW_DB_BACKEND=sqlite
 
-      # 安全
-      - GRAMPSWEB_SECRET_KEY=${GRAMPSWEB_SECRET_KEY}
-      - GRAMPSWEB_ADMIN_EMAIL=${GRAMPSWEB_ADMIN_EMAIL}
-      - GRAMPSWEB_ADMIN_PASSWORD=${GRAMPSWEB_ADMIN_PASSWORD}
+      # ---- 合规：关闭公网注册 ----
+      - GRAMPSWEB_REGISTRATION_DISABLED=true
 
-      # 腾讯云 COS S3 兼容
-      - GRAMPSWEB_S3_ENDPOINT=${COS_ENDPOINT}
-      - GRAMPSWEB_S3_BUCKET=${COS_BUCKET}
-      - GRAMPSWEB_S3_ACCESS_KEY=${COS_SECRET_ID}
-      - GRAMPSWEB_S3_SECRET_KEY=${COS_SECRET_KEY}
-      - GRAMPSWEB_S3_REGION=${COS_REGION}
+      # ---- 对象存储 (腾讯云 COS, S3 兼容) ----
+      # 注意: 不是 GRAMPSWEB_S3_*，而是:
+      #   MEDIA_BASE_DIR 用 s3:// 前缀 + boto3 标准 AWS 环境变量
+      - GRAMPSWEB_MEDIA_BASE_DIR=s3://${COS_BUCKET}
+      - AWS_ACCESS_KEY_ID=${COS_SECRET_ID}
+      - AWS_SECRET_ACCESS_KEY=${COS_SECRET_KEY}
+      - AWS_ENDPOINT_URL=${COS_ENDPOINT}
+      - AWS_DEFAULT_REGION=${COS_REGION}
 
-      # Celery 异步任务
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+      # ---- Celery 异步任务 (Redis broker) ----
+      - GRAMPSWEB_CELERY_CONFIG__broker_url=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - GRAMPSWEB_CELERY_CONFIG__result_backend=redis://:${REDIS_PASSWORD}@redis:6379/0
+
+      # ---- 日志 ----
+      - GRAMPSWEB_LOG_LEVEL=INFO
 
     volumes:
-      - ./gramps_db:/gramps_db          # SQLite 数据库持久化
-      - ./gramps_media:/app/media       # 媒体缓存（主存储走 COS）
-      - ./gramps_config:/app/config   # Gramps-Web 配置持久化
+      - ./gramps_db:/gramps_db          # SQLite 用户库
+      - ./gramps_data:/root/.gramps     # 各 tree 数据库 + 索引
+      - ./gramps_config:/app/config     # 配置持久化
+      - ./gramps_media:/app/media       # 本地媒体缓存兜底（主存储走 COS）
 
     depends_on:
       redis:
         condition: service_healthy
 
-  # ---- Celery Worker (异步任务) ----
+  # ---- Celery Worker (异步任务：媒体处理、报告生成) ----
   celery:
-    image: grampsweb/grampsweb:latest
+    image: dmstraub/gramps-webapi:latest
     container_name: jiazu-celery
     restart: unless-stopped
     command: celery -A gramps_webapi.celery worker --loglevel=info
@@ -60,18 +71,23 @@ services:
       - LANG=C.UTF-8
       - LC_ALL=C.UTF-8
       - GRAMPSWEB_TREE=*
+      - GRAMPSWEB_SECRET_KEY=${GRAMPSWEB_SECRET_KEY}
+      - GRAMPSWEB_USER_DB_URI=sqlite:////gramps_db/users.sqlite
       - GRAMPSWEB_MEDIA_PREFIX_TREE=true
       - GRAMPSWEB_NEW_DB_BACKEND=sqlite
-      - GRAMPSWEB_SECRET_KEY=${GRAMPSWEB_SECRET_KEY}
-      - GRAMPSWEB_S3_ENDPOINT=${COS_ENDPOINT}
-      - GRAMPSWEB_S3_BUCKET=${COS_BUCKET}
-      - GRAMPSWEB_S3_ACCESS_KEY=${COS_SECRET_ID}
-      - GRAMPSWEB_S3_SECRET_KEY=${COS_SECRET_KEY}
-      - GRAMPSWEB_S3_REGION=${COS_REGION}
-      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - GRAMPSWEB_REGISTRATION_DISABLED=true
+      - GRAMPSWEB_MEDIA_BASE_DIR=s3://${COS_BUCKET}
+      - AWS_ACCESS_KEY_ID=${COS_SECRET_ID}
+      - AWS_SECRET_ACCESS_KEY=${COS_SECRET_KEY}
+      - AWS_ENDPOINT_URL=${COS_ENDPOINT}
+      - AWS_DEFAULT_REGION=${COS_REGION}
+      - GRAMPSWEB_CELERY_CONFIG__broker_url=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - GRAMPSWEB_CELERY_CONFIG__result_backend=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - GRAMPSWEB_LOG_LEVEL=INFO
     volumes:
       - ./gramps_db:/gramps_db
+      - ./gramps_data:/root/.gramps
+      - ./gramps_config:/app/config
       - ./gramps_media:/app/media
     depends_on:
       redis:

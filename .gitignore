@@ -1,5 +1,8 @@
 # Dependencies
 node_modules/
+.venv/
+__pycache__/
+*.pyc
 
 # Build output
 dist/
@@ -23,6 +26,12 @@ Thumbs.db
 # Gramps database files (large binaries)
 gramps_db/**/*.sqlite
 gramps_db/**/*.db
+gramps_data/
+
+# Gramps 运行时缓存
+request_cache/
+persistent_cache/
+thumbnail_cache/
 
 # Backups
 *.gramps
