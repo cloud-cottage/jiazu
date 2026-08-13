@@ -38,7 +38,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { fetchTreeMeta, buildTreeUrl } from '@/business';
+import { fetchTreeMetaRemote, buildTreeUrl } from '@/business';
 import { isAuthenticated, authState } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
 
@@ -46,7 +46,9 @@ const halls = ref<DigitalHallCard[]>([]);
 
 onMounted(async () => {
   try {
-    const meta: TreeMeta = await fetchTreeMeta();
+    // 用远程数据源（auth-server → config/tree-meta.json），
+    // 保证拆分/编辑后首页立即同步，不依赖静态副本
+    const meta: TreeMeta = await fetchTreeMetaRemote();
     halls.value = Object.entries(meta.trees).map(([_, entry]) => ({
       tree_id: entry.tree_id,
       title: entry.display_title,

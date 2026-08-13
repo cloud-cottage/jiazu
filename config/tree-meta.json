@@ -31,6 +31,56 @@
       "origin": "",
       "description": "由 ji_23395_01 拆分而来，始祖：George 志全氏",
       "enable_custom_domain": false
+    },
+    "gu_39038_01": {
+      "tree_id": "gu_39038_01",
+      "path_alias": "/gu_39038_01",
+      "surname_char": "顾",
+      "display_title": "顾氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：顾清学氏",
+      "enable_custom_domain": false
+    },
+    "wang_29579_01": {
+      "tree_id": "wang_29579_01",
+      "path_alias": "/wang_29579_01",
+      "surname_char": "王",
+      "display_title": "王氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：王氏氏",
+      "enable_custom_domain": false
+    },
+    "shen_27784_01": {
+      "tree_id": "shen_27784_01",
+      "path_alias": "/shen_27784_01",
+      "surname_char": "沈",
+      "display_title": "沈氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：沈克强氏",
+      "enable_custom_domain": false
+    },
+    "qin_31206_01": {
+      "tree_id": "qin_31206_01",
+      "path_alias": "/qin_31206_01",
+      "surname_char": "秦",
+      "display_title": "秦氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：秦氏",
+      "enable_custom_domain": false
+    },
+    "liu_21016_01": {
+      "tree_id": "liu_21016_01",
+      "path_alias": "/liu_21016_01",
+      "surname_char": "刘",
+      "display_title": "刘氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：刘芳池氏",
+      "enable_custom_domain": false
     }
   }
 }
