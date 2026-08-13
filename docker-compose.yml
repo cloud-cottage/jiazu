@@ -32,8 +32,8 @@ services:
       # 新建 tree 默认 SQLite 后端
       - GRAMPSWEB_NEW_DB_BACKEND=sqlite
 
-      # ---- 合规：关闭公网注册 ----
-      - GRAMPSWEB_REGISTRATION_DISABLED=true
+      # 开放注册（企业运营模式；新用户默认 guest 角色，管理员审核升级）
+      - GRAMPSWEB_REGISTRATION_DISABLED=false
 
       # ---- 对象存储 (腾讯云 COS, S3 兼容) ----
       # 注意: 不是 GRAMPSWEB_S3_*，而是:
@@ -75,7 +75,7 @@ services:
       - GRAMPSWEB_USER_DB_URI=sqlite:////gramps_db/users.sqlite
       - GRAMPSWEB_MEDIA_PREFIX_TREE=true
       - GRAMPSWEB_NEW_DB_BACKEND=sqlite
-      - GRAMPSWEB_REGISTRATION_DISABLED=true
+      - GRAMPSWEB_REGISTRATION_DISABLED=false
       - GRAMPSWEB_MEDIA_BASE_DIR=s3://${COS_BUCKET}
       - AWS_ACCESS_KEY_ID=${COS_SECRET_ID}
       - AWS_SECRET_ACCESS_KEY=${COS_SECRET_KEY}

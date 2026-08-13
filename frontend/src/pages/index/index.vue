@@ -1,6 +1,13 @@
 <template>
   <view class="container">
     <view class="header">
+      <view class="header-top">
+        <view />
+        <view class="auth-badge" @click="goAuth">
+          <text v-if="isAuthenticated()" class="auth-text">👤 {{ authState.nickname }}</text>
+          <text v-else class="auth-text">登录 / 注册</text>
+        </view>
+      </view>
       <text class="title">家族历史数字馆</text>
       <text class="subtitle">多姓氏、多支派家谱数字化展示平台</text>
     </view>
@@ -32,6 +39,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { fetchTreeMeta, buildTreeUrl } from '@/business';
+import { isAuthenticated, authState } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
 
 const halls = ref<DigitalHallCard[]>([]);
@@ -59,11 +67,18 @@ function goToHall(card: DigitalHallCard) {
 function goToPage(path: string) {
   uni.navigateTo({ url: path });
 }
+
+function goAuth() {
+  uni.navigateTo({ url: '/pages/login/index' });
+}
 </script>
 
 <style scoped>
 .container { padding: 20px; }
 .header { text-align: center; margin-bottom: 30px; }
+.header-top { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 12px; }
+.auth-badge { padding: 6px 14px; background: #FFF3E0; border-radius: 16px; }
+.auth-text { font-size: 13px; color: #8B4513; }
 .title { font-size: 24px; font-weight: bold; display: block; }
 .subtitle { font-size: 14px; color: #666; margin-top: 8px; display: block; }
 .hall-list { display: flex; flex-direction: column; gap: 16px; }

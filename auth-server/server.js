@@ -1,0 +1,292 @@
+/**
+ * 家族历史数字馆 — 认证代理服务 (auth-server)
+ *
+ * 职责:
+ * 1. 手机号 + 短信验证码登录/注册（开发阶段验证码打印到控制台）
+ * 2. 签发自己的 JWT 登录态
+ * 3. 反向代理 /api/* 到 Gramps-Web，注入访客/管理凭据
+ *
+ * 设计要点:
+ * - 零 npm 依赖（Node >= 18 内置 http/crypto/fs）
+ * - 用户/验证码存 JSON 文件（data/），生产可换 SQLite
+ * - JWT 手写 HMAC-SHA256 签名（HS256）
+ * - 短信服务商可插拔: console(开发) / tencent(生产)
+ */
+
+import http from 'node:http';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parse as parseUrl } from 'node:url';
+
+// ---- 配置 ----
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.PORT || 3000);
+const JWT_SECRET = process.env.AUTH_JWT_SECRET || 'dev-only-secret-change-me';
+const CODE_TTL = Number(process.env.CODE_TTL_SECONDS || 300);
+const GRAMPS_BASE = process.env.GRAMPS_BASE_URL || 'http://localhost:8000';
+const GRAMPS_GUEST = {
+  username: process.env.GRAMPS_GUEST_USERNAME || 'guest',
+  password: process.env.GRAMPS_GUEST_PASSWORD || 'GuestPass123!',
+};
+const SMS_PROVIDER = process.env.SMS_PROVIDER || 'console';
+const DATA_DIR = path.join(__dirname, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const CODES_FILE = path.join(DATA_DIR, 'codes.json');
+
+// ---- 存储 ----
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+function loadJson(file, fallback) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+}
+function saveJson(file, data) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+}
+
+let users = loadJson(USERS_FILE, {});        // phone -> {phone, nickname, role, created_at}
+let codes = loadJson(CODES_FILE, {});        // phone -> {code, expires_at, attempts}
+
+function persistUsers() { saveJson(USERS_FILE, users); }
+function persistCodes() { saveJson(CODES_FILE, codes); }
+
+// ---- JWT (HS256 手写) ----
+function b64url(buf) {
+  return Buffer.from(buf).toString('base64url');
+}
+function signJwt(payload, expiresSec) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const body = { ...payload, iat: now, exp: now + expiresSec };
+  const h = b64url(JSON.stringify(header));
+  const p = b64url(JSON.stringify(body));
+  const sig = crypto.createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url');
+  return `${h}.${p}.${sig}`;
+}
+function verifyJwt(token) {
+  try {
+    const [h, p, s] = token.split('.');
+    const expect = crypto.createHmac('sha256', JWT_SECRET).update(`${h}.${p}`).digest('base64url');
+    if (s !== expect) return null;
+    const payload = JSON.parse(Buffer.from(p, 'base64url').toString('utf8'));
+    if (payload.exp < Math.floor(Date.now() / 1000)) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// ---- 验证码 ----
+function genCode() {
+  return String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+}
+function sendSms(phone, code) {
+  if (SMS_PROVIDER === 'tencent') {
+    // TODO: 上线接入腾讯云 SMS（sdk 安装 + 模板调用）
+    console.log(`[sms:tencent] 发送到 ${phone}: ${code}（尚未接入 SDK，请配置 SMS_* 环境变量）`);
+    return;
+  }
+  // console provider（开发阶段）
+  console.log('\n' + '='.repeat(60));
+  console.log(`📱 [验证码] 手机号 ${phone}`);
+  console.log(`   验证码: ${code}  （有效期 ${CODE_TTL / 60} 分钟）`);
+  console.log('='.repeat(60) + '\n');
+}
+function requestCode(phone) {
+  const code = genCode();
+  codes[phone] = { code, expires_at: Date.now() + CODE_TTL * 1000, attempts: 0 };
+  persistCodes();
+  sendSms(phone, code);
+  return { ok: true, message: '验证码已发送', dev_code: SMS_PROVIDER === 'console' ? code : undefined };
+}
+function verifyCode(phone, inputCode) {
+  const entry = codes[phone];
+  if (!entry) return { ok: false, message: '请先获取验证码' };
+  if (Date.now() > entry.expires_at) {
+    delete codes[phone];
+    persistCodes();
+    return { ok: false, message: '验证码已过期，请重新获取' };
+  }
+  entry.attempts = (entry.attempts || 0) + 1;
+  if (entry.attempts > 5) {
+    delete codes[phone];
+    persistCodes();
+    return { ok: false, message: '尝试次数过多，请重新获取验证码' };
+  }
+  if (entry.code !== inputCode) {
+    persistCodes();
+    return { ok: false, message: '验证码错误' };
+  }
+  delete codes[phone];
+  persistCodes();
+  return { ok: true };
+}
+
+// ---- 用户 ----
+function findOrCreateUser(phone, nickname) {
+  if (!users[phone]) {
+    users[phone] = {
+      phone,
+      nickname: nickname || `用户${phone.slice(-4)}`,
+      role: 'guest', // 新用户默认只读；管理员审核后升级
+      created_at: new Date().toISOString(),
+    };
+    persistUsers();
+  } else if (nickname && nickname !== users[phone].nickname) {
+    users[phone].nickname = nickname;
+    persistUsers();
+  }
+  return users[phone];
+}
+
+// ---- 工具 ----
+function readBody(req) {
+  return new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => { data += c; if (data.length > 1e6) req.destroy(); });
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}); } catch { resolve({}); }
+    });
+  });
+}
+function json(res, status, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(body);
+}
+
+// ---- Gramps-Web 反向代理 ----
+let grampsToken = null;
+let grampsTokenExp = 0;
+
+async function getGrampsToken() {
+  if (grampsToken && grampsTokenExp > Date.now() + 60_000) return grampsToken;
+  const res = await fetch(`${GRAMPS_BASE}/api/token/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(GRAMPS_GUEST),
+  });
+  if (!res.ok) throw new Error(`Gramps 访客登录失败: ${res.status}`);
+  const data = await res.json();
+  grampsToken = data.access_token;
+  grampsTokenExp = Date.now() + 14 * 60 * 1000;
+  return grampsToken;
+}
+
+async function proxyToGramps(req, res, pathname, query) {
+  try {
+    const token = await getGrampsToken();
+    const target = `${GRAMPS_BASE}/api${pathname}${query ? `?${query}` : ''}`;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),
+    };
+    const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBodyRaw(req);
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers,
+      body,
+    });
+    const data = await upstream.arrayBuffer();
+    res.writeHead(upstream.status, {
+      'Content-Type': upstream.headers.get('content-type') || 'application/json',
+      'X-Total-Count': upstream.headers.get('x-total-count') || '',
+    });
+    res.end(Buffer.from(data));
+  } catch (e) {
+    json(res, 502, { error: { code: 502, message: `上游 Gramps-Web 不可用: ${e.message}` } });
+  }
+}
+function readBodyRaw(req) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+  });
+}
+
+// ---- 路由 ----
+const server = http.createServer(async (req, res) => {
+  const { pathname, query } = parseUrl(req.url, true);
+  const urlPath = pathname;
+
+  // CORS（开发放开；生产收紧）
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  try {
+    // ---- 认证 API ----
+    if (urlPath === '/api/auth/send-code' && req.method === 'POST') {
+      const body = await readBody(req);
+      const phone = String(body.phone || '').trim();
+      if (!/^1\d{10}$/.test(phone)) return json(res, 400, { error: '手机号格式不正确' });
+      // 防刷：同号码 60 秒内限一次
+      const existing = codes[phone];
+      if (existing && existing.expires_at > Date.now() - 60_000 + CODE_TTL * 1000 - 60_000) {
+        // 已有未过期验证码则直接重发（不刷新）
+        sendSms(phone, existing.code);
+        return json(res, 200, { ok: true, message: '验证码已发送' });
+      }
+      return json(res, 200, requestCode(phone));
+    }
+
+    if (urlPath === '/api/auth/login' && req.method === 'POST') {
+      const body = await readBody(req);
+      const phone = String(body.phone || '').trim();
+      const code = String(body.code || '').trim();
+      if (!users[phone]) return json(res, 404, { error: '该手机号未注册，请先注册' });
+      const v = verifyCode(phone, code);
+      if (!v.ok) return json(res, 401, { error: v.message });
+      const token = signJwt({ sub: phone, phone, role: users[phone].role }, 7 * 24 * 3600);
+      return json(res, 200, { token, phone, nickname: users[phone].nickname, role: users[phone].role });
+    }
+
+    if (urlPath === '/api/auth/register' && req.method === 'POST') {
+      const body = await readBody(req);
+      const phone = String(body.phone || '').trim();
+      const code = String(body.code || '').trim();
+      const nickname = String(body.nickname || '').trim().slice(0, 30);
+      if (!/^1\d{10}$/.test(phone)) return json(res, 400, { error: '手机号格式不正确' });
+      if (users[phone]) return json(res, 409, { error: '该手机号已注册，请直接登录' });
+      const v = verifyCode(phone, code);
+      if (!v.ok) return json(res, 401, { error: v.message });
+      const user = findOrCreateUser(phone, nickname || undefined);
+      const token = signJwt({ sub: phone, phone, role: user.role }, 7 * 24 * 3600);
+      return json(res, 201, { token, phone, nickname: user.nickname, role: user.role });
+    }
+
+    if (urlPath === '/api/auth/me' && req.method === 'GET') {
+      const auth = req.headers.authorization || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const payload = verifyJwt(token);
+      if (!payload) return json(res, 401, { error: '未登录或登录已过期' });
+      const user = users[payload.phone];
+      if (!user) return json(res, 404, { error: '用户不存在' });
+      return json(res, 200, { phone: user.phone, nickname: user.nickname, role: user.role });
+    }
+
+    // ---- 反向代理到 Gramps-Web ----
+    if (urlPath.startsWith('/api/')) {
+      return proxyToGramps(req, res, urlPath.slice('/api'.length), parseUrl(req.url).query || '');
+    }
+
+    json(res, 404, { error: 'Not Found' });
+  } catch (e) {
+    console.error('[auth-server] error:', e);
+    json(res, 500, { error: { code: 500, message: e.message } });
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`\n✅ 认证代理服务已启动: http://localhost:${PORT}`);
+  console.log(`   短信模式: ${SMS_PROVIDER}（console=控制台打印验证码）`);
+  console.log(`   上游 Gramps-Web: ${GRAMPS_BASE}\n`);
+});

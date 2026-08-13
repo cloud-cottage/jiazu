@@ -1,13 +1,12 @@
 /**
  * Gramps-Web REST API 客户端
  *
- * 认证机制（来自官方源码确认）:
- * - POST /api/token/ {username, password} → {access_token}
- * - 所有请求带 Authorization: Bearer <token>
- * - tree 通过 JWT 中的 tree claim 指定，不在 URL 传
- * - 每个家族树对应一个只读访客账号（管理员在后台创建，role=0）
+ * 认证架构（v2 — auth-server 代理模式）:
+ * - 所有 /api/* 请求经 auth-server (端口 3000) 代理到 Gramps-Web
+ * - auth-server 持有 Gramps 访客凭据并自动注入，前端不接触
+ * - 手机号验证码登录走 /api/auth/*（auth-server 处理）
  *
- * 访客凭据配置: config/tree-api.json（tree_id → {username, password}）
+ * dev 模式: Vite 代理 /api → localhost:3000 (auth-server) → localhost:8000 (Gramps)
  */
 
 import type {
@@ -18,64 +17,18 @@ import type {
   TreeMeta,
 } from './types';
 
-// API 基础路径（H5 dev 走 Vite 代理；生产走 Nginx /api）
+// API 基础路径（Vite 代理 → auth-server）
 const API_BASE = '/api';
-
-// ---- 凭据管理 ----
-
-export interface TreeApiCredential {
-  username: string;
-  password: string;
-}
-
-let credentials: Record<string, TreeApiCredential> = {};
-let tokenCache: Record<string, { token: string; expiresAt: number }> = {};
-let credentialsPromise: Promise<Record<string, TreeApiCredential>> | null = null;
-
-/**
- * 设置 tree 访客凭据（应用启动时从 config/tree-api.json 加载）
- */
-export function configureCredentials(creds: Record<string, TreeApiCredential>): void {
-  credentials = creds;
-  credentialsPromise = null;
-}
-
-/**
- * 懒加载凭据：main.ts 的异步加载可能晚于页面请求，
- * 在需要时现场拉取一次，彻底消除竞态。
- */
-async function loadCredentials(): Promise<Record<string, TreeApiCredential>> {
-  if (Object.keys(credentials).length > 0) return credentials;
-  if (!credentialsPromise) {
-    credentialsPromise = fetch('/static/tree-api.json')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        credentials = data?.trees || {};
-        return credentials;
-      })
-      .catch((e) => {
-        credentialsPromise = null; // 允许重试
-        throw new Error(`加载访客凭据失败: ${e.message || e}`);
-      });
-  }
-  return credentialsPromise;
-}
 
 async function request<T>(
   path: string,
-  options: { method?: string; body?: unknown; treeId?: string } = {},
+  options: { method?: string; body?: unknown } = {},
 ): Promise<T> {
-  const { method = 'GET', body, treeId } = options;
+  const { method = 'GET', body } = options;
   const headers: Record<string, string> = {};
 
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
-  }
-
-  // 需要 tree 作用域的请求：先确保有该 tree 的 token
-  if (treeId) {
-    const token = await ensureToken(treeId);
-    headers['Authorization'] = `Bearer ${token}`;
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
@@ -91,38 +44,68 @@ async function request<T>(
   return response.json() as Promise<T>;
 }
 
-/** 登录获取 token（带 15 分钟缓存，JWT 有效期 15 分钟） */
-async function login(treeId: string): Promise<string> {
-  const creds = await loadCredentials();
-  const cred = creds[treeId];
-  if (!cred) {
-    throw new Error(`未配置 tree ${treeId} 的访客凭据 (config/tree-api.json)`);
-  }
-  const res = await fetch(`${API_BASE}/token/`, {
+// ---- 手机号验证码认证（auth-server） ----
+
+/** 发送验证码（开发阶段 auth-server 在控制台打印并返回 dev_code） */
+export async function sendSmsCode(phone: string): Promise<{ dev_code?: string }> {
+  const res = await fetch(`${API_BASE}/auth/send-code`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: cred.username, password: cred.password }),
+    body: JSON.stringify({ phone }),
   });
   if (!res.ok) {
-    throw new Error(`登录失败 (${res.status})`);
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || `发送失败 (${res.status})`);
   }
-  const data = (await res.json()) as { access_token: string };
-  return data.access_token;
+  return res.json();
 }
 
-/** 确保有有效的 token（缓存 + 过期刷新） */
-async function ensureToken(treeId: string): Promise<string> {
-  const cached = tokenCache[treeId];
-  if (cached && cached.expiresAt > Date.now() + 60_000) {
-    return cached.token;
+/** 手机号 + 验证码注册（默认 guest 角色） */
+export async function registerByPhone(
+  phone: string,
+  code: string,
+  nickname: string,
+): Promise<{ token: string; phone: string; nickname: string; role: string }> {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, code, nickname }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || `注册失败 (${res.status})`);
   }
-  const token = await login(treeId);
-  tokenCache[treeId] = {
-    token,
-    // JWT 有效期 15 分钟，提前 1 分钟刷新
-    expiresAt: Date.now() + 14 * 60 * 1000,
-  };
-  return token;
+  return res.json();
+}
+
+/** 手机号 + 验证码登录 */
+export async function loginByPhone(
+  phone: string,
+  code: string,
+): Promise<{ token: string; phone: string; nickname: string; role: string }> {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, code }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data?.error || `登录失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+/** 获取当前登录用户信息 */
+export async function fetchMe(token: string): Promise<{
+  phone: string;
+  nickname: string;
+  role: string;
+}> {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`获取用户信息失败 (${res.status})`);
+  return res.json();
 }
 
 // ---- 数据解析（官方 API 真实字段） ----
@@ -204,9 +187,7 @@ export async function fetchPerson(
   handle: string,
 ): Promise<PersonDetail> {
   // 注意：单对象路由无尾斜杠（/api/people/<handle>）
-  const raw = await request<RawPerson>(`/people/${handle}?profile=all`, {
-    treeId,
-  });
+  const raw = await request<RawPerson>(`/people/${handle}?profile=all`);
   const summary = toPersonSummary(raw);
   return {
     ...summary,
@@ -232,7 +213,7 @@ export async function fetchPersonList(
     page > 0 && pageSize > 0
       ? `/people/?profile=all&page=${page}&pagesize=${pageSize}`
       : `/people/?profile=all`;
-  const raw = await request<RawPerson[]>(query, { treeId });
+  const raw = await request<RawPerson[]>(query);
   return {
     data: raw.map(toPersonSummary),
     total: raw.length,
@@ -250,7 +231,6 @@ export async function searchPeople(
   }
   const raw = await request<RawPerson[]>(
     `/search/?query=${encodeURIComponent(query)}&profile=all&pagesize=20`,
-    { treeId: tree_id },
   );
   return {
     tree_id,
@@ -288,10 +268,7 @@ export async function fetchTreeStats(treeId: string): Promise<{
   event_count: number;
 }> {
   try {
-    const raw = await request<RawPerson[]>(
-      `/people/?pagesize=1&profile=all`,
-      { treeId },
-    );
+    const raw = await request<RawPerson[]>(`/people/?pagesize=1&profile=all`);
     return { person_count: raw.length, family_count: 0, media_count: 0, event_count: 0 };
   } catch {
     return { person_count: 0, family_count: 0, media_count: 0, event_count: 0 };

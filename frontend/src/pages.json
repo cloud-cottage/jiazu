@@ -7,6 +7,18 @@
       }
     },
     {
+      "path": "pages/login/index",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
+      "path": "pages/register/index",
+      "style": {
+        "navigationBarTitleText": "注册"
+      }
+    },
+    {
       "path": "pages/about/about",
       "style": {
         "navigationBarTitleText": "关于本站"

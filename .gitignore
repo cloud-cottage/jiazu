@@ -39,6 +39,10 @@ persistent_cache/
 thumbnail_cache/
 indexdir/
 
+# auth-server 运行时数据
+auth-server/data/
+auth-server/.env
+
 # Backups
 *.gramps
 *.gedcom

@@ -58,6 +58,32 @@ try:
 except (ImportError, ValueError):
     pass  # 无 GTK 环境（如官方 Docker 镜像），无需抑制
 
+# ---- 3. 本地邮件捕获（无 SMTP 环境调试注册/找回密码） ----
+# 生产环境不启用：仅当未配置 EMAIL_HOST 时，将邮件打印到控制台。
+# 注册确认链接可从控制台日志获取。
+if not os.environ.get('EMAIL_HOST'):
+    import gramps_webapi.api.util as _gw_util
+
+    def _capture_email(subject, body, to, from_email=None, body_html=None):
+        print('\n' + '=' * 70)
+        print(f'[jiazu] 📧 捕获邮件 (未配置 SMTP，仅本地调试)')
+        print(f'  收件人: {to}')
+        print(f'  主题: {subject}')
+        if body:
+            # 提取确认/重置链接
+            import re as _re
+            for line in body.splitlines():
+                if _re.search(r'https?://|/confirm|/reset', line, _re.I):
+                    print(f'  🔗 {line.strip()}')
+            print('  ---')
+            print(body[:600])
+        print('=' * 70 + '\n')
+
+    _gw_util.send_email = _capture_email
+    # tasks.py 用 `from .util import send_email` 导入（名字绑定），需同步替换
+    import gramps_webapi.api.tasks as _gw_tasks
+    _gw_tasks.send_email = _capture_email
+
 from gramps_webapi.__main__ import cli  # noqa: E402
 
 if __name__ == '__main__':

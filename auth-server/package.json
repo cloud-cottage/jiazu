@@ -1,0 +1,15 @@
+{
+  "name": "jiazu-auth-server",
+  "version": "0.1.0",
+  "description": "家族历史数字馆 — 手机号验证码认证代理服务",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
