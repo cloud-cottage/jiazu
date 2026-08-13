@@ -30,12 +30,35 @@ export interface TreeApiCredential {
 
 let credentials: Record<string, TreeApiCredential> = {};
 let tokenCache: Record<string, { token: string; expiresAt: number }> = {};
+let credentialsPromise: Promise<Record<string, TreeApiCredential>> | null = null;
 
 /**
  * 设置 tree 访客凭据（应用启动时从 config/tree-api.json 加载）
  */
 export function configureCredentials(creds: Record<string, TreeApiCredential>): void {
   credentials = creds;
+  credentialsPromise = null;
+}
+
+/**
+ * 懒加载凭据：main.ts 的异步加载可能晚于页面请求，
+ * 在需要时现场拉取一次，彻底消除竞态。
+ */
+async function loadCredentials(): Promise<Record<string, TreeApiCredential>> {
+  if (Object.keys(credentials).length > 0) return credentials;
+  if (!credentialsPromise) {
+    credentialsPromise = fetch('/static/tree-api.json')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        credentials = data?.trees || {};
+        return credentials;
+      })
+      .catch((e) => {
+        credentialsPromise = null; // 允许重试
+        throw new Error(`加载访客凭据失败: ${e.message || e}`);
+      });
+  }
+  return credentialsPromise;
 }
 
 async function request<T>(
@@ -70,7 +93,8 @@ async function request<T>(
 
 /** 登录获取 token（带 15 分钟缓存，JWT 有效期 15 分钟） */
 async function login(treeId: string): Promise<string> {
-  const cred = credentials[treeId];
+  const creds = await loadCredentials();
+  const cred = creds[treeId];
   if (!cred) {
     throw new Error(`未配置 tree ${treeId} 的访客凭据 (config/tree-api.json)`);
   }
