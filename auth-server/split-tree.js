@@ -16,6 +16,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { gunzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
+import * as wallet from './wallet.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -99,6 +100,7 @@ function runGrampsCli(args) {
  * @param {string} opts.ancestorHandle  始祖 person handle
  * @param {string} opts.ancestorName    始祖姓名（展示用）
  * @param {string} opts.grampsBase      Gramps-Web 基地址
+ * @param {string} opts.initiatorPhone  发起人手机号（从发起人余额扣建树费）
  */
 export async function splitTree(opts) {
   const {
@@ -110,7 +112,14 @@ export async function splitTree(opts) {
     adminPass,
     ownerUser,
     ownerPass,
+    initiatorPhone,
   } = opts;
+
+  // ---- 0. 扣建树费（从发起人余额） ----
+  if (!initiatorPhone) throw new Error('缺少发起人信息，无法扣除建树费用');
+  const feeYuan = wallet.getTreeCreateFeeYuan();
+  wallet.deductTreeCreateFee(initiatorPhone);
+  console.log(`[split-tree] 已从 ${initiatorPhone} 扣除建树费 ¥${feeYuan}`);
 
   const api = `${grampsBase}/api`;
 

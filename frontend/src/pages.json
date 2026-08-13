@@ -19,6 +19,12 @@
       }
     },
     {
+      "path": "pages/wallet/index",
+      "style": {
+        "navigationBarTitleText": "我的钱包"
+      }
+    },
+    {
       "path": "pages/about/about",
       "style": {
         "navigationBarTitleText": "关于本站"

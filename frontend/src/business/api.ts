@@ -286,6 +286,103 @@ export async function fetchFamilyList(
   }));
 }
 
+// ---- 钱包（余额/充值/转账/建树费） ----
+
+export interface WalletTransaction {
+  id: string;
+  type: string;
+  user?: string;
+  tree?: string;
+  amount_cents: number;
+  desc: string;
+  ts: string;
+}
+
+export interface WalletOverview {
+  user_balance_yuan: string;
+  tree_create_fee_yuan: string;
+  transactions: WalletTransaction[];
+}
+
+/** 查询钱包总览（需登录） */
+export async function fetchWallet(token: string): Promise<WalletOverview> {
+  const res = await fetch(`${API_BASE}/wallet/balance`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`获取钱包失败 (${res.status})`);
+  return res.json();
+}
+
+/** 充值（开发阶段模拟） */
+export async function rechargeWallet(
+  token: string,
+  amount: number,
+): Promise<{ ok: boolean; balance_yuan: string }> {
+  const res = await fetch(`${API_BASE}/wallet/recharge`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ amount }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `充值失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+/** 转账到家族树（仅入账） */
+export async function transferToTree(
+  token: string,
+  treeId: string,
+  amount: number,
+): Promise<{ ok: boolean; user_balance_yuan: string; tree_balance_yuan: string }> {
+  const res = await fetch(`${API_BASE}/wallet/transfer`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ tree_id: treeId, amount }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `转账失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+/** 查询家族树余额（公开） */
+export async function fetchTreeBalance(
+  treeId: string,
+): Promise<{ tree_id: string; balance_yuan: string }> {
+  const res = await fetch(`${API_BASE}/wallet/tree-balance?tree_id=${treeId}`);
+  if (!res.ok) throw new Error(`查询树余额失败 (${res.status})`);
+  return res.json();
+}
+
+/** admin 设置建树费 */
+export async function setTreeCreateFee(
+  token: string,
+  fee: number,
+): Promise<{ ok: boolean; tree_create_fee_yuan: string }> {
+  const res = await fetch(`${API_BASE}/admin/wallet-fee`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ fee }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `设置费用失败 (${res.status})`);
+  }
+  return res.json();
+}
+
 // ---- 搜索 ----
 
 export async function searchPeople(

@@ -2,7 +2,12 @@
   <view class="container">
     <view class="header">
       <view class="header-top">
-        <view />
+        <view class="header-left">
+          <!-- 登录后显示钱包入口 -->
+          <view v-if="isAuthenticated()" class="wallet-badge" @click="goWallet">
+            <text class="wallet-text">💰 我的钱包</text>
+          </view>
+        </view>
         <view class="auth-badge" @click="goAuth">
           <text v-if="isAuthenticated()" class="auth-text">👤 {{ authState.nickname }}</text>
           <text v-else class="auth-text">登录 / 注册</text>
@@ -73,12 +78,18 @@ function goToPage(path: string) {
 function goAuth() {
   uni.navigateTo({ url: '/pages/login/index' });
 }
+
+function goWallet() {
+  uni.navigateTo({ url: '/pages/wallet/index' });
+}
 </script>
 
 <style scoped>
 .container { padding: 20px; }
 .header { text-align: center; margin-bottom: 30px; }
-.header-top { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 12px; }
+.header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.wallet-badge { padding: 6px 14px; background: #E8F5E9; border-radius: 16px; }
+.wallet-text { font-size: 13px; color: #2E7D32; }
 .auth-badge { padding: 6px 14px; background: #FFF3E0; border-radius: 16px; }
 .auth-text { font-size: 13px; color: #8B4513; }
 .title { font-size: 24px; font-weight: bold; display: block; }

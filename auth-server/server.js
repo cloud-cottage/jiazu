@@ -21,6 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse as parseUrl } from 'node:url';
 import { splitTree } from './split-tree.js';
+import * as wallet from './wallet.js';
 
 // ---- 配置 ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -419,12 +420,102 @@ const server = http.createServer(async (req, res) => {
           adminPass: GRAMPS_ADMIN.password,
           ownerUser: GRAMPS_OWNER.username,
           ownerPass: GRAMPS_OWNER.password,
+          initiatorPhone: user.phone,
         });
         return json(res, 200, result);
       } catch (e) {
         console.error('[split-tree] 失败:', e.message);
         return json(res, 500, { error: `拆分失败: ${e.message}` });
       }
+    }
+
+    // ---- 钱包（余额 / 充值 / 转账 / 流水） ----
+
+    // 鉴权辅助：从 header 提取当前用户
+    function authUser(req) {
+      const auth = req.headers.authorization || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const payload = verifyJwt(token);
+      if (!payload) return null;
+      const user = users[payload.phone];
+      return user ? { phone: user.phone, role: user.role } : null;
+    }
+
+    // 查询余额总览（需登录）
+    if (urlPath === '/api/wallet/balance' && req.method === 'GET') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      return json(res, 200, wallet.getWalletOverview(u.phone));
+    }
+
+    // 充值（开发阶段模拟；预留真实支付接入点）
+    if (urlPath === '/api/wallet/recharge' && req.method === 'POST') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      const body = await readBody(req);
+      const amount = Number(body.amount);
+      if (!amount || amount <= 0) return json(res, 400, { error: '请输入正确的充值金额' });
+      const cents = Math.round(amount * 100);
+      try {
+        const balance = wallet.recharge(u.phone, cents);
+        return json(res, 200, {
+          ok: true,
+          balance_yuan: (balance / 100).toFixed(2),
+          // TODO: 上线接入微信支付后，此处返回支付参数，余额在支付回调后到账
+          payment: 'mock',
+        });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    // 转账到家族树（仅入账，不支持转出）
+    if (urlPath === '/api/wallet/transfer' && req.method === 'POST') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      const body = await readBody(req);
+      const treeId = String(body.tree_id || '').trim();
+      const amount = Number(body.amount);
+      if (!treeId) return json(res, 400, { error: '缺少 tree_id' });
+      if (!amount || amount <= 0) return json(res, 400, { error: '请输入正确的金额' });
+      // 校验 tree 存在
+      const meta = readTreeMeta();
+      const treeExists = Object.values(meta.trees).some((t) => t.tree_id === treeId);
+      if (!treeExists) return json(res, 404, { error: `家族树不存在: ${treeId}` });
+      try {
+        const result = wallet.transferToTree(u.phone, treeId, Math.round(amount * 100));
+        return json(res, 200, {
+          ok: true,
+          user_balance_yuan: (result.user_balance / 100).toFixed(2),
+          tree_balance_yuan: (result.tree_balance / 100).toFixed(2),
+        });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
+    }
+
+    // 查询某家族树余额（公开）
+    if (urlPath === '/api/wallet/tree-balance' && req.method === 'GET') {
+      const treeId = new URL(req.url, 'http://x').searchParams.get('tree_id') || '';
+      if (!treeId) return json(res, 400, { error: '缺少 tree_id' });
+      return json(res, 200, {
+        tree_id: treeId,
+        balance_yuan: (wallet.getTreeBalance(treeId) / 100).toFixed(2),
+      });
+    }
+
+    // 管理：设置新建家族树费用（仅 admin）
+    if (urlPath === '/api/admin/wallet-fee' && req.method === 'PUT') {
+      const u = authUser(req);
+      if (!u || u.role !== 'admin') return json(res, 403, { error: '需要管理员权限' });
+      const body = await readBody(req);
+      const amount = Number(body.fee);
+      if (!amount || amount <= 0) return json(res, 400, { error: '请输入正确的费用' });
+      const cents = wallet.setTreeCreateFeeCents(Math.round(amount * 100));
+      return json(res, 200, {
+        ok: true,
+        tree_create_fee_yuan: (cents / 100).toFixed(2),
+      });
     }
 
     // ---- 反向代理到 Gramps-Web ----

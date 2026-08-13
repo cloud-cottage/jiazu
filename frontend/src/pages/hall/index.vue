@@ -45,6 +45,13 @@
       <text class="stat">历史文献：{{ stats.media_count }} 件</text>
     </view>
 
+    <!-- 家族树资金（公开可见） -->
+    <view class="tree-fund" v-if="treeBalance !== null">
+      <text class="fund-label">家族树资金</text>
+      <text class="fund-value">¥{{ treeBalance }}</text>
+      <text v-if="isAuthenticated()" class="fund-action" @click="goTransfer">转账支持</text>
+    </view>
+
     <!-- 编辑模态框 -->
     <view v-if="showEdit" class="modal-mask" @click="closeEdit">
       <view class="modal" @click.stop>
@@ -85,13 +92,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchTreeMetaRemote, fetchTreeStats, updateTreeMeta } from '@/business';
+import { fetchTreeMetaRemote, fetchTreeStats, updateTreeMeta, fetchTreeBalance } from '@/business';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
 import type { TreeEntry } from '@/business/types';
 
 const treeId = ref('');
 const hallInfo = ref<TreeEntry | null>(null);
 const stats = ref<any>(null);
+const treeBalance = ref<string | null>(null);
 
 const showEdit = ref(false);
 const saving = ref(false);
@@ -125,7 +133,20 @@ onMounted(async () => {
   } catch (e) {
     console.error('加载统计失败:', e);
   }
+
+  // 家族树资金（公开）
+  try {
+    const fund = await fetchTreeBalance(treeId.value);
+    treeBalance.value = fund.balance_yuan;
+  } catch (e) {
+    console.error('加载家族树资金失败:', e);
+  }
 });
+
+function goTransfer() {
+  // 跳转钱包页，预填 tree_id
+  uni.navigateTo({ url: `/pages/wallet/index?tree_id=${treeId.value}` });
+}
 
 function openEdit() {
   if (!hallInfo.value) return;
@@ -211,6 +232,18 @@ function goTo(page: string) {
 .nav-label { font-size: 13px; color: #555; margin-top: 6px; display: block; }
 .stats { text-align: center; margin-top: 24px; padding: 16px; background: #FFF8E1; border-radius: 8px; }
 .stat { font-size: 14px; color: #5D4037; margin: 0 12px; display: inline-block; }
+
+/* 家族树资金 */
+.tree-fund {
+  margin-top: 14px; padding: 16px; background: #E8F5E9;
+  border-radius: 8px; text-align: center;
+}
+.fund-label { font-size: 13px; color: #2E7D32; display: block; }
+.fund-value { font-size: 24px; font-weight: bold; color: #1B5E20; display: block; margin: 4px 0; }
+.fund-action {
+  display: inline-block; margin-top: 6px; padding: 4px 14px;
+  background: #2E7D32; color: #fff; border-radius: 12px; font-size: 12px;
+}
 
 /* 编辑模态框 */
 .modal-mask {
