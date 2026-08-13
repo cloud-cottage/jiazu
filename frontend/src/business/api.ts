@@ -179,7 +179,8 @@ export async function fetchPerson(
   treeId: string,
   handle: string,
 ): Promise<PersonDetail> {
-  const raw = await request<RawPerson>(`/people/${handle}/?profile=all`, {
+  // 注意：单对象路由无尾斜杠（/api/people/<handle>）
+  const raw = await request<RawPerson>(`/people/${handle}?profile=all`, {
     treeId,
   });
   const summary = toPersonSummary(raw);
