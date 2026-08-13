@@ -117,15 +117,24 @@ function closeModal() {
   splitError.value = '';
 }
 
+/** 统计节点子树人数（含自身） */
+function countSubtree(node: TreePersonNode): number {
+  let count = 1;
+  if (node.children) {
+    for (const c of node.children) count += countSubtree(c);
+  }
+  return count;
+}
+
 /** admin 确认并执行「移除并新建家族树」 */
 async function confirmSplit() {
   if (!selected.value) return;
   const node = selected.value;
-
+  const total = countSubtree(node);
   const confirmed = await new Promise<boolean>((resolve) => {
     uni.showModal({
       title: '移除并新建家族树',
-      content: `以「${node.name}」为始祖新建一支家族树？\n\n新树姓氏：${node.name[0] || '?'}氏\n原树中将移除 ${node.name} 及其全部后代。此操作不可撤销！`,
+      content: `以「${node.name}」为始祖新建一支家族树？\n\n新树姓氏：${node.name[0] || '?'}氏\n将移动 ${total} 人（始祖及其全部后代）\n原树中将移除这些人。此操作不可撤销！`,
       confirmText: '确认拆分',
       cancelText: '取消',
       success: (res) => resolve(res.confirm),
