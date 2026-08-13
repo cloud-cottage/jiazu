@@ -19,7 +19,20 @@
     <!-- ECharts 世系树 -->
     <view v-else-if="forest.length" class="chart-wrap">
       <view id="tree-chart" class="chart" />
-      <text class="hint">💡 点击人物节点查看详情 · 支持缩放拖动</text>
+      <text class="hint">💡 点击人物节点查看详情 · 滚轮/双指缩放 · 拖动平移</text>
+    </view>
+
+    <!-- 缩放控制按钮（左下角） -->
+    <view v-if="forest.length" class="zoom-controls">
+      <view class="zoom-btn" @click="zoomIn">
+        <text class="zoom-icon">＋</text>
+      </view>
+      <view class="zoom-btn" @click="zoomOut">
+        <text class="zoom-icon">－</text>
+      </view>
+      <view class="zoom-btn" @click="zoomReset">
+        <text class="zoom-icon">⟳</text>
+      </view>
     </view>
 
     <!-- 图示切换按钮（右侧悬浮） -->
@@ -107,6 +120,8 @@ const layoutOptions = [
   { id: 'horizontal', name: '横向', icon: '📐' },
   { id: 'fan', name: '扇形', icon: '🎪' },
 ];
+// 缩放状态（1 = 100%）
+const zoomLevel = ref(1);
 
 // admin 判定：登录用户 role === 'admin'
 const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
@@ -306,6 +321,9 @@ function renderChart() {
           symbolSize: 12,
           initialTreeDepth: 10,
           expandAndCollapse: true,
+          // 启用缩放/平移（滚轮/双指 + 按钮 zoom）
+          roam: true,
+          zoom: zoomLevel.value,
           animationDuration: 550,
           animationDurationUpdate: 750,
           // 扇形效果：限定角度范围 + 连线沿径向
@@ -343,6 +361,9 @@ function renderChart() {
         symbolSize: currentLayout.value === 'radial' ? 16 : 14,
         initialTreeDepth: 10,
         expandAndCollapse: true,
+        // 启用缩放/平移（滚轮/双指 + 按钮 zoom）
+        roam: true,
+        zoom: zoomLevel.value,
         animationDuration: 550,
         animationDurationUpdate: 750,
         lineStyle: { color: '#A1887F', width: 1.2, curveness: 0.5 },
@@ -371,6 +392,37 @@ function switchLayout(id: string) {
   if (currentLayout.value === id) return;
   currentLayout.value = id;
   renderChart();
+}
+
+/** 放大 */
+function zoomIn() {
+  zoomLevel.value = Math.min(zoomLevel.value * 1.25, 4);
+  applyZoom();
+}
+
+/** 缩小 */
+function zoomOut() {
+  zoomLevel.value = Math.max(zoomLevel.value / 1.25, 0.2);
+  applyZoom();
+}
+
+/** 重置缩放 */
+function zoomReset() {
+  zoomLevel.value = 1;
+  applyZoom(true);
+}
+
+/** 将缩放应用到图表 */
+function applyZoom(resetCenter = false) {
+  if (!chart) return;
+  chart.setOption({
+    series: [
+      {
+        zoom: zoomLevel.value,
+        ...(resetCenter ? { center: null } : {}),
+      },
+    ],
+  });
 }
 </script>
 
@@ -415,6 +467,29 @@ function switchLayout(id: string) {
 .layout-icon { font-size: 16px; }
 .layout-name { font-size: 10px; color: #8B4513; margin-top: 2px; }
 .layout-btn.active .layout-name { color: #fff; }
+
+/* 缩放控制（左下角悬浮） */
+.zoom-controls {
+  position: fixed;
+  left: 12px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 900;
+}
+.zoom-btn {
+  width: 40px;
+  height: 40px;
+  background: #fff;
+  border: 1px solid #E0D5C8;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.zoom-icon { font-size: 18px; color: #8B4513; font-weight: bold; }
 
 /* 模态框 */
 .modal-mask {
