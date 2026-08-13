@@ -79,8 +79,8 @@ onMounted(async () => {
     return;
   }
   try {
-    // 一次拉取全部（117 人规模小；后续大数据量改分页）
-    const res = await fetchPersonList(treeId.value, 1, 500);
+    // 一次拉取全部（page=0 返回全部；117 人规模小，后续大数据量改分页）
+    const res = await fetchPersonList(treeId.value, 0, 0);
     people.value = res.data;
   } catch (e: any) {
     console.error('加载世系数据失败:', e);

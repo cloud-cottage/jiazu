@@ -224,14 +224,15 @@ export async function fetchPerson(
 
 export async function fetchPersonList(
   treeId: string,
-  page = 1,
-  pageSize = 50,
+  page = 0,
+  pageSize = 0,
 ): Promise<{ data: PersonSummary[]; total: number }> {
-  const offset = (page - 1) * pageSize;
-  const raw = await request<RawPerson[]>(
-    `/people/?profile=all&pagesize=${pageSize}&start=${offset}`,
-    { treeId },
-  );
+  // Gramps-Web 分页: page=0(默认) 返回全部; pagesize 无上限; 无 start 参数
+  const query =
+    page > 0 && pageSize > 0
+      ? `/people/?profile=all&page=${page}&pagesize=${pageSize}`
+      : `/people/?profile=all`;
+  const raw = await request<RawPerson[]>(query, { treeId });
   return {
     data: raw.map(toPersonSummary),
     total: raw.length,
