@@ -2,8 +2,14 @@
   <view class="container">
     <view class="hero">
       <text class="title">{{ hallInfo?.display_title || '加载中...' }}</text>
+      <text class="hall-name" v-if="hallInfo?.hall_name">堂号：{{ hallInfo.hall_name }}</text>
       <text class="origin" v-if="hallInfo">堂号发源地：{{ hallInfo.origin }}</text>
       <text class="desc" v-if="hallInfo">{{ hallInfo.description }}</text>
+
+      <!-- 管理员编辑入口 -->
+      <view v-if="isAdmin" class="edit-entry" @click="openEdit">
+        <text class="edit-btn-text">✏️ 编辑堂号 / 发源地</text>
+      </view>
     </view>
 
     <view class="nav-grid">
@@ -38,18 +44,62 @@
       <text class="stat">家族分支：{{ stats.family_count }}</text>
       <text class="stat">历史文献：{{ stats.media_count }} 件</text>
     </view>
+
+    <!-- 编辑模态框 -->
+    <view v-if="showEdit" class="modal-mask" @click="closeEdit">
+      <view class="modal" @click.stop>
+        <text class="modal-title">编辑家族馆信息</text>
+
+        <view class="form-item">
+          <text class="label">馆名</text>
+          <input v-model="editForm.display_title" class="input" placeholder="如：季氏（苏南支）家族历史数字馆" />
+        </view>
+        <view class="form-item">
+          <text class="label">堂号</text>
+          <input v-model="editForm.hall_name" class="input" placeholder="如：三让堂" />
+        </view>
+        <view class="form-item">
+          <text class="label">堂号发源地</text>
+          <input v-model="editForm.origin" class="input" placeholder="如：江苏苏州洞庭" />
+        </view>
+        <view class="form-item">
+          <text class="label">简介</text>
+          <textarea v-model="editForm.description" class="textarea" placeholder="支系简介" />
+        </view>
+
+        <view v-if="editError" class="edit-error">
+          <text>{{ editError }}</text>
+        </view>
+
+        <view class="modal-actions">
+          <button class="btn-save" :disabled="saving" @click="saveEdit">
+            {{ saving ? '保存中...' : '保存' }}
+          </button>
+          <text class="btn-cancel" @click="closeEdit">取消</text>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchTreeMeta, fetchTreeStats } from '@/business';
+import { fetchTreeMetaRemote, fetchTreeStats, updateTreeMeta } from '@/business';
+import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
 import type { TreeEntry } from '@/business/types';
 
 const treeId = ref('');
 const hallInfo = ref<TreeEntry | null>(null);
 const stats = ref<any>(null);
+
+const showEdit = ref(false);
+const saving = ref(false);
+const editError = ref('');
+const editForm = ref({ display_title: '', hall_name: '', origin: '', description: '' });
+
+// 管理员判定：登录用户 role === 'admin'
+const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
 
 onLoad((options: any) => {
   treeId.value = options?.tree_id || '';
@@ -59,7 +109,7 @@ onMounted(async () => {
   if (!treeId.value) return;
 
   try {
-    const meta = await fetchTreeMeta();
+    const meta = await fetchTreeMetaRemote();
     for (const [, entry] of Object.entries(meta.trees)) {
       if (entry.tree_id === treeId.value) {
         hallInfo.value = entry;
@@ -76,6 +126,52 @@ onMounted(async () => {
     console.error('加载统计失败:', e);
   }
 });
+
+function openEdit() {
+  if (!hallInfo.value) return;
+  editForm.value = {
+    display_title: hallInfo.value.display_title || '',
+    hall_name: hallInfo.value.hall_name || '',
+    origin: hallInfo.value.origin || '',
+    description: hallInfo.value.description || '',
+  };
+  editError.value = '';
+  showEdit.value = true;
+}
+
+function closeEdit() {
+  showEdit.value = false;
+}
+
+async function saveEdit() {
+  saving.value = true;
+  editError.value = '';
+  try {
+    const token = getAuthToken();
+    if (!token) {
+      editError.value = '登录已过期，请重新登录';
+      return;
+    }
+    await updateTreeMeta(token, {
+      tree_id: treeId.value,
+      ...editForm.value,
+    });
+    uni.showToast({ title: '保存成功', icon: 'success' });
+    showEdit.value = false;
+    // 刷新展示
+    const meta = await fetchTreeMetaRemote();
+    for (const [, entry] of Object.entries(meta.trees)) {
+      if (entry.tree_id === treeId.value) {
+        hallInfo.value = entry;
+        break;
+      }
+    }
+  } catch (e: any) {
+    editError.value = e.message || '保存失败';
+  } finally {
+    saving.value = false;
+  }
+}
 
 function goTo(page: string) {
   const prefix = page === 'generation' || page === 'migration' || page === 'pdf'
@@ -97,8 +193,14 @@ function goTo(page: string) {
 .container { padding: 20px; }
 .hero { text-align: center; margin-bottom: 30px; }
 .title { font-size: 22px; font-weight: bold; color: #3E2723; display: block; }
-.origin { font-size: 14px; color: #888; margin-top: 8px; display: block; }
+.hall-name { font-size: 16px; color: #8B4513; font-weight: bold; margin-top: 10px; display: block; }
+.origin { font-size: 14px; color: #888; margin-top: 6px; display: block; }
 .desc { font-size: 14px; color: #555; margin-top: 8px; line-height: 1.6; display: block; }
+.edit-entry {
+  display: inline-block; margin-top: 14px; padding: 8px 18px;
+  background: #FFF3E0; border: 1px solid #E8C9A0; border-radius: 18px;
+}
+.edit-btn-text { font-size: 13px; color: #8B4513; }
 .nav-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
 .nav-item {
   width: 30%; padding: 16px 8px; text-align: center;
@@ -109,4 +211,35 @@ function goTo(page: string) {
 .nav-label { font-size: 13px; color: #555; margin-top: 6px; display: block; }
 .stats { text-align: center; margin-top: 24px; padding: 16px; background: #FFF8E1; border-radius: 8px; }
 .stat { font-size: 14px; color: #5D4037; margin: 0 12px; display: inline-block; }
+
+/* 编辑模态框 */
+.modal-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.55); z-index: 999;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  width: 86%; max-width: 380px; background: #fff; border-radius: 14px;
+  padding: 24px 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+  max-height: 85vh; overflow-y: auto;
+}
+.modal-title { font-size: 18px; font-weight: bold; color: #3E2723; display: block; text-align: center; margin-bottom: 18px; }
+.form-item { margin-bottom: 14px; }
+.label { font-size: 13px; color: #8B4513; font-weight: bold; display: block; margin-bottom: 6px; }
+.input {
+  height: 42px; border: 1px solid #E0D5C8; border-radius: 8px;
+  padding: 0 12px; font-size: 14px; background: #FBF8F4; width: 100%;
+}
+.textarea {
+  min-height: 80px; border: 1px solid #E0D5C8; border-radius: 8px;
+  padding: 10px 12px; font-size: 14px; background: #FBF8F4; width: 100%;
+}
+.edit-error { color: #C62828; font-size: 13px; text-align: center; margin-bottom: 10px; }
+.modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.btn-save {
+  height: 42px; line-height: 42px; background: #8B4513; color: #fff;
+  font-size: 15px; border-radius: 8px;
+}
+.btn-save[disabled] { opacity: 0.6; }
+.btn-cancel { text-align: center; color: #999; font-size: 14px; padding: 4px 0; }
 </style>

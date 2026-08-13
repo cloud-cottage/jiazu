@@ -288,6 +288,41 @@ export function clearMetaCache(): void {
   metaCache = null;
 }
 
+/** 从 auth-server 读取 tree-meta（与 config/tree-meta.json 一致） */
+export async function fetchTreeMetaRemote(): Promise<TreeMeta> {
+  const res = await fetch(`${API_BASE}/tree-meta`);
+  if (!res.ok) throw new Error(`读取元数据失败 (${res.status})`);
+  return res.json();
+}
+
+/**
+ * 更新 tree 元数据（堂号/发源地/简介；需 admin token）
+ */
+export async function updateTreeMeta(
+  token: string,
+  data: {
+    tree_id: string;
+    display_title?: string;
+    hall_name?: string;
+    origin?: string;
+    description?: string;
+  },
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/tree-meta`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `更新失败 (${res.status})`);
+  }
+  clearMetaCache();
+}
+
 // ---- 统计 ----
 
 export async function fetchTreeStats(treeId: string): Promise<{

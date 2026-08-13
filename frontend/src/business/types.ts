@@ -15,6 +15,9 @@ export interface TreeEntry {
   path_alias: string;
   surname_char: string;
   display_title: string;
+  /** 堂号（如「三让堂」），可选 */
+  hall_name?: string;
+  /** 堂号发源地 */
   origin: string;
   description: string;
   enable_custom_domain: boolean;

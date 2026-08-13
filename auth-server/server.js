@@ -31,9 +31,12 @@ const GRAMPS_GUEST = {
   password: process.env.GRAMPS_GUEST_PASSWORD || 'GuestPass123!',
 };
 const SMS_PROVIDER = process.env.SMS_PROVIDER || 'console';
+const ADMIN_PHONE = process.env.ADMIN_PHONE || '';
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const CODES_FILE = path.join(DATA_DIR, 'codes.json');
+// tree-meta.json 与 config/ 目录共享（git 管理）
+const TREE_META_FILE = path.join(__dirname, '..', 'config', 'tree-meta.json');
 
 // ---- 存储 ----
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -131,12 +134,17 @@ function verifyCode(phone, inputCode) {
 // ---- 用户 ----
 function findOrCreateUser(phone, nickname) {
   if (!users[phone]) {
+    // 管理员手机号自动获得 admin 角色
+    const role = ADMIN_PHONE && phone === ADMIN_PHONE ? 'admin' : 'guest';
     users[phone] = {
       phone,
       nickname: nickname || `用户${phone.slice(-4)}`,
-      role: 'guest', // 新用户默认只读；管理员审核后升级
+      role,
       created_at: new Date().toISOString(),
     };
+    if (role === 'admin') {
+      console.log(`\n👑 管理员账号就绪: ${phone} (ADMIN_PHONE)\n`);
+    }
     persistUsers();
   } else if (nickname && nickname !== users[phone].nickname) {
     users[phone].nickname = nickname;
@@ -211,6 +219,21 @@ function readBodyRaw(req) {
   });
 }
 
+// ---- tree-meta 读写（config/tree-meta.json，git 管理） ----
+
+function readTreeMeta() {
+  try {
+    return JSON.parse(fs.readFileSync(TREE_META_FILE, 'utf8'));
+  } catch {
+    return { _schema: '1.0', trees: {} };
+  }
+}
+
+function writeTreeMeta(meta) {
+  fs.mkdirSync(path.dirname(TREE_META_FILE), { recursive: true });
+  fs.writeFileSync(TREE_META_FILE, JSON.stringify(meta, null, 2) + '\n');
+}
+
 // ---- 路由 ----
 const server = http.createServer(async (req, res) => {
   const { pathname, query } = parseUrl(req.url, true);
@@ -271,6 +294,39 @@ const server = http.createServer(async (req, res) => {
       const user = users[payload.phone];
       if (!user) return json(res, 404, { error: '用户不存在' });
       return json(res, 200, { phone: user.phone, nickname: user.nickname, role: user.role });
+    }
+
+    // ---- tree-meta 管理（公开读，管理员写） ----
+
+    if (urlPath === '/api/tree-meta' && req.method === 'GET') {
+      return json(res, 200, readTreeMeta());
+    }
+
+    if (urlPath === '/api/tree-meta' && req.method === 'PUT') {
+      const auth = req.headers.authorization || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const payload = verifyJwt(token);
+      if (!payload) return json(res, 401, { error: '未登录或登录已过期' });
+      const user = users[payload.phone];
+      if (!user || user.role !== 'admin') {
+        return json(res, 403, { error: '需要管理员权限' });
+      }
+      const body = await readBody(req);
+      const { tree_id, display_title, hall_name, origin, description } = body;
+      if (!tree_id) return json(res, 400, { error: '缺少 tree_id' });
+
+      const meta = readTreeMeta();
+      const entry = Object.values(meta.trees).find(
+        (t) => t.tree_id === tree_id,
+      );
+      if (!entry) return json(res, 404, { error: `未找到 tree: ${tree_id}` });
+
+      if (display_title !== undefined) entry.display_title = display_title;
+      if (hall_name !== undefined) entry.hall_name = hall_name;
+      if (origin !== undefined) entry.origin = origin;
+      if (description !== undefined) entry.description = description;
+      writeTreeMeta(meta);
+      return json(res, 200, { ok: true, entry });
     }
 
     // ---- 反向代理到 Gramps-Web ----
