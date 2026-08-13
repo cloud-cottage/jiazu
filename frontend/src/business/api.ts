@@ -220,6 +220,35 @@ export async function fetchPersonList(
   };
 }
 
+// ---- 家族 ----
+
+export interface FamilySummary {
+  handle: string;
+  gramps_id: string;
+  father_handle: string;
+  mother_handle: string;
+  child_handles: string[];
+}
+
+export async function fetchFamilyList(
+  treeId: string,
+): Promise<FamilySummary[]> {
+  const raw = await request<Array<{
+    handle: string;
+    gramps_id: string;
+    father_handle?: string;
+    mother_handle?: string;
+    child_ref_list?: Array<{ ref: string }>;
+  }>>('/families/');
+  return raw.map((f) => ({
+    handle: f.handle,
+    gramps_id: f.gramps_id || '',
+    father_handle: f.father_handle || '',
+    mother_handle: f.mother_handle || '',
+    child_handles: (f.child_ref_list || []).map((c) => c.ref),
+  }));
+}
+
 // ---- 搜索 ----
 
 export async function searchPeople(

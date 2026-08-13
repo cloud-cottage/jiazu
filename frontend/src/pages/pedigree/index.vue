@@ -3,9 +3,9 @@
     <text class="title">世系图谱</text>
     <text class="tree-id" v-if="treeId">Tree: {{ treeId }}</text>
 
-    <view class="stats" v-if="people.length">
-      <text class="stat">共 {{ people.length }} 人</text>
-      <text class="stat">{{ surnameGroups.length }} 个姓氏</text>
+    <view class="stats" v-if="forest.length">
+      <text class="stat">共 {{ totalPeople }} 人</text>
+      <text class="stat">{{ forest.length }} 支始祖</text>
     </view>
 
     <view v-if="loading" class="loading">
@@ -16,61 +16,89 @@
       <text>{{ error }}</text>
     </view>
 
-    <!-- 按姓氏分组的世系列表 -->
-    <view v-else class="surname-groups">
-      <view v-for="group in surnameGroups" :key="group.surname" class="group">
-        <view class="group-header">
-          <text class="group-surname">{{ group.surname || '（无姓）' }}</text>
-          <text class="group-count">{{ group.people.length }} 人</text>
+    <!-- ECharts 世系树 -->
+    <view v-else-if="forest.length" class="chart-wrap">
+      <view id="tree-chart" class="chart" />
+      <text class="hint">💡 点击人物节点查看详情 · 支持缩放拖动</text>
+    </view>
+
+    <view v-else class="empty">
+      <text>该家族暂无世系数据</text>
+    </view>
+
+    <!-- 人物详情模态框 -->
+    <view v-if="selected" class="modal-mask" @click="closeModal">
+      <view class="modal" @click.stop>
+        <text class="modal-name">{{ selected.name }}</text>
+
+        <view class="modal-tags">
+          <text class="tag" :class="genderClass">{{ genderLabel }}</text>
+          <text v-if="selected.is_living" class="tag tag-living">在世（脱敏）</text>
         </view>
-        <view class="person-list">
-          <view
-            v-for="p in group.people"
-            :key="p.handle"
-            class="person-item"
-            @click="goToPerson(p)"
-          >
-            <text class="person-name">{{ p.name }}</text>
-            <text class="person-life" v-if="p.birth_date || p.death_date">
-              {{ p.birth_date || '?' }} — {{ p.death_date || '?' }}
-            </text>
-            <text class="person-life" v-else-if="!isLiving(p)">已故</text>
-          </view>
+
+        <view class="modal-row" v-if="selected.birth_date && !selected.is_living">
+          <text class="row-label">生</text>
+          <text class="row-value">{{ selected.birth_date }}</text>
+        </view>
+        <view class="modal-row" v-if="selected.death_date && !selected.is_living">
+          <text class="row-label">卒</text>
+          <text class="row-value">{{ selected.death_date }}</text>
+        </view>
+        <view class="modal-row">
+          <text class="row-label">编号</text>
+          <text class="row-value">{{ selected.gramps_id }}</text>
+        </view>
+
+        <view class="modal-actions">
+          <button class="btn-detail" @click="goDetail">查看完整档案</button>
+          <text class="btn-close" @click="closeModal">关闭</text>
         </view>
       </view>
-
-      <text v-if="people.length === 0" class="empty">该家族暂无人物记录</text>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted, onUnmounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchPersonList, isLiving } from '@/business';
+import { fetchPersonList, fetchFamilyList } from '@/business/api';
+import { buildPedigreeForest } from '@/business/pedigree';
 import type { PersonSummary } from '@/business/types';
+import type { TreePersonNode } from '@/business/pedigree';
+import * as echarts from 'echarts';
 
 const treeId = ref('');
-const people = ref<PersonSummary[]>([]);
 const loading = ref(true);
 const error = ref('');
+const forest = ref<TreePersonNode[]>([]);
+const totalPeople = ref(0);
+const selected = ref<TreePersonNode | null>(null);
+
+let chart: echarts.ECharts | null = null;
 
 onLoad((options: any) => {
   treeId.value = options?.tree_id || '';
 });
 
-const surnameGroups = computed(() => {
-  const groups = new Map<string, PersonSummary[]>();
-  for (const p of people.value) {
-    const surname = p.surname || '（无姓）';
-    if (!groups.has(surname)) groups.set(surname, []);
-    groups.get(surname)!.push(p);
-  }
-  // 按人数降序
-  return Array.from(groups.entries())
-    .map(([surname, list]) => ({ surname, people: list }))
-    .sort((a, b) => b.people.length - a.people.length);
-});
+function genderLabel(): string {
+  if (!selected.value) return '';
+  return selected.value.gender === 'M' ? '男' : selected.value.gender === 'F' ? '女' : '未知';
+}
+function genderClass(): string {
+  if (!selected.value) return '';
+  return selected.value.gender === 'M' ? 'tag-male' : selected.value.gender === 'F' ? 'tag-female' : '';
+}
+
+function goDetail() {
+  if (!selected.value) return;
+  uni.navigateTo({
+    url: `/pages/person/detail?tree_id=${treeId.value}&handle=${selected.value.handle}`,
+  });
+}
+
+function closeModal() {
+  selected.value = null;
+}
 
 onMounted(async () => {
   if (!treeId.value) {
@@ -79,9 +107,16 @@ onMounted(async () => {
     return;
   }
   try {
-    // 一次拉取全部（page=0 返回全部；117 人规模小，后续大数据量改分页）
-    const res = await fetchPersonList(treeId.value, 0, 0);
-    people.value = res.data;
+    const [people, families] = await Promise.all([
+      fetchPersonList(treeId.value, 0, 0),
+      fetchFamilyList(treeId.value),
+    ]);
+    totalPeople.value = people.data.length;
+    forest.value = buildPedigreeForest(people.data, families);
+    // 等待 DOM 渲染后初始化图表
+    setTimeout(() => {
+      if (forest.value.length) renderChart();
+    }, 100);
   } catch (e: any) {
     console.error('加载世系数据失败:', e);
     error.value = `加载失败: ${e.message || e}`;
@@ -90,9 +125,71 @@ onMounted(async () => {
   }
 });
 
-function goToPerson(p: PersonSummary) {
-  uni.navigateTo({
-    url: `/pages/person/detail?tree_id=${treeId.value}&handle=${p.handle}`,
+onUnmounted(() => {
+  if (chart) {
+    chart.dispose();
+    chart = null;
+  }
+});
+
+function renderChart() {
+  const el = document.getElementById('tree-chart') as HTMLDivElement | null;
+  if (!el) return;
+
+  chart = echarts.init(el);
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      triggerOn: 'mousemove',
+      formatter: (params: any) => {
+        const d = params.data as TreePersonNode;
+        if (!d || !d.gramps_id) return '';
+        const life = d.birth_date ? `${d.birth_date} — ${d.death_date || '?'}` : '';
+        return `<b>${d.name}</b><br/>${d.gramps_id}${life ? `<br/>${life}` : ''}`;
+      },
+    },
+    series: [
+      {
+        type: 'tree',
+        data: forest.value,
+        // 径向布局：根系状
+        layout: 'radial',
+        symbol: 'circle',
+        symbolSize: 18,
+        initialTreeDepth: 4,
+        expandAndCollapse: true,
+        animationDuration: 550,
+        animationDurationUpdate: 750,
+        lineStyle: { color: '#A1887F', width: 1.2, curveness: 0.5 },
+        label: {
+          position: 'inside',
+          rotate: 0,
+          fontSize: 10,
+          color: '#fff',
+          formatter: (params: any) => {
+            const d = params.data as TreePersonNode;
+            return d.name ? d.name.slice(0, 4) : '';
+          },
+        },
+        emphasis: {
+          focus: 'descendant',
+          itemStyle: { borderColor: '#8B4513', borderWidth: 2 },
+        },
+        itemStyle: {
+          borderColor: '#fff',
+          borderWidth: 1,
+        },
+        // 点击节点回调
+        // 通过 chart.on('click') 处理
+      },
+    ],
+  });
+
+  chart.on('click', (params: any) => {
+    const d = params?.data as TreePersonNode | undefined;
+    if (d && d.gramps_id) {
+      selected.value = d;
+    }
   });
 }
 </script>
@@ -105,20 +202,33 @@ function goToPerson(p: PersonSummary) {
 .stat { font-size: 14px; color: #5D4037; margin: 0 12px; display: inline-block; }
 .loading, .error, .empty { text-align: center; padding: 40px; color: #999; }
 .error { color: #C62828; }
-.surname-groups { margin-top: 12px; }
-.group { margin-bottom: 20px; }
-.group-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px; background: #8B4513; border-radius: 8px 8px 0 0;
+.chart-wrap { margin-top: 8px; }
+.chart { width: 100%; height: 70vh; min-height: 480px; }
+.hint { display: block; text-align: center; font-size: 12px; color: #999; margin-top: 8px; }
+
+/* 模态框 */
+.modal-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.55); z-index: 999;
+  display: flex; align-items: center; justify-content: center;
 }
-.group-surname { font-size: 17px; font-weight: bold; color: #fff; }
-.group-count { font-size: 12px; color: #E8D5C0; }
-.person-list { background: #fff; border-radius: 0 0 8px 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
-.person-item {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; border-bottom: 1px solid #f0f0f0;
+.modal {
+  width: 82%; max-width: 360px; background: #fff; border-radius: 14px;
+  padding: 24px 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);
 }
-.person-item:last-child { border-bottom: none; }
-.person-name { font-size: 15px; color: #3E2723; font-weight: 500; }
-.person-life { font-size: 12px; color: #999; }
+.modal-name { font-size: 20px; font-weight: bold; color: #3E2723; display: block; text-align: center; }
+.modal-tags { display: flex; justify-content: center; gap: 8px; margin: 10px 0 14px; }
+.tag { font-size: 12px; padding: 3px 10px; border-radius: 10px; }
+.tag-male { background: #E3F0FA; color: #2C5F8A; }
+.tag-female { background: #FBE9EC; color: #A0505A; }
+.tag-living { background: #FFF3E0; color: #E65100; }
+.modal-row { display: flex; padding: 6px 0; }
+.row-label { width: 40px; color: #8B4513; font-weight: bold; font-size: 14px; }
+.row-value { color: #555; font-size: 14px; flex: 1; }
+.modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.btn-detail {
+  height: 40px; line-height: 40px; background: #8B4513; color: #fff;
+  font-size: 15px; border-radius: 8px;
+}
+.btn-close { text-align: center; color: #999; font-size: 14px; padding: 4px 0; }
 </style>
