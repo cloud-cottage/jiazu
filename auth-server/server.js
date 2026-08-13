@@ -17,8 +17,10 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse as parseUrl } from 'node:url';
+import { splitTree } from './split-tree.js';
 
 // ---- 配置 ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +32,16 @@ const GRAMPS_GUEST = {
   username: process.env.GRAMPS_GUEST_USERNAME || 'guest',
   password: process.env.GRAMPS_GUEST_PASSWORD || 'GuestPass123!',
 };
+const GRAMPS_ADMIN = {
+  username: process.env.GRAMPS_ADMIN_USERNAME || 'admin',
+  password: process.env.GRAMPS_ADMIN_PASSWORD || 'AdminPass123!',
+};
+const GRAMPS_OWNER = {
+  username: process.env.GRAMPS_OWNER_USERNAME || 'owner',
+  password: process.env.GRAMPS_OWNER_PASSWORD || 'OwnerPass123!',
+};
+// CLI 命令（空格分隔的 argv 数组），用于创建新 tree 的 owner 账号
+const GRAMPS_CLI_CMD = (process.env.GRAMPS_CLI_CMD || '').trim();
 const SMS_PROVIDER = process.env.SMS_PROVIDER || 'console';
 const ADMIN_PHONE = process.env.ADMIN_PHONE || '';
 const DATA_DIR = path.join(__dirname, 'data');
@@ -327,6 +339,41 @@ const server = http.createServer(async (req, res) => {
       if (description !== undefined) entry.description = description;
       writeTreeMeta(meta);
       return json(res, 200, { ok: true, entry });
+    }
+
+    // ---- 拆分家族树（admin）：「移除并新建家族树」 ----
+
+    if (urlPath === '/api/admin/split-tree' && req.method === 'POST') {
+      const auth = req.headers.authorization || '';
+      const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const payload = verifyJwt(token);
+      if (!payload) return json(res, 401, { error: '未登录或登录已过期' });
+      const user = users[payload.phone];
+      if (!user || user.role !== 'admin') {
+        return json(res, 403, { error: '需要管理员权限' });
+      }
+      const body = await readBody(req);
+      const { tree_id, ancestor_handle, ancestor_name } = body;
+      if (!tree_id || !ancestor_handle) {
+        return json(res, 400, { error: '缺少 tree_id 或 ancestor_handle' });
+      }
+
+      try {
+        const result = await splitTree({
+          treeId: tree_id,
+          ancestorHandle: ancestor_handle,
+          ancestorName: ancestor_name || '',
+          grampsBase: GRAMPS_BASE,
+          adminUser: GRAMPS_ADMIN.username,
+          adminPass: GRAMPS_ADMIN.password,
+          ownerUser: GRAMPS_OWNER.username,
+          ownerPass: GRAMPS_OWNER.password,
+        });
+        return json(res, 200, result);
+      } catch (e) {
+        console.error('[split-tree] 失败:', e.message);
+        return json(res, 500, { error: `拆分失败: ${e.message}` });
+      }
     }
 
     // ---- 反向代理到 Gramps-Web ----

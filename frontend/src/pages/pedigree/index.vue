@@ -51,6 +51,16 @@
 
         <view class="modal-actions">
           <button class="btn-detail" @click="goDetail">查看完整档案</button>
+          <!-- admin 专属：移除并新建家族树 -->
+          <button
+            v-if="isAdmin"
+            class="btn-split"
+            :disabled="splitting"
+            @click="confirmSplit"
+          >
+            {{ splitting ? '处理中...' : '⛔ 移除并新建家族树' }}
+          </button>
+          <text v-if="splitError" class="split-error">{{ splitError }}</text>
           <text class="btn-close" @click="closeModal">关闭</text>
         </view>
       </view>
@@ -59,10 +69,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchPersonList, fetchFamilyList } from '@/business/api';
+import { fetchPersonList, fetchFamilyList, splitTree } from '@/business/api';
 import { buildPedigreeForest } from '@/business/pedigree';
+import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
 import type { PersonSummary } from '@/business/types';
 import type { TreePersonNode } from '@/business/pedigree';
 import * as echarts from 'echarts';
@@ -73,6 +84,11 @@ const error = ref('');
 const forest = ref<TreePersonNode[]>([]);
 const totalPeople = ref(0);
 const selected = ref<TreePersonNode | null>(null);
+const splitting = ref(false);
+const splitError = ref('');
+
+// admin 判定：登录用户 role === 'admin'
+const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
 
 let chart: echarts.ECharts | null = null;
 
@@ -98,6 +114,80 @@ function goDetail() {
 
 function closeModal() {
   selected.value = null;
+  splitError.value = '';
+}
+
+/** admin 确认并执行「移除并新建家族树」 */
+async function confirmSplit() {
+  if (!selected.value) return;
+  const node = selected.value;
+
+  const confirmed = await new Promise<boolean>((resolve) => {
+    uni.showModal({
+      title: '移除并新建家族树',
+      content: `以「${node.name}」为始祖新建一支家族树？\n\n新树姓氏：${node.name[0] || '?'}氏\n原树中将移除 ${node.name} 及其全部后代。此操作不可撤销！`,
+      confirmText: '确认拆分',
+      cancelText: '取消',
+      success: (res) => resolve(res.confirm),
+      fail: () => resolve(false),
+    });
+  });
+  if (!confirmed) return;
+
+  const token = getAuthToken();
+  if (!token) {
+    splitError.value = '登录已过期，请重新登录';
+    return;
+  }
+
+  splitting.value = true;
+  splitError.value = '';
+  try {
+    const res = await splitTree(token, {
+      tree_id: treeId.value,
+      ancestor_handle: node.handle,
+      ancestor_name: node.name,
+    });
+    uni.showModal({
+      title: '拆分成功',
+      content: `已创建新家族树「${res.newTreeId}」\n${res.message}`,
+      showCancel: false,
+      confirmText: '刷新查看',
+      success: () => {
+        selected.value = null;
+        // 重新加载当前树（原树已移除该支）
+        reloadData();
+      },
+    });
+  } catch (e: any) {
+    splitError.value = e.message || '拆分失败';
+  } finally {
+    splitting.value = false;
+  }
+}
+
+/** 重新加载世系数据 */
+async function reloadData() {
+  loading.value = true;
+  try {
+    const [people, families] = await Promise.all([
+      fetchPersonList(treeId.value, 0, 0),
+      fetchFamilyList(treeId.value),
+    ]);
+    totalPeople.value = people.data.length;
+    forest.value = buildPedigreeForest(people.data, families);
+    if (chart) {
+      chart.dispose();
+      chart = null;
+    }
+    setTimeout(() => {
+      if (forest.value.length) renderChart();
+    }, 100);
+  } catch (e: any) {
+    error.value = `加载失败: ${e.message || e}`;
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -242,5 +332,11 @@ function renderChart() {
   height: 40px; line-height: 40px; background: #8B4513; color: #fff;
   font-size: 15px; border-radius: 8px;
 }
+.btn-split {
+  height: 40px; line-height: 40px; background: #C62828; color: #fff;
+  font-size: 14px; border-radius: 8px;
+}
+.btn-split[disabled] { opacity: 0.6; }
+.split-error { text-align: center; color: #C62828; font-size: 12px; }
 .btn-close { text-align: center; color: #999; font-size: 14px; padding: 4px 0; }
 </style>

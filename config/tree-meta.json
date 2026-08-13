@@ -21,6 +21,16 @@
       "description": "清末江苏无锡季氏",
       "enable_custom_domain": false,
       "hall_name": "三让堂"
+    },
+    "ji_23395_03": {
+      "tree_id": "ji_23395_03",
+      "path_alias": "/ji_23395_03",
+      "surname_char": "季",
+      "display_title": "季氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：George 志全氏",
+      "enable_custom_domain": false
     }
   }
 }

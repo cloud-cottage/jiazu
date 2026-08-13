@@ -108,6 +108,39 @@ export async function fetchMe(token: string): Promise<{
   return res.json();
 }
 
+/**
+ * 【移除并新建家族树】以指定人物为始祖拆分新家族树（需 admin）
+ * 新树姓氏 = 始祖姓氏；原树中移除该节点及其子节点
+ */
+export async function splitTree(
+  token: string,
+  data: {
+    tree_id: string;
+    ancestor_handle: string;
+    ancestor_name?: string;
+  },
+): Promise<{
+  ok: boolean;
+  newTreeId: string;
+  surname: string;
+  movedPeople: number;
+  message: string;
+}> {
+  const res = await fetch(`${API_BASE}/admin/split-tree`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `拆分失败 (${res.status})`);
+  }
+  return res.json();
+}
+
 // ---- 数据解析（官方 API 真实字段） ----
 
 interface RawPerson {
