@@ -22,13 +22,17 @@ const API_BASE = '/api';
 
 async function request<T>(
   path: string,
-  options: { method?: string; body?: unknown } = {},
+  options: { method?: string; body?: unknown; treeId?: string } = {},
 ): Promise<T> {
-  const { method = 'GET', body } = options;
+  const { method = 'GET', body, treeId } = options;
   const headers: Record<string, string> = {};
 
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
+  }
+  // 多 tree 支持：auth-server 按此 header 选择对应 Gramps 凭据
+  if (treeId) {
+    headers['X-Tree-Id'] = treeId;
   }
 
   const response = await fetch(`${API_BASE}${path}`, {
@@ -220,7 +224,7 @@ export async function fetchPerson(
   handle: string,
 ): Promise<PersonDetail> {
   // 注意：单对象路由无尾斜杠（/api/people/<handle>）
-  const raw = await request<RawPerson>(`/people/${handle}?profile=all`);
+  const raw = await request<RawPerson>(`/people/${handle}?profile=all`, { treeId });
   const summary = toPersonSummary(raw);
   return {
     ...summary,
@@ -246,7 +250,7 @@ export async function fetchPersonList(
     page > 0 && pageSize > 0
       ? `/people/?profile=all&page=${page}&pagesize=${pageSize}`
       : `/people/?profile=all`;
-  const raw = await request<RawPerson[]>(query);
+  const raw = await request<RawPerson[]>(query, { treeId });
   return {
     data: raw.map(toPersonSummary),
     total: raw.length,
@@ -272,7 +276,7 @@ export async function fetchFamilyList(
     father_handle?: string;
     mother_handle?: string;
     child_ref_list?: Array<{ ref: string }>;
-  }>>('/families/');
+  }>>('/families/', { treeId });
   return raw.map((f) => ({
     handle: f.handle,
     gramps_id: f.gramps_id || '',
@@ -293,6 +297,7 @@ export async function searchPeople(
   }
   const raw = await request<RawPerson[]>(
     `/search/?query=${encodeURIComponent(query)}&profile=all&pagesize=20`,
+    { treeId: tree_id },
   );
   return {
     tree_id,
@@ -365,7 +370,7 @@ export async function fetchTreeStats(treeId: string): Promise<{
   event_count: number;
 }> {
   try {
-    const raw = await request<RawPerson[]>(`/people/?pagesize=1&profile=all`);
+    const raw = await request<RawPerson[]>(`/people/?pagesize=1&profile=all`, { treeId });
     return { person_count: raw.length, family_count: 0, media_count: 0, event_count: 0 };
   } catch {
     return { person_count: 0, family_count: 0, media_count: 0, event_count: 0 };

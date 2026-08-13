@@ -181,28 +181,79 @@ function json(res, status, obj) {
   res.end(body);
 }
 
-// ---- Gramps-Web 反向代理 ----
-let grampsToken = null;
-let grampsTokenExp = 0;
+// ---- Gramps-Web 反向代理（多 tree 凭据） ----
 
-async function getGrampsToken() {
-  if (grampsToken && grampsTokenExp > Date.now() + 60_000) return grampsToken;
-  const res = await fetch(`${GRAMPS_BASE}/api/token/`, {
+// tree_id -> { username, password }；含默认 guest（ji_23395_01）+ 拆分出的新树 owner
+const treeCredentials = new Map();
+function loadTreeCredentials() {
+  // 1. 默认 guest（原树）
+  treeCredentials.set('ji_23395_01', { ...GRAMPS_GUEST });
+  // 2. 拆分产生的新树 owner（data/gramps-owners.json）
+  const ownersFile = path.join(DATA_DIR, 'gramps-owners.json');
+  try {
+    const owners = JSON.parse(fs.readFileSync(ownersFile, 'utf8'));
+    for (const [treeId, info] of Object.entries(owners)) {
+      if (info?.username && info?.password) {
+        treeCredentials.set(treeId, { username: info.username, password: info.password });
+      }
+    }
+  } catch {
+    /* 文件不存在或未生成 */
+  }
+}
+loadTreeCredentials();
+
+// tree_id -> { token, exp }（模块级缓存，避免登录限流）
+const treeTokenCache = new Map();
+
+async function getGrampsTokenFor(treeId) {
+  const cred = treeCredentials.get(treeId);
+  if (!cred) throw new Error(`未配置 tree ${treeId} 的访客凭据`);
+  const cached = treeTokenCache.get(treeId);
+  if (cached && cached.exp > Date.now() + 60_000) return cached.token;
+  let res = await fetch(`${GRAMPS_BASE}/api/token/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(GRAMPS_GUEST),
+    body: JSON.stringify(cred),
   });
-  if (!res.ok) throw new Error(`Gramps 访客登录失败: ${res.status}`);
+  // 限流重试（1/second）
+  for (let i = 0; i < 3 && res.status === 429; i++) {
+    await new Promise((r) => setTimeout(r, 1200));
+    res = await fetch(`${GRAMPS_BASE}/api/token/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cred),
+    });
+  }
+  if (!res.ok) throw new Error(`Gramps 登录失败 (${cred.username}): ${res.status}`);
   const data = await res.json();
-  grampsToken = data.access_token;
-  grampsTokenExp = Date.now() + 14 * 60 * 1000;
-  return grampsToken;
+  treeTokenCache.set(treeId, { token: data.access_token, exp: Date.now() + 14 * 60 * 1000 });
+  return data.access_token;
+}
+
+/** 从请求中提取 tree_id（header 优先，其次 URL tree_id 参数） */
+function extractTreeId(req, query) {
+  const fromHeader = req.headers['x-tree-id'];
+  if (fromHeader) return fromHeader;
+  try {
+    const params = new URLSearchParams(query || '');
+    if (params.get('tree_id')) return params.get('tree_id');
+  } catch { /* ignore */ }
+  return 'ji_23395_01'; // 默认原树
 }
 
 async function proxyToGramps(req, res, pathname, query) {
   try {
-    const token = await getGrampsToken();
-    const target = `${GRAMPS_BASE}/api${pathname}${query ? `?${query}` : ''}`;
+    const treeId = extractTreeId(req, query);
+    const token = await getGrampsTokenFor(treeId);
+    // 剥离 tree_id 参数（Gramps-Web 不认，会导致 422），仅用于选择凭据
+    let upstreamQuery = query || '';
+    try {
+      const params = new URLSearchParams(upstreamQuery);
+      params.delete('tree_id');
+      upstreamQuery = params.toString();
+    } catch { /* ignore */ }
+    const target = `${GRAMPS_BASE}/api${pathname}${upstreamQuery ? `?${upstreamQuery}` : ''}`;
     const headers = {
       Authorization: `Bearer ${token}`,
       ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),
