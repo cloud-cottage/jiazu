@@ -22,6 +22,20 @@
       <text class="hint">💡 点击人物节点查看详情 · 支持缩放拖动</text>
     </view>
 
+    <!-- 图示切换按钮（右侧悬浮） -->
+    <view v-if="forest.length" class="layout-switcher">
+      <view
+        v-for="opt in layoutOptions"
+        :key="opt.id"
+        class="layout-btn"
+        :class="{ active: currentLayout === opt.id }"
+        @click="switchLayout(opt.id)"
+      >
+        <text class="layout-icon">{{ opt.icon }}</text>
+        <text class="layout-name">{{ opt.name }}</text>
+      </view>
+    </view>
+
     <view v-else class="empty">
       <text>该家族暂无世系数据</text>
     </view>
@@ -86,6 +100,13 @@ const totalPeople = ref(0);
 const selected = ref<TreePersonNode | null>(null);
 const splitting = ref(false);
 const splitError = ref('');
+const currentLayout = ref('radial');
+const layoutOptions = [
+  { id: 'radial', name: '径向', icon: '🕸️' },
+  { id: 'vertical', name: '纵向', icon: '📊' },
+  { id: 'horizontal', name: '横向', icon: '📐' },
+  { id: 'fan', name: '扇形', icon: '🎪' },
+];
 
 // admin 判定：登录用户 role === 'admin'
 const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
@@ -235,9 +256,18 @@ function renderChart() {
   const el = document.getElementById('tree-chart') as HTMLDivElement | null;
   if (!el) return;
 
-  chart = echarts.init(el);
+  if (!chart) {
+    chart = echarts.init(el);
+    chart.on('click', (params: any) => {
+      const d = params?.data as TreePersonNode | undefined;
+      // 虚拟根（无 gramps_id）不弹模态框
+      if (d && d.gramps_id) {
+        selected.value = d;
+      }
+    });
+  }
 
-  // 多根森林 → 包虚拟根，避免 radial 布局下根节点全部重叠在圆心
+  // 多根森林 → 包虚拟根，避免布局下根节点全部重叠
   const rootNode: TreePersonNode = {
     name: '始祖',
     handle: '__root__',
@@ -248,40 +278,80 @@ function renderChart() {
     children: forest.value,
   };
 
+  const labelFmt = (params: any) => {
+    const d = params.data as TreePersonNode;
+    return d.name ? d.name.slice(0, 4) : '';
+  };
+  const tooltipFmt = (params: any) => {
+    const d = params.data as TreePersonNode;
+    if (!d || !d.gramps_id) return d?.name || '';
+    const life = d.birth_date ? `${d.birth_date} — ${d.death_date || '?'}` : '';
+    return `<b>${d.name}</b><br/>${d.gramps_id}${life ? `<br/>${life}` : ''}`;
+  };
+
+  const base = {
+    tooltip: { trigger: 'item' as const, triggerOn: 'mousemove' as const, formatter: tooltipFmt },
+  };
+
+  if (currentLayout.value === 'fan') {
+    // ---- 扇形图：始祖在圆心，世代按角度辐射 ----
+    chart.setOption({
+      ...base,
+      series: [
+        {
+          type: 'tree',
+          data: [rootNode],
+          layout: 'radial',
+          symbol: 'circle',
+          symbolSize: 12,
+          initialTreeDepth: 10,
+          expandAndCollapse: true,
+          animationDuration: 550,
+          animationDurationUpdate: 750,
+          // 扇形效果：限定角度范围 + 连线沿径向
+          lineStyle: { color: '#A1887F', width: 1, curveness: 0 },
+          label: {
+            position: 'inside',
+            fontSize: 9,
+            color: '#fff',
+            formatter: labelFmt,
+          },
+          emphasis: {
+            focus: 'descendant',
+            itemStyle: { borderColor: '#8B4513', borderWidth: 2 },
+          },
+          itemStyle: { borderColor: '#fff', borderWidth: 1 },
+        },
+      ],
+    });
+    return;
+  }
+
+  const orient =
+    currentLayout.value === 'horizontal' ? 'LR' : 'TB';
+
   chart.setOption({
-    tooltip: {
-      trigger: 'item',
-      triggerOn: 'mousemove',
-      formatter: (params: any) => {
-        const d = params.data as TreePersonNode;
-        if (!d || !d.gramps_id) return d?.name || '';
-        const life = d.birth_date ? `${d.birth_date} — ${d.death_date || '?'}` : '';
-        return `<b>${d.name}</b><br/>${d.gramps_id}${life ? `<br/>${life}` : ''}`;
-      },
-    },
+    ...base,
     series: [
       {
         type: 'tree',
         data: [rootNode],
-        // 径向布局：根系状
-        layout: 'radial',
+        // 径向 = 根系状；纵向/横向 = 正交布局
+        layout: currentLayout.value === 'radial' ? 'radial' : 'orthogonal',
+        orient,
         symbol: 'circle',
-        symbolSize: 16,
-        // 全量展开（最大深度 5 代，10 足够覆盖），44 支始祖沿圆周分布
+        symbolSize: currentLayout.value === 'radial' ? 16 : 14,
         initialTreeDepth: 10,
         expandAndCollapse: true,
         animationDuration: 550,
         animationDurationUpdate: 750,
         lineStyle: { color: '#A1887F', width: 1.2, curveness: 0.5 },
         label: {
-          position: 'inside',
+          position: currentLayout.value === 'radial' ? 'inside' : 'right',
           rotate: 0,
-          fontSize: 9,
+          fontSize: currentLayout.value === 'radial' ? 9 : 10,
           color: '#fff',
-          formatter: (params: any) => {
-            const d = params.data as TreePersonNode;
-            return d.name ? d.name.slice(0, 4) : '';
-          },
+          formatter: labelFmt,
         },
         emphasis: {
           focus: 'descendant',
@@ -294,14 +364,13 @@ function renderChart() {
       },
     ],
   });
+}
 
-  chart.on('click', (params: any) => {
-    const d = params?.data as TreePersonNode | undefined;
-    // 虚拟根（无 gramps_id）不弹模态框
-    if (d && d.gramps_id) {
-      selected.value = d;
-    }
-  });
+/** 切换图示布局 */
+function switchLayout(id: string) {
+  if (currentLayout.value === id) return;
+  currentLayout.value = id;
+  renderChart();
 }
 </script>
 
@@ -316,6 +385,36 @@ function renderChart() {
 .chart-wrap { margin-top: 8px; }
 .chart { width: 100%; height: 70vh; min-height: 480px; }
 .hint { display: block; text-align: center; font-size: 12px; color: #999; margin-top: 8px; }
+
+/* 图示切换按钮（右侧悬浮） */
+.layout-switcher {
+  position: fixed;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 900;
+}
+.layout-btn {
+  width: 52px;
+  padding: 8px 4px;
+  background: #fff;
+  border: 1px solid #E0D5C8;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+}
+.layout-btn.active {
+  background: #8B4513;
+  border-color: #8B4513;
+}
+.layout-icon { font-size: 16px; }
+.layout-name { font-size: 10px; color: #8B4513; margin-top: 2px; }
+.layout-btn.active .layout-name { color: #fff; }
 
 /* 模态框 */
 .modal-mask {
