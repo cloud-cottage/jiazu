@@ -6,20 +6,21 @@
       "tree_id": "ji_23395_01",
       "path_alias": "/ji_23395_01",
       "surname_char": "季",
-      "display_title": "季氏（苏南支）家族历史数字馆",
-      "hall_name": "三让堂",
-      "origin": "江苏苏州洞庭",
-      "description": "苏州洞庭季氏支系家谱数字化，收录旧谱与迁徙史料",
+      "display_title": "季氏（白露村）家族历史数字馆",
+      "hall_name": "暂无",
+      "origin": "山东省临沂市费县新庄镇季家白露村",
+      "description": "山东临沂季氏支系家谱数字化，收录旧谱与迁徙史料",
       "enable_custom_domain": true
     },
     "jiazutong.cn/ji_23395_02": {
       "tree_id": "ji_23395_02",
       "path_alias": "/ji_23395_02",
       "surname_char": "季",
-      "display_title": "季氏（秦皇岛闯关东支）家族历史数字馆",
-      "origin": "山东迁徙河北秦皇岛",
-      "description": "清末闯关东迁徙季氏支系",
-      "enable_custom_domain": false
+      "display_title": "季氏（苏南支）家族历史数字馆",
+      "origin": "江苏无锡",
+      "description": "清末江苏无锡季氏",
+      "enable_custom_domain": false,
+      "hall_name": "三让堂"
     }
   }
 }

@@ -137,13 +137,25 @@ function renderChart() {
   if (!el) return;
 
   chart = echarts.init(el);
+
+  // 多根森林 → 包虚拟根，避免 radial 布局下根节点全部重叠在圆心
+  const rootNode: TreePersonNode = {
+    name: '始祖',
+    handle: '__root__',
+    gramps_id: '',
+    gender: 'U',
+    is_living: false,
+    itemStyle: { color: '#8B4513' },
+    children: forest.value,
+  };
+
   chart.setOption({
     tooltip: {
       trigger: 'item',
       triggerOn: 'mousemove',
       formatter: (params: any) => {
         const d = params.data as TreePersonNode;
-        if (!d || !d.gramps_id) return '';
+        if (!d || !d.gramps_id) return d?.name || '';
         const life = d.birth_date ? `${d.birth_date} — ${d.death_date || '?'}` : '';
         return `<b>${d.name}</b><br/>${d.gramps_id}${life ? `<br/>${life}` : ''}`;
       },
@@ -151,12 +163,13 @@ function renderChart() {
     series: [
       {
         type: 'tree',
-        data: forest.value,
+        data: [rootNode],
         // 径向布局：根系状
         layout: 'radial',
         symbol: 'circle',
-        symbolSize: 18,
-        initialTreeDepth: 4,
+        symbolSize: 16,
+        // 全量展开（最大深度 5 代，10 足够覆盖），44 支始祖沿圆周分布
+        initialTreeDepth: 10,
         expandAndCollapse: true,
         animationDuration: 550,
         animationDurationUpdate: 750,
@@ -164,7 +177,7 @@ function renderChart() {
         label: {
           position: 'inside',
           rotate: 0,
-          fontSize: 10,
+          fontSize: 9,
           color: '#fff',
           formatter: (params: any) => {
             const d = params.data as TreePersonNode;
@@ -179,14 +192,13 @@ function renderChart() {
           borderColor: '#fff',
           borderWidth: 1,
         },
-        // 点击节点回调
-        // 通过 chart.on('click') 处理
       },
     ],
   });
 
   chart.on('click', (params: any) => {
     const d = params?.data as TreePersonNode | undefined;
+    // 虚拟根（无 gramps_id）不弹模态框
     if (d && d.gramps_id) {
       selected.value = d;
     }
