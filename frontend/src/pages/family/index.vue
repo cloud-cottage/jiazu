@@ -91,16 +91,16 @@ const error = ref('');
 const nodes = ref<any[]>([]);
 const activeGen = ref(1);
 
-// 关键节点标记
+// 关键节点标记（key 用 Gramps 存储的 first+last 拼接格式）
 const KEY_NODES: Record<string, { tag: string; theme: string; gen: number }> = {
-  伏羲: { tag: '人文始祖', theme: 'warning', gen: 1 },
-  黄帝: { tag: '五帝', theme: 'warning', gen: 56 },
-  帝喾: { tag: '五帝', theme: 'warning', gen: 59 },
-  周文王姬昌: { tag: '西周奠基', theme: 'danger', gen: 74 },
-  周公旦: { tag: '元圣', theme: 'danger', gen: 75 },
-  伯禽: { tag: '鲁国始君', theme: 'primary', gen: 76 },
-  季友: { tag: '季氏得姓始祖', theme: 'primary', gen: 88 },
-  季文子: { tag: '季孙氏宗主', theme: 'success', gen: 90 },
+  伏羲风: { tag: '人文始祖', theme: 'warning', gen: 1 },
+  黄帝姬: { tag: '五帝', theme: 'warning', gen: 56 },
+  帝喾姬: { tag: '五帝', theme: 'warning', gen: 59 },
+  昌姬: { tag: '周文王', theme: 'danger', gen: 74 },
+  旦姬: { tag: '周公·元圣', theme: 'danger', gen: 75 },
+  伯禽姬: { tag: '鲁国始君', theme: 'primary', gen: 76 },
+  友季: { tag: '季氏得姓始祖', theme: 'primary', gen: 88 },
+  文子季: { tag: '季孙氏宗主', theme: 'success', gen: 90 },
 };
 
 const rootNode = computed(() => {
@@ -142,8 +142,10 @@ const genMarkers = computed(() => {
   const gens = nodes.value.map((n) => n.gen || 0).sort((a, b) => a - b);
   const maxGen = gens.length ? gens[gens.length - 1] : 0;
   // 关键节点
-  for (const [name, info] of Object.entries(KEY_NODES)) {
-    markers.push({ gen: info.gen, name: name.slice(0, 4) });
+  for (const [, info] of Object.entries(KEY_NODES)) {
+    // 导航显示简化名：取 tag 核心词或世数
+    const label = info.tag.replace('·', '');
+    markers.push({ gen: info.gen, name: label.slice(0, 4) });
   }
   markers.sort((a, b) => a.gen - b.gen);
   return markers;
@@ -190,16 +192,21 @@ async function fetchChainData(): Promise<any[]> {
     if (attrs.external_chain_gen) {
       const pn = p.primary_name || {};
       const sn = pn.surname_list?.[0]?.surname || '';
+      const fn = pn.first_name || '';
+      // 原始拼接名（first+last，用于关键节点匹配）：季文子 → 文子季
+      const rawName = `${fn}${sn}`.trim();
+      // 显示名：姓在前（文子季 → 季文子）
+      const displayName = sn && fn ? `${sn}${fn}` : rawName;
       chain.push({
         handle: p.handle,
         gramps_id: p.gramps_id,
-        name: `${pn.first_name || ''}${sn}`.trim() || p.gramps_id,
+        name: displayName || p.gramps_id,
         gen: parseInt(attrs.external_chain_gen, 10) || 0,
         is_aggregate: attrs.external_chain_aggregate === 'true',
         note: attrs.external_relation_note || '',
       });
-      // 关键节点标记（基于名字匹配）
-      const keyInfo = KEY_NODES[chain[chain.length - 1].name];
+      // 关键节点标记（基于原始拼接名匹配）
+      const keyInfo = KEY_NODES[rawName];
       if (keyInfo) {
         chain[chain.length - 1].tag = keyInfo.tag;
         chain[chain.length - 1].tagTheme = keyInfo.theme;
