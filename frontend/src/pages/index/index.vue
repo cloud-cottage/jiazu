@@ -7,6 +7,10 @@
           <view v-if="isAuthenticated()" class="wallet-badge" @click="goWallet">
             <text class="wallet-text">💰 我的钱包</text>
           </view>
+          <!-- 管理角色显示角色管理入口 -->
+          <view v-if="canManage" class="admin-badge" @click="goAdmin">
+            <text class="admin-text">⚙️ 角色管理</text>
+          </view>
         </view>
         <view class="auth-badge" @click="goAuth">
           <text v-if="isAuthenticated()" class="auth-text">👤 {{ authState.nickname }}</text>
@@ -51,12 +55,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { fetchTreeMetaRemote, buildTreeUrl } from '@/business';
 import { isAuthenticated, authState } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
 
 const halls = ref<DigitalHallCard[]>([]);
+
+// 管理角色（tree_steward / chief_editor）显示角色管理入口
+const canManage = computed(() => {
+  if (!isAuthenticated()) return false;
+  return authState.role === 'tree_steward' || authState.role === 'chief_editor';
+});
 
 onMounted(async () => {
   try {
@@ -92,6 +102,10 @@ function goAuth() {
 function goWallet() {
   uni.navigateTo({ url: '/pages/wallet/index' });
 }
+
+function goAdmin() {
+  uni.navigateTo({ url: '/pages/admin/index' });
+}
 </script>
 
 <style scoped>
@@ -100,6 +114,8 @@ function goWallet() {
 .header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .wallet-badge { padding: 6px 14px; background: #E8F5E9; border-radius: 16px; }
 .wallet-text { font-size: 13px; color: #2E7D32; }
+.admin-badge { padding: 6px 14px; background: #FFEBEE; border-radius: 16px; margin-left: 8px; }
+.admin-text { font-size: 13px; color: #C62828; }
 .auth-badge { padding: 6px 14px; background: #FFF3E0; border-radius: 16px; }
 .auth-text { font-size: 13px; color: #8B4513; }
 .title { font-size: 24px; font-weight: bold; display: block; }

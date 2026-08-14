@@ -695,6 +695,41 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, phone: targetPhone, role: newRole, old_role: oldRole });
     }
 
+    // 设置用户锚点（chief_editor / tree_steward 可操作）
+    if (urlPath === '/api/admin/set-anchor' && req.method === 'POST') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      const myLevel = ROLE_LEVEL[u.role] ?? 0;
+      if (myLevel < ROLE_LEVEL.tree_steward) {
+        return json(res, 403, { error: '需要族谱主理人或以上权限' });
+      }
+      const body = await readBody(req);
+      const targetPhone = String(body.phone || '').trim();
+      const treeId = String(body.tree_id || '').trim();
+      const personHandle = String(body.person_handle || '').trim();
+      if (!targetPhone || !treeId || !personHandle) {
+        return json(res, 400, { error: '参数错误：phone + tree_id + person_handle 必填' });
+      }
+      if (!users[targetPhone]) return json(res, 404, { error: `用户不存在: ${targetPhone}` });
+      // tree_steward 只能给同树用户设锚点（简化：不校验树归属）
+      scope.setAnchor(targetPhone, treeId, personHandle);
+      console.log(`[锚点] ${u.phone} 为 ${targetPhone} 设置锚点: ${treeId}/${personHandle}`);
+      return json(res, 200, { ok: true });
+    }
+
+    // 查询用户锚点（本人可查自己；管理角色可查任意）
+    if (urlPath === '/api/admin/get-anchor' && req.method === 'GET') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      const targetPhone = new URL(req.url, 'http://x').searchParams.get('phone') || u.phone;
+      const myLevel = ROLE_LEVEL[u.role] ?? 0;
+      if (targetPhone !== u.phone && myLevel < ROLE_LEVEL.tree_steward) {
+        return json(res, 403, { error: '无权查看他人锚点' });
+      }
+      const anchor = scope.getAnchor(targetPhone);
+      return json(res, 200, { phone: targetPhone, anchor });
+    }
+
     // 用户列表（tree_steward 及以上可查）
     if (urlPath === '/api/admin/users' && req.method === 'GET') {
       const u = authUser(req);

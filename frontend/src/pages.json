@@ -25,6 +25,12 @@
       }
     },
     {
+      "path": "pages/admin/index",
+      "style": {
+        "navigationBarTitleText": "角色管理"
+      }
+    },
+    {
       "path": "pages/about/about",
       "style": {
         "navigationBarTitleText": "关于本站"

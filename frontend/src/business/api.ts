@@ -383,6 +383,70 @@ export async function setTreeCreateFee(
   return res.json();
 }
 
+// ---- 角色管理 ----
+
+export interface ManagedUser {
+  phone: string;
+  nickname: string;
+  role: string;
+  created_at: string;
+}
+
+/** 用户列表（tree_steward 及以上） */
+export async function fetchUserList(token: string): Promise<ManagedUser[]> {
+  const res = await fetch(`${API_BASE}/admin/users`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `获取用户列表失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+/** 设置用户角色 */
+export async function setUserRole(
+  token: string,
+  phone: string,
+  role: string,
+): Promise<{ ok: boolean; phone: string; role: string; old_role: string }> {
+  const res = await fetch(`${API_BASE}/admin/set-role`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ phone, role }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `设置角色失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+/** 设置用户锚点（用户在树中的自身节点） */
+export async function setAnchor(
+  token: string,
+  phone: string,
+  treeId: string,
+  personHandle: string,
+): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/admin/set-anchor`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ phone, tree_id: treeId, person_handle: personHandle }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error || `设置锚点失败 (${res.status})`);
+  }
+  return res.json();
+}
+
 // ---- 搜索 ----
 
 export async function searchPeople(
