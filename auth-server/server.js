@@ -208,7 +208,12 @@ loadTreeCredentials();
 const treeTokenCache = new Map();
 
 async function getGrampsTokenFor(treeId) {
-  const cred = treeCredentials.get(treeId);
+  let cred = treeCredentials.get(treeId);
+  // 懒加载：拆分产生的新树凭据写入文件后，无需重启即生效
+  if (!cred) {
+    loadTreeCredentials();
+    cred = treeCredentials.get(treeId);
+  }
   if (!cred) throw new Error(`未配置 tree ${treeId} 的访客凭据`);
   const cached = treeTokenCache.get(treeId);
   if (cached && cached.exp > Date.now() + 60_000) return cached.token;
