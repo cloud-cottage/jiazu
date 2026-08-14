@@ -383,6 +383,37 @@ export async function setTreeCreateFee(
   return res.json();
 }
 
+/** 中华世本总谱节点（公开读，含跨树引用） */
+export interface MasterNode {
+  handle: string;
+  gramps_id: string;
+  name: string;
+  external_tree?: string;
+}
+
+/** 拉取中华世本总谱全部节点 */
+export async function fetchMasterTree(): Promise<MasterNode[]> {
+  const res = await fetch(`${API_BASE}/people/?profile=all`, {
+    headers: { 'X-Tree-Id': 'zhonghua_shiben_01' },
+  });
+  if (!res.ok) throw new Error(`加载总谱失败 (${res.status})`);
+  const raw = await res.json();
+  return (raw as any[]).map((p) => {
+    const pn = p.primary_name || {};
+    const sn = pn.surname_list?.[0]?.surname || '';
+    const attrs: Record<string, string> = {};
+    for (const a of p.attribute_list || []) {
+      if (typeof a.type === 'string') attrs[a.type] = a.value;
+    }
+    return {
+      handle: p.handle,
+      gramps_id: p.gramps_id,
+      name: `${pn.first_name || ''}${sn}`,
+      external_tree: attrs.external_tree,
+    };
+  });
+}
+
 // ---- 角色管理 ----
 
 export interface ManagedUser {
