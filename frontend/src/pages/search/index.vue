@@ -9,9 +9,9 @@
     />
 
     <view class="scope-toggle">
-      <t-radio-group v-model="scope">
-        <t-radio-button value="tree">当前家族</t-radio-button>
-        <t-radio-button value="global">全局跨家族</t-radio-button>
+      <t-radio-group v-model="scope" placement="horizontal">
+        <t-radio value="tree">当前家族</t-radio>
+        <t-radio value="global">全局跨家族</t-radio>
       </t-radio-group>
     </view>
 
