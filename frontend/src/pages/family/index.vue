@@ -4,6 +4,13 @@
     <view class="hero">
       <text class="hero-title">中华世本</text>
       <text class="hero-sub">汇聚有记载的中国先人 · 串联各家族树始祖</text>
+      <view v-if="rank" class="hero-rank">
+        <t-tag theme="danger" variant="light" size="small">{{ rank.rank_label }}</t-tag>
+        <text class="hero-rank-text">共 {{ rank.total_generations }} 世 · {{ rank.rank_en }}</text>
+      </view>
+      <view v-if="rank?.over_limit" class="hero-warn">
+        ⚠️ 该谱系已超过普通家族树 {{ rank.max_depth }} 世上限，由总编辑专属维护
+      </view>
     </view>
 
     <view v-if="loading" class="center">
@@ -83,13 +90,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchMasterTree, API_BASE } from '@/business';
+import { fetchMasterTree, API_BASE, fetchTreeRank } from '@/business';
 import type { MasterNode } from '@/business/api';
+import type { TreeRankInfo } from '@/business/api';
 
 const loading = ref(true);
 const error = ref('');
 const nodes = ref<any[]>([]);
 const activeGen = ref(1);
+const rank = ref<TreeRankInfo | null>(null);
 
 // 关键节点标记（key 用 Gramps 存储的 first+last 拼接格式）
 const KEY_NODES: Record<string, { tag: string; theme: string; gen: number }> = {
@@ -155,6 +164,8 @@ async function loadData() {
   loading.value = true;
   error.value = '';
   try {
+    // 总谱等级（世代深度）
+    rank.value = await fetchTreeRank('zhonghua').catch(() => null);
     // 拉总谱节点
     const masterNodes = await fetchMasterTree();
     // 拉总谱的 90 世链：先看现有节点（含 90 世链则用；否则提示导入）
@@ -242,6 +253,9 @@ onMounted(loadData);
 }
 .hero-title { font-size: 22px; font-weight: bold; display: block; }
 .hero-sub { font-size: 12px; color: #D7CCC8; margin-top: 4px; display: block; }
+.hero-rank { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.hero-rank-text { font-size: 12px; color: #FFD54F; }
+.hero-warn { margin-top: 6px; font-size: 11px; color: #FFB74D; background: rgba(255,183,77,0.15); padding: 4px 8px; border-radius: 6px; }
 .center { text-align: center; padding: 60px 0; color: #999; }
 .center.error { color: #C62828; }
 

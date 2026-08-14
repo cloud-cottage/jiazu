@@ -1,6 +1,6 @@
 export { charToPrefix, makeTreeId, parseTreeId, isValidTreeId } from './tree-id';
 export { buildTreeUrl, buildCrossTreePersonUrl, validateExternalRefs } from './cross-tree';
-export { fetchPerson, fetchPersonForEdit, savePerson, API_BASE, fetchPersonList, fetchFamilyList, searchPeople, fetchTreeMeta, fetchTreeMetaRemote, updateTreeMeta, splitTree, fetchWallet, rechargeWallet, transferToTree, fetchTreeBalance, setTreeCreateFee, fetchMasterTree, fetchTreeStats, clearMetaCache, sendSmsCode, registerByPhone, loginByPhone, fetchMe } from './api';
+export { fetchPerson, fetchPersonForEdit, savePerson, API_BASE, fetchPersonList, fetchFamilyList, searchPeople, fetchTreeMeta, fetchTreeMetaRemote, updateTreeMeta, splitTree, fetchWallet, rechargeWallet, transferToTree, fetchTreeBalance, setTreeCreateFee, fetchMasterTree, fetchTreeStats, fetchTreeRank, clearMetaCache, sendSmsCode, registerByPhone, loginByPhone, fetchMe } from './api';
 export { isLiving, sanitizePerson } from './privacy';
 export { buildPedigreeForest, flattenForest } from './pedigree';
 export type { TreePersonNode } from './pedigree';

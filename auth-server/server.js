@@ -23,6 +23,7 @@ import { parse as parseUrl } from 'node:url';
 import { splitTree } from './split-tree.js';
 import * as wallet from './wallet.js';
 import * as scope from './scope.js';
+import { computeTreeDepth, rankFromDepth, MAX_DEPTH, RANKS } from './rank.js';
 
 // ---- 配置 ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -408,6 +409,28 @@ async function proxyToGramps(req, res, pathname, query) {
         }
         // tree_steward 无节点限制（整棵树可管理）
       }
+
+      // ---- 世代深度上限（普通家族树 ≤72 世） ----
+      // 新建 person/family 会加深树；超限树仅 chief_editor 可继续写（用于处理/总谱）
+      if (!isMasterTree && role !== 'chief_editor') {
+        const isAddNode =
+          (method === 'POST' && (pathname.startsWith('/people') || pathname.startsWith('/families'))) ||
+          (method === 'PUT' && (pathname.startsWith('/people') || pathname.startsWith('/families')));
+        if (isAddNode) {
+          try {
+            const families = await getFamiliesForTree(treeId);
+            const { totalGenerations } = computeTreeDepth(families);
+            if (totalGenerations >= MAX_DEPTH) {
+              console.log(`[写拦截] ${user.phone} (${role}) 向 ${treeId} 新增节点，深度 ${totalGenerations} 已达上限 ${MAX_DEPTH} → 403`);
+              return json(res, 403, {
+                error: `该家族树已达 ${MAX_DEPTH} 世深度上限（当前 ${totalGenerations} 世）。请管理员将部分节点并入中华世本总谱后继续。`,
+              });
+            }
+          } catch {
+            /* 深度计算失败不限制 */
+          }
+        }
+      }
     }
 
     // 剥离 tree_id 参数（Gramps-Web 不认，会导致 422），仅用于选择凭据
@@ -530,6 +553,52 @@ const server = http.createServer(async (req, res) => {
 
     if (urlPath === '/api/tree-meta' && req.method === 'GET') {
       return json(res, 200, readTreeMeta());
+    }
+
+    // ---- 家族树等级（世代深度 → 家乘/族乘/宗乘/世乘） ----
+    if (urlPath === '/api/tree/rank' && req.method === 'GET') {
+      const treeId = extractTreeId(req, null);
+      if (!treeId) return json(res, 400, { error: '缺少 tree_id' });
+      try {
+        // 显式世数：拉 people 收集 external_chain_gen
+        let explicitGens = null;
+        try {
+          const token = await getGrampsTokenFor(treeId);
+          const pr = await fetch(`${GRAMPS_BASE}/api/people/?profile=all&pagesize=2000`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (pr.ok) {
+            const people = await pr.json();
+            const gens = new Map();
+            for (const p of people) {
+              for (const a of p.attribute_list || []) {
+                if (a.type === 'external_chain_gen' && a.value) {
+                  gens.set(p.handle, parseInt(a.value, 10) || 0);
+                }
+              }
+            }
+            if (gens.size > 0) explicitGens = gens;
+          }
+        } catch { /* 显式世数可选，失败走 family 图 */ }
+        const families = await getFamiliesForTree(treeId);
+        const { totalGenerations, roots, personCount } = computeTreeDepth(families, explicitGens);
+        const rank = rankFromDepth(totalGenerations);
+        return json(res, 200, {
+          tree_id: treeId,
+          total_generations: totalGenerations,
+          rank_key: rank.key,
+          rank_label: rank.label,
+          rank_en: rank.en,
+          rank_desc: rank.desc,
+          over_limit: totalGenerations > MAX_DEPTH,
+          max_depth: MAX_DEPTH,
+          root_count: roots.length,
+          person_count: personCount,
+          explicit: !!explicitGens,
+        });
+      } catch (e) {
+        return json(res, 500, { error: `等级计算失败: ${e.message}` });
+      }
     }
 
     if (urlPath === '/api/tree-meta' && req.method === 'PUT') {

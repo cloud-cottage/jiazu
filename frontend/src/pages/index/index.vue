@@ -45,9 +45,17 @@
           <template #note>
             <view v-if="card.isMaster">
               <t-tag theme="primary" variant="light" size="small">总谱</t-tag>
+              <t-tag v-if="rankLabel(card.tree_id)" :theme="rankTheme(card.tree_id)" variant="light" size="small" class="rank-tag">
+                {{ rankLabel(card.tree_id) }}
+              </t-tag>
               <text class="master-desc">{{ card.description }}</text>
             </view>
-            <text v-else>{{ card.description }}</text>
+            <view v-else class="note-line">
+              <text class="note-text">{{ card.description }}</text>
+              <t-tag v-if="rankLabel(card.tree_id)" :theme="rankTheme(card.tree_id)" variant="light" size="small" class="rank-tag">
+                {{ rankLabel(card.tree_id) }}
+              </t-tag>
+            </view>
           </template>
         </t-cell>
       </t-cell-group>
@@ -109,10 +117,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchTreeMetaRemote, buildTreeUrl, fetchMasterTree } from '@/business';
+import { fetchTreeMetaRemote, buildTreeUrl, fetchMasterTree, fetchTreeRank } from '@/business';
 import { isAuthenticated, authState } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
-import type { MasterNode } from '@/business/api';
+import type { MasterNode, TreeRankInfo } from '@/business/api';
 
 const halls = ref<DigitalHallCard[]>([]);
 const meta = ref<TreeMeta | null>(null);
@@ -216,10 +224,43 @@ onMounted(async () => {
       isMaster: !!entry.is_master,
       url: buildTreeUrl(entry.tree_id, meta.value!) || `/tree/${entry.tree_id}`,
     }));
+    // 批量拉取家族等级（世代深度 → 等级徽章）
+    loadRanks();
   } catch (e) {
     console.error('加载元数据失败:', e);
   }
 });
+
+// ---- 家族等级 ----
+const rankMap = ref<Record<string, TreeRankInfo>>({});
+
+async function loadRanks() {
+  const results = await Promise.allSettled(
+    halls.value.map((h) => fetchTreeRank(h.tree_id)),
+  );
+  const map: Record<string, TreeRankInfo> = {};
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') map[halls.value[i].tree_id] = r.value;
+  });
+  rankMap.value = map;
+}
+
+function rankLabel(treeId: string): string {
+  return rankMap.value[treeId]?.rank_label || '';
+}
+
+function rankTheme(treeId: string): string {
+  const r = rankMap.value[treeId];
+  if (!r) return 'default';
+  if (r.over_limit) return 'danger';
+  switch (r.rank_key) {
+    case 'family_rank': return 'default';
+    case 'clan_rank': return 'primary';
+    case 'lineage_rank': return 'warning';
+    case 'stemma_rank': return 'danger';
+    default: return 'default';
+  }
+}
 
 function goToHall(card: DigitalHallCard) {
   uni.navigateTo({ url: `/pages/hall/index?tree_id=${card.tree_id}` });
@@ -258,6 +299,9 @@ function goAdmin() {
 .hall-list :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .empty { text-align: center; padding: 40px; color: #999; }
 .master-desc { font-size: 12px; color: #8B4513; margin-left: 6px; }
+.rank-tag { margin-left: 6px; }
+.note-line { display: flex; align-items: center; }
+.note-text { flex: 1; }
 .hall-title { font-size: 16px; margin-top: 4px; display: block; }
 .hall-origin { font-size: 13px; color: #888; margin-top: 6px; display: block; }
 .hall-desc { font-size: 14px; color: #555; margin-top: 4px; display: block; }

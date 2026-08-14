@@ -457,6 +457,31 @@ export async function savePerson(
   }
 }
 
+// ---- 家族树等级 ----
+
+export interface TreeRankInfo {
+  tree_id: string;
+  total_generations: number;
+  rank_key: string;
+  rank_label: string;
+  rank_en: string;
+  rank_desc: string;
+  over_limit: boolean;
+  max_depth: number;
+  root_count: number;
+  person_count: number;
+  explicit: boolean;
+}
+
+/** 家族树等级（世代深度 → 家乘/族乘/宗乘/世乘） */
+export async function fetchTreeRank(treeId: string): Promise<TreeRankInfo> {
+  const res = await fetch(`${API_BASE}/tree/rank`, {
+    headers: { 'X-Tree-Id': treeId },
+  });
+  if (!res.ok) throw new Error(`读取家族等级失败 (${res.status})`);
+  return res.json();
+}
+
 // ---- 角色管理 ----
 
 export interface ManagedUser {
