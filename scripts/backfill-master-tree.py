@@ -26,7 +26,7 @@ OWNERS_FILE = os.path.join(ROOT, "auth-server", "data", "gramps-owners.json")
 META_FILE = os.path.join(ROOT, "config", "tree-meta.json")
 CHIEF_USER = os.environ.get("GRAMPS_CHIEF_USERNAME", "chief_editor")
 CHIEF_PASS = os.environ.get("GRAMPS_CHIEF_PASSWORD", "")
-MASTER_TREE = os.environ.get("MASTER_TREE_ID", "zhonghua_shiben_01")
+MASTER_TREE = os.environ.get("MASTER_TREE_ID", "zhonghua")
 # 原树（ji_23395_01）的 guest 只读凭据（从 auth-server .env）
 ENV_FILE = os.path.join(ROOT, "auth-server", ".env")
 GUEST_USER = "guest"

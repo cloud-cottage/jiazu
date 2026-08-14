@@ -395,7 +395,7 @@ export interface MasterNode {
 /** 拉取中华世本总谱全部节点 */
 export async function fetchMasterTree(): Promise<MasterNode[]> {
   const res = await fetch(`${API_BASE}/people/?profile=all`, {
-    headers: { 'X-Tree-Id': 'zhonghua_shiben_01' },
+    headers: { 'X-Tree-Id': 'zhonghua' },
   });
   if (!res.ok) throw new Error(`加载总谱失败 (${res.status})`);
   const raw = await res.json();

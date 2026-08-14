@@ -43,7 +43,7 @@ const GRAMPS_CHIEF = {
   username: process.env.GRAMPS_CHIEF_USERNAME || 'chief_editor',
   password: process.env.GRAMPS_CHIEF_PASSWORD || '',
 };
-const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua_shiben_01';
+const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
 const MASTER_TREE_UUID = process.env.MASTER_TREE_UUID || '';
 const GRAMPS_OWNER = {
   username: process.env.GRAMPS_OWNER_USERNAME || 'owner',
@@ -252,15 +252,45 @@ async function getFamiliesForTree(treeId) {
   return normalized;
 }
 
-async function getGrampsTokenFor(treeId) {
-  let cred = treeCredentials.get(treeId);
-  // 懒加载：拆分产生的新树凭据写入文件后，无需重启即生效
-  if (!cred) {
-    loadTreeCredentials();
-    cred = treeCredentials.get(treeId);
+async function getGrampsTokenFor(treeId, forWrite = false) {
+  // 写请求：优先用该树的 owner 凭据（有写权限）
+  // 读请求：guest（只读）
+  let cred;
+  if (forWrite) {
+    // 总谱 → chief；拆分树 → gramps-owners.json 的 owner；原树 → GRAMPS_OWNER
+    if (treeId === MASTER_TREE_ID && GRAMPS_CHIEF.password) {
+      cred = { ...GRAMPS_CHIEF };
+    } else {
+      let ownerCred = null;
+      try {
+        const owners = JSON.parse(
+          fs.readFileSync(path.join(DATA_DIR, 'gramps-owners.json'), 'utf8'),
+        );
+        if (owners[treeId]?.username && owners[treeId]?.password) {
+          ownerCred = { username: owners[treeId].username, password: owners[treeId].password };
+        }
+      } catch { /* 文件不存在 */ }
+      if (ownerCred) {
+        cred = ownerCred;
+      } else if (treeId === 'ji_23395_01' && GRAMPS_OWNER.password) {
+        // 原树用 owner 凭据（role 4 有写权限）
+        cred = { ...GRAMPS_OWNER };
+      } else {
+        cred = treeCredentials.get(treeId) || { ...GRAMPS_GUEST };
+      }
+    }
+  } else {
+    cred = treeCredentials.get(treeId) || { ...GRAMPS_GUEST };
   }
-  if (!cred) throw new Error(`未配置 tree ${treeId} 的访客凭据`);
-  const cached = treeTokenCache.get(treeId);
+
+  // 懒加载：拆分产生的新树凭据写入文件后，无需重启即生效
+  if (!treeCredentials.get(treeId) && !forWrite) {
+    loadTreeCredentials();
+    if (!cred) cred = treeCredentials.get(treeId) || { ...GRAMPS_GUEST };
+  }
+
+  const cacheKey = `${treeId}${forWrite ? ':w' : ':r'}`;
+  const cached = treeTokenCache.get(cacheKey);
   if (cached && cached.exp > Date.now() + 60_000) return cached.token;
   let res = await fetch(`${GRAMPS_BASE}/api/token/`, {
     method: 'POST',
@@ -278,7 +308,7 @@ async function getGrampsTokenFor(treeId) {
   }
   if (!res.ok) throw new Error(`Gramps 登录失败 (${cred.username}): ${res.status}`);
   const data = await res.json();
-  treeTokenCache.set(treeId, { token: data.access_token, exp: Date.now() + 14 * 60 * 1000 });
+  treeTokenCache.set(cacheKey, { token: data.access_token, exp: Date.now() + 14 * 60 * 1000 });
   return data.access_token;
 }
 
@@ -321,11 +351,12 @@ function readBodyOnce(req) {
 async function proxyToGramps(req, res, pathname, query) {
   try {
     const treeId = extractTreeId(req, query);
-    const token = await getGrampsTokenFor(treeId);
-
-    // ---- 节点级写权限校验（仅登录用户；guest 无写权限） ----
     const method = req.method;
     const isWrite = method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH';
+
+    // 写请求用该树的有写权限凭据（owner/chief），读请求用 guest
+    // 否则 Gramps-Web 上游拒绝 guest 写操作（403）
+    const token = await getGrampsTokenFor(treeId, isWrite);
     if (isWrite) {
       const auth = req.headers.authorization || '';
       const authToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
@@ -339,12 +370,14 @@ async function proxyToGramps(req, res, pathname, query) {
       const role = user.role;
       // guest 无编辑权
       if (role === 'guest') {
+        console.log(`[写拦截] ${user.phone} (guest) 尝试编辑 ${treeId}${pathname} → 403`);
         return json(res, 403, { error: '游客无编辑权限，请注册后编辑' });
       }
 
       // chief_editor 可编辑总谱 + 所有树；tree_steward 管理单棵树
       const isMasterTree = treeId === MASTER_TREE_ID;
       if (isMasterTree && role !== 'chief_editor') {
+        console.log(`[写拦截] ${user.phone} (${role}) 尝试编辑总谱 → 403`);
         return json(res, 403, { error: '中华世本总谱仅总编辑（chief_editor）可编辑' });
       }
       // 总谱只允许 chief_editor 写
@@ -364,6 +397,7 @@ async function proxyToGramps(req, res, pathname, query) {
             }
             const allowed = scope.canEditPerson(familiesByTree, user.phone, role, treeId, targetHandle);
             if (!allowed) {
+              console.log(`[写拦截] ${user.phone} (${role}) 编辑 ${treeId}/${targetHandle} 超出范围 → 403`);
               return json(res, 403, {
                 error: role === 'branch_curator'
                   ? '您的权限范围仅限本人上下三代节点'

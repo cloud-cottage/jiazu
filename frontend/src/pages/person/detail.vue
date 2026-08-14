@@ -140,7 +140,7 @@ const isLivingPerson = computed(() => (person.value ? isLiving(person.value) : f
 const canEdit = computed(() => {
   if (!isAuthenticated()) return false;
   if (authState.role === 'guest') return false;
-  if (treeId.value === 'zhonghua_shiben_01' && authState.role !== 'chief_editor') return false;
+  if (treeId.value === 'zhonghua' && authState.role !== 'chief_editor') return false;
   return true;
 });
 

@@ -192,7 +192,7 @@ function onTabChange(val: string | number) {
 function goToPerson(node: MasterNode) {
   // 跳转到该人物在总谱中的详情
   uni.navigateTo({
-    url: `/pages/person/detail?tree_id=zhonghua_shiben_01&handle=${node.handle}`,
+    url: `/pages/person/detail?tree_id=zhonghua&handle=${node.handle}`,
   });
 }
 
