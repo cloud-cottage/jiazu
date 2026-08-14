@@ -1,7 +1,8 @@
 <template>
   <view class="container">
     <t-search
-      v-model="query"
+      @update:value="(v: any) => query = v"
+      :value="query"
       placeholder="搜索人物姓名、字号..."
       shape="round"
       :action="'搜索'"
@@ -9,7 +10,8 @@
     />
 
     <view class="scope-toggle">
-      <t-radio-group v-model="scope" placement="horizontal">
+      <t-radio-group :value="scope" placement="horizontal"
+      @update:value="(v: any) => scope = v">
         <t-radio value="tree">当前家族</t-radio>
         <t-radio value="global">全局跨家族</t-radio>
       </t-radio-group>

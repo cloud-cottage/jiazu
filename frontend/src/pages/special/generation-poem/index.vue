@@ -4,7 +4,8 @@
 
     <view class="input-area">
       <t-input
-        v-model="char"
+        @update:value="(v: any) => char = v"
+        :value="char"
         class="char-input"
         placeholder="输入一个汉字"
         :maxlength="1"

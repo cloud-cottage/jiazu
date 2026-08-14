@@ -72,9 +72,14 @@
         <scroll-view scroll-y class="modal-body">
           <!-- 基本信息 -->
           <text class="field-label">基本信息</text>
-          <t-input v-model="editForm.first_name" placeholder="名" class="field" />
-          <t-input v-model="editForm.surname" placeholder="姓" class="field" />
-          <t-radio-group v-model="editForm.gender" placement="horizontal" class="field">
+          <t-input :value="editForm.first_name" placeholder="名" class="field" 
+          @update:value="(v: any) => editForm.first_name = v"
+          />
+          <t-input :value="editForm.surname" placeholder="姓" class="field" 
+          @update:value="(v: any) => editForm.surname = v"
+          />
+          <t-radio-group :value="editForm.gender" placement="horizontal" class="field"
+          @update:value="(v: any) => editForm.gender = v">
             <t-radio value="M">男</t-radio>
             <t-radio value="F">女</t-radio>
             <t-radio value="U">未知</t-radio>
@@ -82,15 +87,25 @@
 
           <!-- 生卒 -->
           <text class="field-label">生卒（格式：YYYY-MM-DD 或 YYYY 或 YYYY/MM/DD）</text>
-          <t-input v-model="editForm.birth_date" placeholder="出生日期" class="field" />
-          <t-input v-model="editForm.death_date" placeholder="去世日期" class="field" />
+          <t-input :value="editForm.birth_date" placeholder="出生日期" class="field" 
+          @update:value="(v: any) => editForm.birth_date = v"
+          />
+          <t-input :value="editForm.death_date" placeholder="去世日期" class="field" 
+          @update:value="(v: any) => editForm.death_date = v"
+          />
 
           <!-- 生平事件 -->
           <text class="field-label">生平事件</text>
           <view v-for="(evt, i) in editForm.events" :key="i" class="event-edit-row">
-            <t-input v-model="evt.type" placeholder="事件类型（如：出生/结婚）" class="field" />
-            <t-input v-model="evt.date" placeholder="日期" class="field" />
-            <t-input v-model="evt.place" placeholder="地点" class="field" />
+            <t-input :value="evt.type" placeholder="事件类型（如：出生/结婚）" class="field" 
+            @update:value="(v: any) => evt.type = v"
+            />
+            <t-input :value="evt.date" placeholder="日期" class="field" 
+            @update:value="(v: any) => evt.date = v"
+            />
+            <t-input :value="evt.place" placeholder="地点" class="field" 
+            @update:value="(v: any) => evt.place = v"
+            />
             <t-button size="small" variant="outline" theme="danger" @click="removeEvent(i)">删除</t-button>
           </view>
           <t-button size="small" variant="outline" @click="addEvent">＋ 添加事件</t-button>

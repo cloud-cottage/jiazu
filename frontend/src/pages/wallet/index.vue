@@ -18,7 +18,8 @@
         <text class="section-title">充值</text>
         <view class="row">
           <t-input
-            v-model="rechargeAmount"
+            @update:value="(v: any) => rechargeAmount = v"
+            :value="rechargeAmount"
             type="number"
             placeholder="金额（元）"
             clearable
@@ -35,13 +36,15 @@
         <text class="section-title">转账到家族树</text>
         <view class="transfer-form">
           <t-input
-            v-model="transferTree"
+            @update:value="(v: any) => transferTree = v"
+            :value="transferTree"
             placeholder="家族树 ID（如 gu_39038_01）"
             clearable
             class="input"
           />
           <t-input
-            v-model="transferAmount"
+            @update:value="(v: any) => transferAmount = v"
+            :value="transferAmount"
             type="number"
             placeholder="金额"
             clearable

@@ -7,7 +7,8 @@
 
       <view class="form">
         <t-input
-          v-model="phone"
+          @update:value="(v: any) => phone = v"
+          :value="phone"
           type="number"
           :maxlength="11"
           placeholder="手机号"
@@ -15,7 +16,8 @@
         />
         <view class="code-row">
           <t-input
-            v-model="code"
+            @update:value="(v: any) => code = v"
+            :value="code"
             type="number"
             :maxlength="6"
             placeholder="验证码"
@@ -34,7 +36,8 @@
           </t-button>
         </view>
         <t-input
-          v-model="nickname"
+          @update:value="(v: any) => nickname = v"
+          :value="nickname"
           :maxlength="30"
           placeholder="昵称（选填）"
           clearable
