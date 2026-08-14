@@ -25,9 +25,18 @@
           :title="`${card.surname}氏 · ${card.title}`"
           :description="`发源地：${card.origin || '待完善'}`"
           :note="card.description"
+          :border="!card.isMaster"
           arrow
           @click="goToHall(card)"
-        />
+        >
+          <template #note>
+            <view v-if="card.isMaster">
+              <t-tag theme="primary" variant="light" size="small">总谱</t-tag>
+              <text class="master-desc">{{ card.description }}</text>
+            </view>
+            <text v-else>{{ card.description }}</text>
+          </template>
+        </t-cell>
       </t-cell-group>
 
       <view v-if="halls.length === 0" class="empty">
@@ -60,6 +69,7 @@ onMounted(async () => {
       surname: entry.surname_char,
       origin: entry.origin,
       description: entry.description,
+      isMaster: !!entry.is_master,
       url: buildTreeUrl(entry.tree_id, meta) || `/tree/${entry.tree_id}`,
     }));
   } catch (e) {
@@ -97,6 +107,7 @@ function goWallet() {
 .hall-list { display: flex; flex-direction: column; gap: 12px; }
 .hall-list :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .empty { text-align: center; padding: 40px; color: #999; }
+.master-desc { font-size: 12px; color: #8B4513; margin-left: 6px; }
 .hall-title { font-size: 16px; margin-top: 4px; display: block; }
 .hall-origin { font-size: 13px; color: #888; margin-top: 6px; display: block; }
 .hall-desc { font-size: 14px; color: #555; margin-top: 4px; display: block; }

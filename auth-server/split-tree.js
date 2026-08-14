@@ -20,8 +20,35 @@ import * as wallet from './wallet.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// 模块级 Gramps token 缓存（15 分钟有效，避免登录限流）
+// Gramps token 缓存（模块级，跨请求复用）+ 429 限流重试
 const grampsTokenCache = new Map();
+
+/** Gramps 登录（带缓存，供 splitTree 与总谱联动共用） */
+async function grampsLogin(username, password) {
+  const cached = grampsTokenCache.get(username);
+  if (cached && cached.exp > Date.now() + 60_000) return cached.token;
+  const base = process.env.GRAMPS_BASE_URL || 'http://localhost:8000';
+  let res = await fetch(`${base}/api/token/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  // 限流：最多重试 3 次，间隔 1.2 秒
+  for (let i = 0; i < 3 && res.status === 429; i++) {
+    await new Promise((r) => setTimeout(r, 1200));
+    res = await fetch(`${base}/api/token/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+  }
+  if (!res.ok) throw new Error(`Gramps 登录失败 (${username}): ${res.status}`);
+  const data = await res.json();
+  grampsTokenCache.set(username, { token: data.access_token, exp: Date.now() + 14 * 60 * 1000 });
+  return data.access_token;
+}
+
+// 模块级 Gramps token 缓存（15 分钟有效，避免登录限流）
 
 /** 常用姓氏 → 拼音（与前端 tree-id.ts 保持一致） */
 const PINYIN_MAP = {
@@ -113,6 +140,9 @@ export async function splitTree(opts) {
     ownerUser,
     ownerPass,
     initiatorPhone,
+    chiefUser,
+    chiefPass,
+    masterTreeId,
   } = opts;
 
   // ---- 0. 扣建树费（从发起人余额） ----
@@ -122,30 +152,6 @@ export async function splitTree(opts) {
   console.log(`[split-tree] 已从 ${initiatorPhone} 扣除建树费 ¥${feeYuan}`);
 
   const api = `${grampsBase}/api`;
-
-  // Gramps token 缓存（模块级，跨请求复用）+ 429 限流重试
-  async function grampsLogin(username, password) {
-    const cached = grampsTokenCache.get(username);
-    if (cached && cached.exp > Date.now() + 60_000) return cached.token;
-    let res = await fetch(`${api}/token/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    // 限流：最多重试 3 次，间隔 1.2 秒
-    for (let i = 0; i < 3 && res.status === 429; i++) {
-      await new Promise((r) => setTimeout(r, 1200));
-      res = await fetch(`${api}/token/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-    }
-    if (!res.ok) throw new Error(`Gramps 登录失败 (${username}): ${res.status}`);
-    const data = await res.json();
-    grampsTokenCache.set(username, { token: data.access_token, exp: Date.now() + 14 * 60 * 1000 });
-    return data.access_token;
-  }
 
   async function grampsFetch(token, urlPath) {
     const res = await fetch(`${api}${urlPath}`, {
@@ -267,6 +273,21 @@ export async function splitTree(opts) {
     };
     writeTreeMeta(meta2);
 
+    // ---- 7. 总谱联动：在中华世本创建始祖节点（chief_editor 凭据） ----
+    const masterLink = await linkAncestorToMaster({
+      grampsBase,
+      chiefUser,
+      chiefPass,
+      masterTreeId,
+      newTreeId,
+      newTreeUuid,
+      ancestorName,
+      surnameChar,
+    }).catch((e) => {
+      console.warn(`[split-tree] 总谱联动失败（不影响建树）: ${e.message}`);
+      return null;
+    });
+
     return {
       ok: true,
       newTreeId,
@@ -274,13 +295,57 @@ export async function splitTree(opts) {
       surname: surnameChar,
       movedPeople: deletedHandles.people.length,
       movedFamilies: deletedHandles.families.length,
-      message: `已创建新家族树 ${newTreeId}，原树中移除 ${deletedHandles.people.length} 人`,
+      masterNode: masterLink,
+      message: `已创建新家族树 ${newTreeId}，原树中移除 ${deletedHandles.people.length} 人${
+        masterLink ? `，已在中华世本登记始祖「${ancestorName}」` : ''
+      }`,
     };
   } catch (e) {
     // 回滚：删除新 tree（数据没导入成功的场景）
     await grampsPost(adminToken, `/trees/${newTreeUuid}/delete/`, undefined).catch(() => {});
     throw e;
   }
+}
+
+/**
+ * 总谱联动：在中华世本创建始祖节点（仅 chief_editor 可编辑总谱）
+ * - 用 chief_editor 凭据登录总谱 tree
+ * - 创建 person 节点，名字 = 始祖姓名
+ * - attributes 记录跨树引用（external_tree = 新树 id 等）
+ */
+async function linkAncestorToMaster({ grampsBase, chiefUser, chiefPass, masterTreeId, newTreeId, newTreeUuid, ancestorName, surnameChar }) {
+  if (!chiefUser || !chiefPass) {
+    throw new Error('未配置总谱编辑账号（GRAMPS_CHIEF_USERNAME/PASSWORD）');
+  }
+  const token = await grampsLogin(chiefUser, chiefPass);
+  if (!token) throw new Error('总谱账号登录失败');
+
+  const name = ancestorName || `${surnameChar || '未知'}氏始祖`;
+  const body = {
+    primary_name: {
+      first_name: name,
+      surname_list: [{ surname: surnameChar || '' }],
+    },
+    attribute_list: [
+      { type: 'external_tree', value: newTreeId },
+      { type: 'external_tree_uuid', value: newTreeUuid },
+      { type: 'external_relation_note', value: `${name} — 家族树 ${newTreeId} 的始祖（自动登记）` },
+    ],
+  };
+  const res = await fetch(`${grampsBase}/api/people/`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      'X-Tree-Id': masterTreeId,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`总谱建节点失败: ${res.status}`);
+  const created = await res.json();
+  const handle = Array.isArray(created) ? created[0]?.handle : created?.handle;
+  console.log(`[split-tree] 已在中华世本登记始祖「${name}」(handle=${handle})`);
+  return { handle, name };
 }
 
 /** 随机密码 */

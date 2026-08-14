@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { parse as parseUrl } from 'node:url';
 import { splitTree } from './split-tree.js';
 import * as wallet from './wallet.js';
+import * as scope from './scope.js';
 
 // ---- 配置 ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,13 @@ const GRAMPS_ADMIN = {
   username: process.env.GRAMPS_ADMIN_USERNAME || 'admin',
   password: process.env.GRAMPS_ADMIN_PASSWORD || 'AdminPass123!',
 };
+// 中华世本总谱编辑账号（role 4，绑定总谱 tree，仅 chief_editor 使用）
+const GRAMPS_CHIEF = {
+  username: process.env.GRAMPS_CHIEF_USERNAME || 'chief_editor',
+  password: process.env.GRAMPS_CHIEF_PASSWORD || '',
+};
+const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua_shiben_01';
+const MASTER_TREE_UUID = process.env.MASTER_TREE_UUID || '';
 const GRAMPS_OWNER = {
   username: process.env.GRAMPS_OWNER_USERNAME || 'owner',
   password: process.env.GRAMPS_OWNER_PASSWORD || 'OwnerPass123!',
@@ -145,18 +153,29 @@ function verifyCode(phone, inputCode) {
 }
 
 // ---- 用户 ----
+// 角色体系（权限由小到大）：guest(游客) < user < branch_curator < tree_steward < chief_editor
+// guest: 未登录只读；user: 编辑自己节点及向下；branch_curator: 上下三代；
+// tree_steward: 单棵树完整管理；chief_editor: 全局最高权限（= admin）
+const ROLE_LEVEL = {
+  guest: 0,
+  user: 1,
+  branch_curator: 2,
+  tree_steward: 3,
+  chief_editor: 4,
+};
+
 function findOrCreateUser(phone, nickname) {
   if (!users[phone]) {
-    // 管理员手机号自动获得 admin 角色
-    const role = ADMIN_PHONE && phone === ADMIN_PHONE ? 'admin' : 'guest';
+    // 管理员手机号自动获得 chief_editor 角色（最高权限）
+    const role = ADMIN_PHONE && phone === ADMIN_PHONE ? 'chief_editor' : 'user';
     users[phone] = {
       phone,
       nickname: nickname || `用户${phone.slice(-4)}`,
       role,
       created_at: new Date().toISOString(),
     };
-    if (role === 'admin') {
-      console.log(`\n👑 管理员账号就绪: ${phone} (ADMIN_PHONE)\n`);
+    if (role === 'chief_editor') {
+      console.log(`\n👑 总编辑账号就绪: ${phone} (ADMIN_PHONE → chief_editor)\n`);
     }
     persistUsers();
   } else if (nickname && nickname !== users[phone].nickname) {
@@ -189,7 +208,11 @@ const treeCredentials = new Map();
 function loadTreeCredentials() {
   // 1. 默认 guest（原树）
   treeCredentials.set('ji_23395_01', { ...GRAMPS_GUEST });
-  // 2. 拆分产生的新树 owner（data/gramps-owners.json）
+  // 2. 中华世本总谱（chief_editor 凭据）
+  if (GRAMPS_CHIEF.password) {
+    treeCredentials.set(MASTER_TREE_ID, { ...GRAMPS_CHIEF });
+  }
+  // 3. 拆分产生的新树 owner（data/gramps-owners.json）
   const ownersFile = path.join(DATA_DIR, 'gramps-owners.json');
   try {
     const owners = JSON.parse(fs.readFileSync(ownersFile, 'utf8'));
@@ -206,6 +229,28 @@ loadTreeCredentials();
 
 // tree_id -> { token, exp }（模块级缓存，避免登录限流）
 const treeTokenCache = new Map();
+
+// tree_id -> families 缓存（用于节点范围校验）
+const familiesCache = new Map();
+
+async function getFamiliesForTree(treeId) {
+  const cached = familiesCache.get(treeId);
+  if (cached && cached.exp > Date.now()) return cached.data;
+  const token = await getGrampsTokenFor(treeId);
+  const res = await fetch(`${GRAMPS_BASE}/api/families/?profile=all`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`读取家族数据失败: ${res.status}`);
+  const data = await res.json();
+  const normalized = data.map((f) => ({
+    handle: f.handle,
+    father_handle: f.father_handle || '',
+    mother_handle: f.mother_handle || '',
+    child_handles: (f.child_ref_list || []).map((c) => c.ref),
+  }));
+  familiesCache.set(treeId, { data: normalized, exp: Date.now() + 5 * 60 * 1000 });
+  return normalized;
+}
 
 async function getGrampsTokenFor(treeId) {
   let cred = treeCredentials.get(treeId);
@@ -248,10 +293,89 @@ function extractTreeId(req, query) {
   return 'ji_23395_01'; // 默认原树
 }
 
+/**
+ * 从写请求中提取目标 person handle
+ * - PUT/DELETE /people/<handle>：URL 中的 handle
+ * - POST /people/：body 中的 handle（新建，用 handle 校验，新节点视为用户自己）
+ * - families 相关：校验 father/mother/child handle
+ */
+function extractTargetHandle(pathname, method, req) {
+  // /api/people/<handle>（代理收到的 pathname 不含 /api 前缀）
+  const peopleMatch = pathname.match(/^\/people\/([^/]+)\/?$/);
+  if (peopleMatch) return peopleMatch[1];
+
+  // POST /people/ 新建：body 里可能有 handle（编辑场景是 PUT）
+  if (pathname === '/people/' || pathname === '/people') {
+    if (req._body && req._body.handle) return req._body.handle;
+    // 新建 person：无 handle，放行（后续由前端控制）
+  }
+  return null;
+}
+
+// 读取 body（用于校验，只读一次缓存到 req._body）
+function readBodyOnce(req) {
+  if (req._body !== undefined) return Promise.resolve(req._body);
+  return readBody(req).then((b) => { req._body = b; return b; });
+}
+
 async function proxyToGramps(req, res, pathname, query) {
   try {
     const treeId = extractTreeId(req, query);
     const token = await getGrampsTokenFor(treeId);
+
+    // ---- 节点级写权限校验（仅登录用户；guest 无写权限） ----
+    const method = req.method;
+    const isWrite = method === 'POST' || method === 'PUT' || method === 'DELETE' || method === 'PATCH';
+    if (isWrite) {
+      const auth = req.headers.authorization || '';
+      const authToken = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+      const payload = verifyJwt(authToken);
+      if (!payload) {
+        return json(res, 401, { error: '请先登录后再进行编辑操作' });
+      }
+      const user = users[payload.phone];
+      if (!user) return json(res, 401, { error: '用户不存在' });
+
+      const role = user.role;
+      // guest 无编辑权
+      if (role === 'guest') {
+        return json(res, 403, { error: '游客无编辑权限，请注册后编辑' });
+      }
+
+      // chief_editor 可编辑总谱 + 所有树；tree_steward 管理单棵树
+      const isMasterTree = treeId === MASTER_TREE_ID;
+      if (isMasterTree && role !== 'chief_editor') {
+        return json(res, 403, { error: '中华世本总谱仅总编辑（chief_editor）可编辑' });
+      }
+      // 总谱只允许 chief_editor 写
+      if (!isMasterTree) {
+        // 普通角色（user/branch_curator）需要节点范围校验
+        if (role === 'user' || role === 'branch_curator') {
+          // 预读 body（PUT/POST 校验用）
+          try { await readBodyOnce(req); } catch { /* ignore */ }
+          // 解析目标 person handle（从 URL 或 body）
+          const targetHandle = extractTargetHandle(pathname, method, req);
+          if (targetHandle) {
+            const familiesByTree = {};
+            try {
+              familiesByTree[treeId] = await getFamiliesForTree(treeId);
+            } catch {
+              /* 缓存读取失败则不限制（保守放行） */
+            }
+            const allowed = scope.canEditPerson(familiesByTree, user.phone, role, treeId, targetHandle);
+            if (!allowed) {
+              return json(res, 403, {
+                error: role === 'branch_curator'
+                  ? '您的权限范围仅限本人上下三代节点'
+                  : '您的权限范围仅限本人及向下节点',
+              });
+            }
+          }
+        }
+        // tree_steward 无节点限制（整棵树可管理）
+      }
+    }
+
     // 剥离 tree_id 参数（Gramps-Web 不认，会导致 422），仅用于选择凭据
     let upstreamQuery = query || '';
     try {
@@ -264,7 +388,10 @@ async function proxyToGramps(req, res, pathname, query) {
       Authorization: `Bearer ${token}`,
       ...(req.headers['content-type'] ? { 'Content-Type': req.headers['content-type'] } : {}),
     };
-    const body = req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBodyRaw(req);
+    // 已预读 body 则复用（避免重复消费流）
+    const body = req._body !== undefined
+      ? JSON.stringify(req._body)
+      : (req.method === 'GET' || req.method === 'HEAD' ? undefined : await readBodyRaw(req));
     const upstream = await fetch(target, {
       method: req.method,
       headers,
@@ -377,8 +504,8 @@ const server = http.createServer(async (req, res) => {
       const payload = verifyJwt(token);
       if (!payload) return json(res, 401, { error: '未登录或登录已过期' });
       const user = users[payload.phone];
-      if (!user || user.role !== 'admin') {
-        return json(res, 403, { error: '需要管理员权限' });
+      if (!user || user.role !== 'chief_editor') {
+        return json(res, 403, { error: '需要总编辑权限' });
       }
       const body = await readBody(req);
       const { tree_id, display_title, hall_name, origin, description } = body;
@@ -406,8 +533,8 @@ const server = http.createServer(async (req, res) => {
       const payload = verifyJwt(token);
       if (!payload) return json(res, 401, { error: '未登录或登录已过期' });
       const user = users[payload.phone];
-      if (!user || user.role !== 'admin') {
-        return json(res, 403, { error: '需要管理员权限' });
+      if (!user || user.role !== 'chief_editor') {
+        return json(res, 403, { error: '需要总编辑权限' });
       }
       const body = await readBody(req);
       const { tree_id, ancestor_handle, ancestor_name } = body;
@@ -426,6 +553,9 @@ const server = http.createServer(async (req, res) => {
           ownerUser: GRAMPS_OWNER.username,
           ownerPass: GRAMPS_OWNER.password,
           initiatorPhone: user.phone,
+          chiefUser: GRAMPS_CHIEF.username,
+          chiefPass: GRAMPS_CHIEF.password,
+          masterTreeId: MASTER_TREE_ID,
         });
         return json(res, 200, result);
       } catch (e) {
@@ -512,7 +642,7 @@ const server = http.createServer(async (req, res) => {
     // 管理：设置新建家族树费用（仅 admin）
     if (urlPath === '/api/admin/wallet-fee' && req.method === 'PUT') {
       const u = authUser(req);
-      if (!u || u.role !== 'admin') return json(res, 403, { error: '需要管理员权限' });
+      if (!u || u.role !== 'chief_editor') return json(res, 403, { error: '需要总编辑权限' });
       const body = await readBody(req);
       const amount = Number(body.fee);
       if (!amount || amount <= 0) return json(res, 400, { error: '请输入正确的费用' });
@@ -521,6 +651,63 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         tree_create_fee_yuan: (cents / 100).toFixed(2),
       });
+    }
+
+    // ---- 角色管理（tree_steward 管理下属 / chief_editor 全局） ----
+
+    // 角色升级：谁可以授予谁
+    // chief_editor 可授予/撤销任意角色（除自己）
+    // tree_steward 可授予 user / branch_curator（自己树内成员）
+    if (urlPath === '/api/admin/set-role' && req.method === 'POST') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      const body = await readBody(req);
+      const targetPhone = String(body.phone || '').trim();
+      const newRole = String(body.role || '').trim();
+      if (!targetPhone || !ROLE_LEVEL[newRole]) {
+        return json(res, 400, { error: '参数错误：phone + role 必填，role ∈ user/branch_curator/tree_steward/chief_editor' });
+      }
+      const target = users[targetPhone];
+      if (!target) return json(res, 404, { error: `用户不存在: ${targetPhone}` });
+
+      const myLevel = ROLE_LEVEL[u.role] ?? 0;
+      const targetLevel = ROLE_LEVEL[target.role] ?? 0;
+      // 不能操作自己
+      if (targetPhone === u.phone) return json(res, 400, { error: '不能修改自己的角色' });
+      // 只能授予不高于自己级别的角色
+      if (ROLE_LEVEL[newRole] >= myLevel) {
+        return json(res, 403, { error: `无权授予 ${newRole}（需要高于该级别的权限）` });
+      }
+      // 不能修改级别不低于自己的用户
+      if (targetLevel >= myLevel) {
+        return json(res, 403, { error: '无权修改级别不低于自己的用户' });
+      }
+      // tree_steward 只能管理自己树内成员（简化：仅限 user/branch_curator 且目标当前是 guest/user）
+      if (u.role === 'tree_steward' && !['guest', 'user'].includes(target.role)) {
+        return json(res, 403, { error: '族谱主理人仅可管理普通用户与支系记录官' });
+      }
+
+      const oldRole = target.role;
+      target.role = newRole;
+      target.role_updated_at = new Date().toISOString();
+      persistUsers();
+      console.log(`[角色] ${u.phone}(${u.role}) 将 ${targetPhone} 从 ${oldRole} 升级为 ${newRole}`);
+      return json(res, 200, { ok: true, phone: targetPhone, role: newRole, old_role: oldRole });
+    }
+
+    // 用户列表（tree_steward 及以上可查）
+    if (urlPath === '/api/admin/users' && req.method === 'GET') {
+      const u = authUser(req);
+      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
+      const myLevel = ROLE_LEVEL[u.role] ?? 0;
+      if (myLevel < ROLE_LEVEL.tree_steward) return json(res, 403, { error: '需要族谱主理人或以上权限' });
+      const list = Object.values(users).map((usr) => ({
+        phone: usr.phone,
+        nickname: usr.nickname,
+        role: usr.role,
+        created_at: usr.created_at,
+      }));
+      return json(res, 200, list);
     }
 
     // ---- 反向代理到 Gramps-Web ----

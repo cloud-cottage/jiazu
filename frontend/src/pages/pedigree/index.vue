@@ -126,8 +126,8 @@ const layoutOptions = [
 // 缩放状态（1 = 100%）
 const zoomLevel = ref(1);
 
-// admin 判定：登录用户 role === 'admin'
-const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
+// 总编辑判定：登录用户 role === 'chief_editor'（最高权限）
+const isAdmin = computed(() => isAuthenticated() && authState.role === 'chief_editor');
 
 let chart: echarts.ECharts | null = null;
 

@@ -91,6 +91,30 @@
       "origin": "",
       "description": "由 ji_23395_01 拆分而来，始祖：刘秀英氏",
       "enable_custom_domain": false
+    },
+    "zhonghua_shiben_01": {
+      "tree_id": "zhonghua_shiben_01",
+      "path_alias": "/zhonghua_shiben_01",
+      "surname_char": "华",
+      "display_title": "中华世本 · 全球华人家谱总谱",
+      "hall_name": "中华世本",
+      "origin": "中华",
+      "description": "汇聚有记载的中国先人，串联本项目全部家族树始祖的超级总谱",
+      "is_master": true,
+      "enable_custom_domain": true,
+      "custom_domains": [
+        "shiben.jiazutong.cn"
+      ]
+    },
+    "ji_23395_04": {
+      "tree_id": "ji_23395_04",
+      "path_alias": "/ji_23395_04",
+      "surname_char": "季",
+      "display_title": "季氏（新支系）家族历史数字馆",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：George 志全氏",
+      "enable_custom_domain": false
     }
   }
 }

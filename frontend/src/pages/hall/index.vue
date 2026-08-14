@@ -104,8 +104,8 @@ const navItems = [
   { key: 'search', label: '搜索', icon: '🔍' },
 ];
 
-// 管理员判定：登录用户 role === 'admin'
-const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
+// 总编辑判定：登录用户 role === 'chief_editor'（最高权限）
+const isAdmin = computed(() => isAuthenticated() && authState.role === 'chief_editor');
 
 onLoad((options: any) => {
   treeId.value = options?.tree_id || '';

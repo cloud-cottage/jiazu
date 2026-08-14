@@ -20,7 +20,11 @@ export interface TreeEntry {
   /** 堂号发源地 */
   origin: string;
   description: string;
+  /** 是否中华世本总谱 */
+  is_master?: boolean;
   enable_custom_domain: boolean;
+  custom_domains?: string[];
+  created_at?: string;
 }
 
 /** Gramps-Web 人物摘要（来自 API） */
@@ -125,6 +129,8 @@ export interface DigitalHallCard {
   surname: string;
   origin: string;
   description: string;
+  /** 是否中华世本总谱 */
+  isMaster?: boolean;
   url: string;
   person_count?: number;
   cover_url?: string;
