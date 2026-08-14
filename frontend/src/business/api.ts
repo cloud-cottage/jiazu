@@ -414,6 +414,42 @@ export async function fetchMasterTree(): Promise<MasterNode[]> {
   });
 }
 
+/** 获取人物完整对象（编辑用） */
+export async function fetchPersonForEdit(
+  treeId: string,
+  handle: string,
+): Promise<any> {
+  const res = await fetch(`${API_BASE}/people/${handle}?profile=all`, {
+    headers: { 'X-Tree-Id': treeId },
+  });
+  if (!res.ok) throw new Error(`加载人物失败 (${res.status})`);
+  return res.json();
+}
+
+/**
+ * 保存人物（PUT 完整对象）
+ * 注：Gramps-Web 的 ETag 是响应 hash（非对象 hash），If-Match 永远不匹配，
+ * 故不使用乐观锁，直接 PUT。
+ */
+export async function savePerson(
+  treeId: string,
+  handle: string,
+  person: any,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/people/${handle}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Tree-Id': treeId,
+    },
+    body: JSON.stringify(person),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `保存失败 (${res.status})`);
+  }
+}
+
 // ---- 角色管理 ----
 
 export interface ManagedUser {

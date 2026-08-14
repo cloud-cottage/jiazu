@@ -1,7 +1,18 @@
 <template>
   <view class="container">
     <view v-if="person" class="person-detail">
-      <text class="name">{{ person.name }}</text>
+      <view class="name-row">
+        <text class="name">{{ person.name }}</text>
+        <!-- 编辑按钮（有编辑权限时显示） -->
+        <t-button
+          v-if="canEdit"
+          size="small"
+          variant="outline"
+          theme="primary"
+          class="edit-btn"
+          @click="openEdit"
+        >✏️ 编辑</t-button>
+      </view>
 
       <view class="info-row" v-if="isLivingPerson">
         <t-tag theme="warning" variant="light">在世（信息已脱敏）</t-tag>
@@ -53,18 +64,70 @@
     <view v-else class="loading">
       <t-loading size="40px" theme="spinner" text="加载中..." />
     </view>
+
+    <!-- 编辑模态框 -->
+    <view v-if="showEdit" class="modal-mask" @click.self="showEdit = false">
+      <view class="modal">
+        <text class="modal-title">编辑人物</text>
+        <scroll-view scroll-y class="modal-body">
+          <!-- 基本信息 -->
+          <text class="field-label">基本信息</text>
+          <t-input v-model="editForm.first_name" placeholder="名" class="field" />
+          <t-input v-model="editForm.surname" placeholder="姓" class="field" />
+          <t-radio-group v-model="editForm.gender" placement="horizontal" class="field">
+            <t-radio value="M">男</t-radio>
+            <t-radio value="F">女</t-radio>
+            <t-radio value="U">未知</t-radio>
+          </t-radio-group>
+
+          <!-- 生卒 -->
+          <text class="field-label">生卒（格式：YYYY-MM-DD 或 YYYY 或 YYYY/MM/DD）</text>
+          <t-input v-model="editForm.birth_date" placeholder="出生日期" class="field" />
+          <t-input v-model="editForm.death_date" placeholder="去世日期" class="field" />
+
+          <!-- 生平事件 -->
+          <text class="field-label">生平事件</text>
+          <view v-for="(evt, i) in editForm.events" :key="i" class="event-edit-row">
+            <t-input v-model="evt.type" placeholder="事件类型（如：出生/结婚）" class="field" />
+            <t-input v-model="evt.date" placeholder="日期" class="field" />
+            <t-input v-model="evt.place" placeholder="地点" class="field" />
+            <t-button size="small" variant="outline" theme="danger" @click="removeEvent(i)">删除</t-button>
+          </view>
+          <t-button size="small" variant="outline" @click="addEvent">＋ 添加事件</t-button>
+        </scroll-view>
+
+        <view v-if="editError" class="edit-error">{{ editError }}</view>
+        <view class="modal-actions">
+          <t-button theme="primary" block :loading="saving" @click="doSave">保存</t-button>
+          <t-button variant="text" block @click="showEdit = false">取消</t-button>
+        </view>
+      </view>
+    </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchPerson, sanitizePerson, isLiving } from '@/business';
+import { fetchPerson, fetchPersonForEdit, savePerson, sanitizePerson, isLiving } from '@/business';
+import { isAuthenticated, authState } from '@/business/auth';
 import type { PersonDetail } from '@/business/types';
 
 const treeId = ref('');
 const handle = ref('');
 const person = ref<PersonDetail | null>(null);
+
+const showEdit = ref(false);
+const saving = ref(false);
+const editError = ref('');
+const editForm = ref({
+  first_name: '',
+  surname: '',
+  gender: 'U',
+  birth_date: '',
+  death_date: '',
+  events: [] as Array<{ type: string; date: string; place: string }>,
+});
 
 onLoad((options: any) => {
   treeId.value = options?.tree_id || '';
@@ -72,6 +135,14 @@ onLoad((options: any) => {
 });
 
 const isLivingPerson = computed(() => (person.value ? isLiving(person.value) : false));
+
+// 编辑权限：登录 + 非 guest；总谱仅 chief_editor
+const canEdit = computed(() => {
+  if (!isAuthenticated()) return false;
+  if (authState.role === 'guest') return false;
+  if (treeId.value === 'zhonghua_shiben_01' && authState.role !== 'chief_editor') return false;
+  return true;
+});
 
 const externalRefs = computed(() => {
   if (!person.value?.attributes) return [];
@@ -90,19 +161,104 @@ onMounted(async () => {
   }
 });
 
+async function openEdit() {
+  editError.value = '';
+  try {
+    const raw = await fetchPersonForEdit(treeId.value, handle.value);
+    const pn = raw.primary_name || {};
+    const surname = pn.surname_list?.[0]?.surname || '';
+    // 提取生卒（从出生/死亡事件日期）
+    let birth = '';
+    let death = '';
+    const events: Array<{ type: string; date: string; place: string }> = [];
+    for (const er of raw.event_ref_list || []) {
+      const evt = raw._events?.[er.ref];
+      const type = er.type || evt?.type || '';
+      const date = evt?.date?.text || '';
+      const place = evt?.place?.name || '';
+      if (type.includes('Birth')) birth = date;
+      if (type.includes('Death')) death = date;
+      events.push({ type, date, place });
+    }
+    editForm.value = {
+      first_name: pn.first_name || '',
+      surname,
+      gender: raw.gender || 'U',
+      birth_date: birth,
+      death_date: death,
+      events,
+    };
+    showEdit.value = true;
+  } catch (e: any) {
+    editError.value = e.message || '加载编辑数据失败';
+  }
+}
+
+function addEvent() {
+  editForm.value.events.push({ type: '', date: '', place: '' });
+}
+
+function removeEvent(i: number) {
+  editForm.value.events.splice(i, 1);
+}
+
+async function doSave() {
+  saving.value = true;
+  editError.value = '';
+  try {
+    // 重新 GET 最新对象（避免构造完整对象）
+    const raw = await fetchPersonForEdit(treeId.value, handle.value);
+    // 更新基本信息
+    raw.primary_name = raw.primary_name || {};
+    raw.primary_name.first_name = editForm.value.first_name;
+    raw.primary_name.surname_list = [{ surname: editForm.value.surname }];
+    raw.gender = editForm.value.gender;
+    await savePerson(treeId.value, handle.value, raw);
+    uni.showToast({ title: '保存成功', icon: 'success' });
+    showEdit.value = false;
+    // 刷新详情
+    const fresh = await fetchPerson(treeId.value, handle.value);
+    person.value = sanitizePerson(fresh);
+  } catch (e: any) {
+    editError.value = e.message || '保存失败';
+  } finally {
+    saving.value = false;
+  }
+}
+
 function goToExternal(treeId: string) {
-  // TODO: 查 tree-meta 映射生成跳转链接
   uni.navigateTo({ url: `/pages/hall/index?tree_id=${treeId}` });
 }
 </script>
 
 <style scoped>
 .container { padding: 20px; }
-.name { font-size: 24px; font-weight: bold; color: #3E2723; display: block; text-align: center; margin-bottom: 16px; }
+.name-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 16px; }
+.name { font-size: 24px; font-weight: bold; color: #3E2723; }
+.edit-btn { flex-shrink: 0; }
 .info-row { display: flex; justify-content: center; margin-bottom: 12px; }
 .info-card :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .section { margin-top: 20px; }
 .section-title { font-size: 16px; font-weight: bold; color: #8B4513; display: block; margin-bottom: 8px; }
 .section :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .loading { text-align: center; padding: 60px; color: #999; }
+
+/* 编辑模态框 */
+.modal-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.55); z-index: 999;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  width: 88%; max-width: 420px; max-height: 85vh;
+  background: #fff; border-radius: 14px; padding: 20px;
+  display: flex; flex-direction: column;
+}
+.modal-title { font-size: 18px; font-weight: bold; color: #3E2723; text-align: center; margin-bottom: 12px; }
+.modal-body { flex: 1; max-height: 55vh; }
+.field-label { font-size: 13px; color: #8B4513; font-weight: bold; display: block; margin: 12px 0 6px; }
+.field { margin-bottom: 8px; }
+.event-edit-row { background: #FBF8F4; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+.edit-error { text-align: center; color: #C62828; font-size: 13px; margin: 8px 0; }
+.modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 </style>
