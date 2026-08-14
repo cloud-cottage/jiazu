@@ -77,16 +77,19 @@
         </view>
 
         <view class="modal-actions">
-          <button class="btn-detail" @click="goDetail">查看完整档案</button>
+          <t-button theme="primary" block @click="goDetail">查看完整档案</t-button>
           <!-- admin 专属：移除并新建家族树 -->
-          <button
+          <t-button
             v-if="isAdmin"
-            class="btn-split"
+            theme="danger"
+            variant="outline"
+            block
+            :loading="splitting"
             :disabled="splitting"
             @click="confirmSplit"
           >
             {{ splitting ? '处理中...' : '⛔ 移除并新建家族树' }}
-          </button>
+          </t-button>
           <text v-if="splitError" class="split-error">{{ splitError }}</text>
           <text class="btn-close" @click="closeModal">关闭</text>
         </view>
@@ -511,15 +514,6 @@ function applyZoom(resetCenter = false) {
 .row-label { width: 40px; color: #8B4513; font-weight: bold; font-size: 14px; }
 .row-value { color: #555; font-size: 14px; flex: 1; }
 .modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
-.btn-detail {
-  height: 40px; line-height: 40px; background: #8B4513; color: #fff;
-  font-size: 15px; border-radius: 8px;
-}
-.btn-split {
-  height: 40px; line-height: 40px; background: #C62828; color: #fff;
-  font-size: 14px; border-radius: 8px;
-}
-.btn-split[disabled] { opacity: 0.6; }
 .split-error { text-align: center; color: #C62828; font-size: 12px; }
 .btn-close { text-align: center; color: #999; font-size: 14px; padding: 4px 0; }
 </style>

@@ -6,37 +6,43 @@
       <text class="subtitle">手机号登录</text>
 
       <view class="form">
-        <view class="phone-row">
-          <input
-            v-model="phone"
-            class="input"
-            type="number"
-            maxlength="11"
-            placeholder="手机号"
-            placeholder-class="ph"
-          />
-        </view>
+        <t-input
+          v-model="phone"
+          type="number"
+          :maxlength="11"
+          placeholder="手机号"
+          clearable
+        />
         <view class="code-row">
-          <input
+          <t-input
             v-model="code"
-            class="input"
             type="number"
-            maxlength="6"
+            :maxlength="6"
             placeholder="验证码"
-            placeholder-class="ph"
-            @confirm="doLogin"
+            clearable
+            @enter="doLogin"
           />
-          <text
+          <t-button
             class="send-btn"
-            :class="{ disabled: countdown > 0 }"
+            size="small"
+            variant="outline"
+            theme="primary"
+            :disabled="countdown > 0"
             @click="doSendCode"
           >
             {{ countdown > 0 ? `${countdown}s 后重发` : '获取验证码' }}
-          </text>
+          </t-button>
         </view>
-        <button class="btn" :disabled="loading" @click="doLogin">
-          {{ loading ? '登录中...' : '登 录' }}
-        </button>
+        <t-button
+          theme="primary"
+          size="large"
+          :loading="loading"
+          :disabled="loading"
+          block
+          @click="doLogin"
+        >
+          登 录
+        </t-button>
       </view>
 
       <view v-if="error" class="error">
@@ -82,7 +88,6 @@ async function doSendCode() {
   error.value = '';
   try {
     const res = await sendSmsCode(phone.value);
-    // 开发阶段：auth-server 返回 dev_code，直接填入方便调试
     if (res.dev_code) {
       code.value = res.dev_code;
       uni.showToast({ title: `验证码: ${res.dev_code}`, icon: 'none' });
@@ -163,24 +168,10 @@ function goRegister() {
 .logo { font-size: 44px; display: block; text-align: center; }
 .title { font-size: 20px; font-weight: bold; color: #3E2723; display: block; text-align: center; margin-top: 8px; }
 .subtitle { font-size: 13px; color: #999; display: block; text-align: center; margin: 6px 0 20px; }
-.form { display: flex; flex-direction: column; gap: 14px; }
-.input {
-  height: 44px; border: 1px solid #E0D5C8; border-radius: 8px;
-  padding: 0 14px; font-size: 15px; background: #FBF8F4; flex: 1;
-}
-.ph { color: #C4B5A5; }
+.form { display: flex; flex-direction: column; gap: 16px; }
 .code-row { display: flex; gap: 10px; align-items: center; }
-.send-btn {
-  flex-shrink: 0; height: 44px; line-height: 44px; padding: 0 14px;
-  font-size: 13px; color: #8B4513; background: #FFF3E0;
-  border-radius: 8px; text-align: center;
-}
-.send-btn.disabled { color: #C4B5A5; background: #F5F0EA; }
-.btn {
-  height: 44px; background: #8B4513; color: #fff; font-size: 16px;
-  border-radius: 8px; line-height: 44px; margin-top: 4px;
-}
-.btn[disabled] { opacity: 0.6; }
+.code-row :deep(.t-input) { flex: 1; }
+.send-btn { flex-shrink: 0; }
 .error { text-align: center; color: #C62828; font-size: 13px; margin-top: 12px; }
 .switch { text-align: center; margin-top: 18px; }
 .switch-text { color: #8B4513; font-size: 14px; }

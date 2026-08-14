@@ -13,30 +13,18 @@
     </view>
 
     <view class="nav-grid">
-      <view class="nav-item" @click="goTo('pedigree')">
-        <text class="nav-icon">🌳</text>
-        <text class="nav-label">世系图谱</text>
-      </view>
-      <view class="nav-item" @click="goTo('media')">
-        <text class="nav-icon">📜</text>
-        <text class="nav-label">文献浏览</text>
-      </view>
-      <view class="nav-item" @click="goTo('generation')">
-        <text class="nav-icon">📖</text>
-        <text class="nav-label">字辈检索</text>
-      </view>
-      <view class="nav-item" @click="goTo('migration')">
-        <text class="nav-icon">🗺️</text>
-        <text class="nav-label">迁徙地图</text>
-      </view>
-      <view class="nav-item" @click="goTo('pdf')">
-        <text class="nav-icon">🖨️</text>
-        <text class="nav-label">PDF族谱</text>
-      </view>
-      <view class="nav-item" @click="goTo('search')">
-        <text class="nav-icon">🔍</text>
-        <text class="nav-label">搜索</text>
-      </view>
+      <t-grid :columns="3" :bordered="false">
+        <t-grid-item
+          v-for="item in navItems"
+          :key="item.key"
+          :text="item.label"
+          @click="goTo(item.key)"
+        >
+          <template #icon>
+            <text class="nav-icon">{{ item.icon }}</text>
+          </template>
+        </t-grid-item>
+      </t-grid>
     </view>
 
     <view class="stats" v-if="stats">
@@ -105,6 +93,16 @@ const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
 const editForm = ref({ display_title: '', hall_name: '', origin: '', description: '' });
+
+// 导航项（TDesign grid）
+const navItems = [
+  { key: 'pedigree', label: '世系图谱', icon: '🌳' },
+  { key: 'media', label: '文献浏览', icon: '📜' },
+  { key: 'generation', label: '字辈检索', icon: '📖' },
+  { key: 'migration', label: '迁徙地图', icon: '🗺️' },
+  { key: 'pdf', label: 'PDF族谱', icon: '🖨️' },
+  { key: 'search', label: '搜索', icon: '🔍' },
+];
 
 // 管理员判定：登录用户 role === 'admin'
 const isAdmin = computed(() => isAuthenticated() && authState.role === 'admin');
@@ -222,14 +220,10 @@ function goTo(page: string) {
   background: #FFF3E0; border: 1px solid #E8C9A0; border-radius: 18px;
 }
 .edit-btn-text { font-size: 13px; color: #8B4513; }
-.nav-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-.nav-item {
-  width: 30%; padding: 16px 8px; text-align: center;
-  background: #fff; border-radius: 12px;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.06);
-}
-.nav-icon { font-size: 28px; display: block; }
-.nav-label { font-size: 13px; color: #555; margin-top: 6px; display: block; }
+.nav-grid { margin: 16px 0; }
+.nav-icon { font-size: 26px; }
+.nav-grid :deep(.t-grid) { border-radius: 12px; overflow: hidden; }
+.nav-grid :deep(.t-grid-item) { padding: 12px 0; }
 .stats { text-align: center; margin-top: 24px; padding: 16px; background: #FFF8E1; border-radius: 8px; }
 .stat { font-size: 14px; color: #5D4037; margin: 0 12px; display: inline-block; }
 

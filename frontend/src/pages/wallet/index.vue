@@ -9,7 +9,7 @@
 
     <view v-if="!isAuthenticated()" class="not-logged">
       <text>请先登录后使用钱包功能</text>
-      <button class="btn-login" @click="goLogin">去登录</button>
+      <t-button theme="primary" block class="btn-login" @click="goLogin">去登录</t-button>
     </view>
 
     <template v-else>
@@ -17,18 +17,39 @@
       <view class="section">
         <text class="section-title">充值</text>
         <view class="row">
-          <input v-model="rechargeAmount" class="input" type="digit" placeholder="金额（元）" />
-          <button class="btn-primary" :disabled="busy" @click="doRecharge">充值</button>
+          <t-input
+            v-model="rechargeAmount"
+            type="number"
+            placeholder="金额（元）"
+            clearable
+            class="input"
+          />
+          <t-button theme="primary" :loading="busy" :disabled="busy" @click="doRecharge">
+            充值
+          </t-button>
         </view>
         <text class="dev-tip">开发阶段模拟充值，上线后接入微信支付</text>
       </view>
 
       <view class="section">
         <text class="section-title">转账到家族树</text>
-        <view class="row">
-          <input v-model="transferTree" class="input input-tree" placeholder="家族树 ID（如 gu_39038_01）" />
-          <input v-model="transferAmount" class="input input-amt" type="digit" placeholder="金额" />
-          <button class="btn-primary" :disabled="busy" @click="doTransfer">转账</button>
+        <view class="transfer-form">
+          <t-input
+            v-model="transferTree"
+            placeholder="家族树 ID（如 gu_39038_01）"
+            clearable
+            class="input"
+          />
+          <t-input
+            v-model="transferAmount"
+            type="number"
+            placeholder="金额"
+            clearable
+            class="input"
+          />
+          <t-button theme="primary" :loading="busy" :disabled="busy" block @click="doTransfer">
+            转账
+          </t-button>
         </view>
         <view v-if="transferResult" class="transfer-result">
           <text>{{ transferResult }}</text>
@@ -67,7 +88,7 @@ import {
   rechargeWallet,
   transferToTree,
 } from '@/business/api';
-import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
+import { isAuthenticated, getAuthToken } from '@/business/auth';
 import type { WalletOverview } from '@/business/api';
 
 const wallet = ref<WalletOverview | null>(null);
@@ -79,7 +100,6 @@ const busy = ref(false);
 const error = ref('');
 
 onLoad((options: any) => {
-  // 从家族树主页跳转时预填 tree_id
   if (options?.tree_id) {
     transferTree.value = options.tree_id;
   }
@@ -166,28 +186,15 @@ function goLogin() {
 .balance-value { font-size: 34px; font-weight: bold; display: block; margin: 8px 0; }
 .balance-hint { font-size: 12px; color: #E8D5C0; display: block; }
 .not-logged { text-align: center; padding: 40px 0; color: #999; }
-.btn-login {
-  margin-top: 14px; height: 40px; line-height: 40px;
-  background: #8B4513; color: #fff; border-radius: 8px; font-size: 15px;
-}
+.btn-login { margin-top: 14px; }
 .section {
   background: #fff; border-radius: 12px; padding: 16px;
   margin-bottom: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
 .section-title { font-size: 15px; font-weight: bold; color: #3E2723; display: block; margin-bottom: 12px; }
 .row { display: flex; gap: 8px; align-items: center; }
-.input {
-  flex: 1; height: 40px; border: 1px solid #E0D5C8; border-radius: 8px;
-  padding: 0 12px; font-size: 14px; background: #FBF8F4;
-}
-.input-tree { flex: 2; }
-.input-amt { flex: 1; }
-.btn-primary {
-  height: 40px; line-height: 40px; padding: 0 16px;
-  background: #8B4513; color: #fff; font-size: 14px; border-radius: 8px;
-  flex-shrink: 0;
-}
-.btn-primary[disabled] { opacity: 0.6; }
+.row .input { flex: 1; }
+.transfer-form { display: flex; flex-direction: column; gap: 12px; }
 .dev-tip { font-size: 11px; color: #B5A594; margin-top: 8px; display: block; }
 .transfer-result { margin-top: 10px; color: #2E7D32; font-size: 13px; }
 .empty { text-align: center; color: #999; padding: 20px; font-size: 13px; }

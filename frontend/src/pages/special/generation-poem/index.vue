@@ -3,22 +3,29 @@
     <text class="title">字辈检索</text>
 
     <view class="input-area">
-      <input
+      <t-input
         v-model="char"
         class="char-input"
         placeholder="输入一个汉字"
-        maxlength="1"
+        :maxlength="1"
+        clearable
+        @enter="doSearch"
       />
-      <text class="search-btn" @click="doSearch">检索</text>
+      <t-button theme="primary" @click="doSearch">检索</t-button>
     </view>
 
     <view v-if="result" class="result">
-      <text class="result-text" v-if="result.found">
+      <t-tag
+        v-if="result.found"
+        theme="success"
+        variant="light"
+        size="large"
+      >
         「{{ char }}」为 {{ result.tree_title }} 第 {{ result.generation }} 世字辈
-      </text>
-      <text class="result-text not-found" v-else>
+      </t-tag>
+      <t-tag v-else theme="danger" variant="light" size="large">
         未在已知字辈中找到「{{ char }}」
-      </text>
+      </t-tag>
     </view>
 
     <view class="help">
@@ -53,15 +60,9 @@ function doSearch() {
 <style scoped>
 .container { padding: 20px; }
 .title { font-size: 20px; font-weight: bold; display: block; text-align: center; }
-.input-area { display: flex; gap: 8px; margin-top: 20px; justify-content: center; }
-.char-input {
-  width: 80px; height: 48px; border: 2px solid #8B4513; border-radius: 8px;
-  text-align: center; font-size: 24px;
-}
-.search-btn { font-size: 14px; color: #fff; background: #8B4513; padding: 12px 20px; border-radius: 8px; }
+.input-area { display: flex; gap: 8px; margin-top: 20px; justify-content: center; align-items: center; }
+.char-input { width: 120px; }
 .result { margin-top: 24px; text-align: center; }
-.result-text { font-size: 16px; color: #2E7D32; }
-.result-text.not-found { color: #C62828; }
 .help { margin-top: 40px; padding: 16px; background: #FFF8E1; border-radius: 8px; }
 .help-title { font-size: 14px; font-weight: bold; color: #8B4513; display: block; }
 .help-text { font-size: 13px; color: #666; margin-top: 8px; line-height: 1.6; display: block; }

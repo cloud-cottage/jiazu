@@ -1,39 +1,37 @@
 <template>
   <view class="container">
-    <view class="search-bar">
-      <input
-        v-model="query"
-        class="search-input"
-        placeholder="搜索人物姓名、字号..."
-        @confirm="doSearch"
-      />
-      <text class="search-btn" @click="doSearch">搜索</text>
-    </view>
+    <t-search
+      v-model="query"
+      placeholder="搜索人物姓名、字号..."
+      shape="round"
+      :action="'搜索'"
+      @submit="doSearch"
+    />
 
     <view class="scope-toggle">
-      <text
-        :class="['scope-item', { active: scope === 'tree' }]"
-        @click="scope = 'tree'"
-      >当前家族</text>
-      <text
-        :class="['scope-item', { active: scope === 'global' }]"
-        @click="scope = 'global'"
-      >全局跨家族</text>
+      <t-radio-group v-model="scope">
+        <t-radio-button value="tree">当前家族</t-radio-button>
+        <t-radio-button value="global">全局跨家族</t-radio-button>
+      </t-radio-group>
     </view>
 
     <view class="results">
-      <view
-        v-for="person in results"
-        :key="person.handle"
-        class="result-item"
-        @click="goToPerson(person)"
-      >
-        <text class="result-name">{{ person.name }}</text>
-        <text class="result-tree" v-if="scope === 'global'">来自: {{ person.tree_title }}</text>
-        <text class="result-info" v-if="person.birth_date">
-          {{ person.birth_date }} — {{ person.death_date || '?' }}
-        </text>
-      </view>
+      <t-cell-group :bordered="false">
+        <t-cell
+          v-for="person in results"
+          :key="person.handle"
+          :title="person.name"
+          :description="
+            scope === 'global'
+              ? `来自: ${person.tree_title}`
+              : person.birth_date
+                ? `${person.birth_date} — ${person.death_date || '?'}`
+                : ''
+          "
+          arrow
+          @click="goToPerson(person)"
+        />
+      </t-cell-group>
 
       <view v-if="searched && results.length === 0" class="empty">
         <text>未找到匹配结果</text>
@@ -82,19 +80,8 @@ function goToPerson(person: any) {
 
 <style scoped>
 .container { padding: 20px; }
-.search-bar { display: flex; gap: 8px; }
-.search-input {
-  flex: 1; height: 40px; border: 1px solid #ddd; border-radius: 8px;
-  padding: 0 12px; font-size: 14px;
-}
-.search-btn { font-size: 14px; color: #fff; background: #8B4513; padding: 8px 16px; border-radius: 8px; line-height: 24px; }
-.scope-toggle { display: flex; gap: 12px; margin-top: 12px; }
-.scope-item { font-size: 13px; color: #999; padding: 4px 12px; border-radius: 12px; background: #f0f0f0; }
-.scope-item.active { color: #fff; background: #8B4513; }
+.scope-toggle { display: flex; justify-content: center; margin-top: 16px; }
 .results { margin-top: 16px; }
-.result-item { padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
-.result-name { font-size: 16px; font-weight: bold; color: #3E2723; display: block; }
-.result-tree { font-size: 12px; color: #8B4513; display: block; }
-.result-info { font-size: 13px; color: #888; display: block; margin-top: 2px; }
+.results :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .empty { text-align: center; padding: 40px; color: #999; }
 </style>

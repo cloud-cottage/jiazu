@@ -41,7 +41,7 @@
       </text>
     </view>
 
-    <button class="export-btn" @click="doExport">生成并下载 PDF</button>
+    <t-button theme="primary" block class="export-btn" @click="doExport">生成并下载 PDF</t-button>
   </view>
 </template>
 

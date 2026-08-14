@@ -95,7 +95,8 @@
   "easycom": {
     "autoscan": true,
     "custom": {
-      "^u-(.*)": "@/components/u-$1/u-$1.vue"
+      "^u-(.*)": "@/components/u-$1/u-$1.vue",
+      "^t-(.*)": "@tdesign/uniapp/$1/$1.vue"
     }
   }
 }

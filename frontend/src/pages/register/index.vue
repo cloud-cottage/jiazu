@@ -6,44 +6,49 @@
       <text class="subtitle">手机号 + 验证码，无需密码</text>
 
       <view class="form">
-        <view class="phone-row">
-          <input
-            v-model="phone"
-            class="input"
-            type="number"
-            maxlength="11"
-            placeholder="手机号"
-            placeholder-class="ph"
-          />
-        </view>
+        <t-input
+          v-model="phone"
+          type="number"
+          :maxlength="11"
+          placeholder="手机号"
+          clearable
+        />
         <view class="code-row">
-          <input
+          <t-input
             v-model="code"
-            class="input"
             type="number"
-            maxlength="6"
+            :maxlength="6"
             placeholder="验证码"
-            placeholder-class="ph"
-            @confirm="doRegister"
+            clearable
+            @enter="doRegister"
           />
-          <text
+          <t-button
             class="send-btn"
-            :class="{ disabled: countdown > 0 }"
+            size="small"
+            variant="outline"
+            theme="primary"
+            :disabled="countdown > 0"
             @click="doSendCode"
           >
             {{ countdown > 0 ? `${countdown}s 后重发` : '获取验证码' }}
-          </text>
+          </t-button>
         </view>
-        <input
+        <t-input
           v-model="nickname"
-          class="input"
-          maxlength="30"
+          :maxlength="30"
           placeholder="昵称（选填）"
-          placeholder-class="ph"
+          clearable
         />
-        <button class="btn" :disabled="loading" @click="doRegister">
-          {{ loading ? '注册中...' : '注 册' }}
-        </button>
+        <t-button
+          theme="primary"
+          size="large"
+          :loading="loading"
+          :disabled="loading"
+          block
+          @click="doRegister"
+        >
+          注 册
+        </t-button>
       </view>
 
       <view v-if="error" class="error">
@@ -165,24 +170,10 @@ function goLogin() {
 .logo { font-size: 44px; display: block; text-align: center; }
 .title { font-size: 20px; font-weight: bold; color: #3E2723; display: block; text-align: center; margin-top: 8px; }
 .subtitle { font-size: 13px; color: #999; display: block; text-align: center; margin: 6px 0 20px; }
-.form { display: flex; flex-direction: column; gap: 14px; }
-.input {
-  height: 44px; border: 1px solid #E0D5C8; border-radius: 8px;
-  padding: 0 14px; font-size: 15px; background: #FBF8F4; flex: 1;
-}
-.ph { color: #C4B5A5; }
+.form { display: flex; flex-direction: column; gap: 16px; }
 .code-row { display: flex; gap: 10px; align-items: center; }
-.send-btn {
-  flex-shrink: 0; height: 44px; line-height: 44px; padding: 0 14px;
-  font-size: 13px; color: #8B4513; background: #FFF3E0;
-  border-radius: 8px; text-align: center;
-}
-.send-btn.disabled { color: #C4B5A5; background: #F5F0EA; }
-.btn {
-  height: 44px; background: #8B4513; color: #fff; font-size: 16px;
-  border-radius: 8px; line-height: 44px; margin-top: 4px;
-}
-.btn[disabled] { opacity: 0.6; }
+.code-row :deep(.t-input) { flex: 1; }
+.send-btn { flex-shrink: 0; }
 .error { text-align: center; color: #C62828; font-size: 13px; margin-top: 12px; }
 .tip { margin-top: 18px; padding: 12px; background: #FFF8E1; border-radius: 8px; }
 .tip-text { font-size: 12px; color: #8A7A6A; line-height: 1.6; display: block; }

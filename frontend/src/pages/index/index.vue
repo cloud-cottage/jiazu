@@ -18,17 +18,17 @@
     </view>
 
     <view class="hall-list">
-      <view
-        v-for="card in halls"
-        :key="card.tree_id"
-        class="hall-card"
-        @click="goToHall(card)"
-      >
-        <text class="hall-surname">{{ card.surname }}氏</text>
-        <text class="hall-title">{{ card.title }}</text>
-        <text class="hall-origin">发源地：{{ card.origin }}</text>
-        <text class="hall-desc">{{ card.description }}</text>
-      </view>
+      <t-cell-group :bordered="false">
+        <t-cell
+          v-for="card in halls"
+          :key="card.tree_id"
+          :title="`${card.surname}氏 · ${card.title}`"
+          :description="`发源地：${card.origin || '待完善'}`"
+          :note="card.description"
+          arrow
+          @click="goToHall(card)"
+        />
+      </t-cell-group>
 
       <view v-if="halls.length === 0" class="empty">
         <text>暂无已上线的家族数字馆</text>
@@ -94,12 +94,9 @@ function goWallet() {
 .auth-text { font-size: 13px; color: #8B4513; }
 .title { font-size: 24px; font-weight: bold; display: block; }
 .subtitle { font-size: 14px; color: #666; margin-top: 8px; display: block; }
-.hall-list { display: flex; flex-direction: column; gap: 16px; }
-.hall-card {
-  padding: 16px; border-radius: 12px; background: #fff;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-.hall-surname { font-size: 20px; font-weight: bold; color: #8B4513; display: block; }
+.hall-list { display: flex; flex-direction: column; gap: 12px; }
+.hall-list :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
+.empty { text-align: center; padding: 40px; color: #999; }
 .hall-title { font-size: 16px; margin-top: 4px; display: block; }
 .hall-origin { font-size: 13px; color: #888; margin-top: 6px; display: block; }
 .hall-desc { font-size: 14px; color: #555; margin-top: 4px; display: block; }

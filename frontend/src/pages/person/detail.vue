@@ -4,43 +4,54 @@
       <text class="name">{{ person.name }}</text>
 
       <view class="info-row" v-if="isLivingPerson">
-        <text class="living-badge">在世（信息已脱敏）</text>
+        <t-tag theme="warning" variant="light">在世（信息已脱敏）</t-tag>
       </view>
 
-      <view class="info-row" v-if="person.birth_date && !isLivingPerson">
-        <text class="label">生</text>
-        <text class="value">{{ person.birth_date }}</text>
-      </view>
-
-      <view class="info-row" v-if="person.death_date && !isLivingPerson">
-        <text class="label">卒</text>
-        <text class="value">{{ person.death_date }}</text>
+      <view class="info-card">
+        <t-cell-group :bordered="false">
+          <t-cell
+            v-if="person.birth_date && !isLivingPerson"
+            title="生"
+            :note="person.birth_date"
+          />
+          <t-cell
+            v-if="person.death_date && !isLivingPerson"
+            title="卒"
+            :note="person.death_date"
+          />
+          <t-cell title="编号" :note="person.gramps_id" />
+        </t-cell-group>
       </view>
 
       <view v-if="person.events && person.events.length" class="section">
         <text class="section-title">生平大事</text>
-        <view v-for="evt in person.events" :key="evt.handle" class="event-item">
-          <text class="event-type">{{ evt.type }}</text>
-          <text class="event-date">{{ evt.date }}</text>
-          <text class="event-place">{{ evt.place }}</text>
-        </view>
+        <t-cell-group :bordered="false">
+          <t-cell
+            v-for="evt in person.events"
+            :key="evt.handle"
+            :title="evt.type"
+            :description="evt.place"
+            :note="evt.date"
+          />
+        </t-cell-group>
       </view>
 
       <view v-if="externalRefs.length" class="section">
         <text class="section-title">关联信息</text>
-        <view
-          v-for="attr in externalRefs"
-          :key="attr.key"
-          class="attr-item link"
-          @click="goToExternal(attr.value)"
-        >
-          <text>{{ attr.key }}: 查看 →</text>
-        </view>
+        <t-cell-group :bordered="false">
+          <t-cell
+            v-for="attr in externalRefs"
+            :key="attr.key"
+            :title="`${attr.key}: 查看 →`"
+            arrow
+            @click="goToExternal(attr.value)"
+          />
+        </t-cell-group>
       </view>
     </view>
 
     <view v-else class="loading">
-      <text>加载中...</text>
+      <t-loading size="40px" theme="spinner" text="加载中..." />
     </view>
   </view>
 </template>
@@ -88,16 +99,10 @@ function goToExternal(treeId: string) {
 <style scoped>
 .container { padding: 20px; }
 .name { font-size: 24px; font-weight: bold; color: #3E2723; display: block; text-align: center; margin-bottom: 16px; }
-.living-badge { color: #E65100; font-size: 14px; background: #FFF3E0; padding: 4px 12px; border-radius: 4px; }
-.info-row { display: flex; align-items: center; margin-bottom: 8px; }
-.label { font-size: 14px; color: #8B4513; width: 32px; font-weight: bold; }
-.value { font-size: 14px; color: #555; }
+.info-row { display: flex; justify-content: center; margin-bottom: 12px; }
+.info-card :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .section { margin-top: 20px; }
 .section-title { font-size: 16px; font-weight: bold; color: #8B4513; display: block; margin-bottom: 8px; }
-.event-item { padding: 8px 0; border-bottom: 1px solid #eee; }
-.event-type { font-size: 14px; color: #555; display: block; }
-.event-date { font-size: 13px; color: #888; display: block; }
-.event-place { font-size: 13px; color: #888; display: block; }
-.attr-item { font-size: 14px; color: #1565C0; padding: 4px 0; }
+.section :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .loading { text-align: center; padding: 60px; color: #999; }
 </style>
