@@ -19,6 +19,7 @@ import type {
 
 // API 基础路径（Vite 代理 → auth-server）
 const API_BASE = '/api';
+export { API_BASE };
 
 async function request<T>(
   path: string,
@@ -414,20 +415,24 @@ export async function fetchMasterTree(): Promise<MasterNode[]> {
   });
 }
 
-/** 获取人物完整对象（编辑用） */
+/** 获取人物完整对象（编辑用，需登录） */
 export async function fetchPersonForEdit(
   treeId: string,
   handle: string,
+  token: string,
 ): Promise<any> {
   const res = await fetch(`${API_BASE}/people/${handle}?profile=all`, {
-    headers: { 'X-Tree-Id': treeId },
+    headers: {
+      'X-Tree-Id': treeId,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
   if (!res.ok) throw new Error(`加载人物失败 (${res.status})`);
   return res.json();
 }
 
 /**
- * 保存人物（PUT 完整对象）
+ * 保存人物（PUT 完整对象，需登录）
  * 注：Gramps-Web 的 ETag 是响应 hash（非对象 hash），If-Match 永远不匹配，
  * 故不使用乐观锁，直接 PUT。
  */
@@ -435,12 +440,14 @@ export async function savePerson(
   treeId: string,
   handle: string,
   person: any,
+  token: string,
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/people/${handle}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'X-Tree-Id': treeId,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(person),
   });

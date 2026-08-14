@@ -109,8 +109,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchPerson, fetchPersonForEdit, savePerson, sanitizePerson, isLiving } from '@/business';
-import { isAuthenticated, authState } from '@/business/auth';
+import { fetchPerson, fetchPersonForEdit, savePerson, sanitizePerson, isLiving, API_BASE } from '@/business';
+import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { PersonDetail } from '@/business/types';
 
 const treeId = ref('');
@@ -163,19 +163,42 @@ onMounted(async () => {
 
 async function openEdit() {
   editError.value = '';
+  const token = getAuthToken();
+  if (!token) {
+    editError.value = '登录已过期，请重新登录';
+    return;
+  }
   try {
-    const raw = await fetchPersonForEdit(treeId.value, handle.value);
+    const raw = await fetchPersonForEdit(treeId.value, handle.value, token);
     const pn = raw.primary_name || {};
     const surname = pn.surname_list?.[0]?.surname || '';
+    // gender 数字枚举 → M/F/U
+    const genderNum = raw.gender;
+    const genderStr = genderNum === 1 ? 'M' : genderNum === 2 ? 'F' : genderNum === 0 ? 'U' : (genderNum || 'U');
     // 提取生卒（从出生/死亡事件日期）
     let birth = '';
     let death = '';
     const events: Array<{ type: string; date: string; place: string }> = [];
-    for (const er of raw.event_ref_list || []) {
-      const evt = raw._events?.[er.ref];
-      const type = er.type || evt?.type || '';
-      const date = evt?.date?.text || '';
-      const place = evt?.place?.name || '';
+    // event_ref_list 只有 ref handle，需要逐个拉事件详情
+    const refs = raw.event_ref_list || [];
+    const eventPromises = refs.map(async (er: any) => {
+      try {
+        const evtRes = await fetch(
+          `${API_BASE}/events/${er.ref}`,
+          { headers: { 'X-Tree-Id': treeId.value } },
+        );
+        if (!evtRes.ok) return null;
+        return evtRes.json();
+      } catch {
+        return null;
+      }
+    });
+    const eventObjs = await Promise.all(eventPromises);
+    for (const evt of eventObjs) {
+      if (!evt) continue;
+      const type = typeof evt.type === 'string' ? evt.type : evt.type?.text || '';
+      const date = evt.date?.text || '';
+      const place = evt.place?.name || evt.place || '';
       if (type.includes('Birth')) birth = date;
       if (type.includes('Death')) death = date;
       events.push({ type, date, place });
@@ -183,7 +206,7 @@ async function openEdit() {
     editForm.value = {
       first_name: pn.first_name || '',
       surname,
-      gender: raw.gender || 'U',
+      gender: genderStr,
       birth_date: birth,
       death_date: death,
       events,
@@ -205,15 +228,26 @@ function removeEvent(i: number) {
 async function doSave() {
   saving.value = true;
   editError.value = '';
+  const token = getAuthToken();
+  if (!token) {
+    editError.value = '登录已过期，请重新登录';
+    saving.value = false;
+    return;
+  }
   try {
     // 重新 GET 最新对象（避免构造完整对象）
-    const raw = await fetchPersonForEdit(treeId.value, handle.value);
+    const raw = await fetchPersonForEdit(treeId.value, handle.value, token);
+    // 关键：profile 字段会导致 PUT 反序列化失败（Unknown classes），必须删除
+    delete raw.profile;
+    // 注意：gender 保持数字枚举（1男/2女/0未知），PUT 接受数字，不要转 M/F/U
     // 更新基本信息
     raw.primary_name = raw.primary_name || {};
     raw.primary_name.first_name = editForm.value.first_name;
     raw.primary_name.surname_list = [{ surname: editForm.value.surname }];
-    raw.gender = editForm.value.gender;
-    await savePerson(treeId.value, handle.value, raw);
+    // 表单 gender 是 M/F/U，映射回数字
+    const genderNumMap: Record<string, number> = { M: 1, F: 2, U: 0 };
+    raw.gender = genderNumMap[editForm.value.gender] ?? raw.gender;
+    await savePerson(treeId.value, handle.value, raw, token);
     uni.showToast({ title: '保存成功', icon: 'success' });
     showEdit.value = false;
     // 刷新详情
