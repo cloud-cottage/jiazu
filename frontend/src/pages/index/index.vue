@@ -23,7 +23,7 @@
 
     <!-- 双模式切换：矩阵式 / 总谱目录树 -->
     <view class="mode-tabs">
-      <t-tabs v-model="activeTab" :theme="'light'" @change="onTabChange">
+      <t-tabs :value="activeTab" :theme="'light'" @change="onTabChange">
         <t-tab-panel label="家族馆" value="grid" />
         <t-tab-panel label="中华世本目录" value="master" />
       </t-tabs>
@@ -182,7 +182,8 @@ async function loadMasterTree() {
   }
 }
 
-function onTabChange() {
+function onTabChange(val: string | number) {
+  activeTab.value = String(val);
   if (activeTab.value === 'master') {
     loadMasterTree();
   }
