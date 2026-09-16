@@ -1,0 +1,1893 @@
+<template>
+  <view class="container" :class="mode">
+    <!-- 档案视图（非编辑态）：完整档案 + 编辑/出嫁入口 + 图谱管理操作区 -->
+    <view v-if="!showEdit" class="archive-view">
+      <view v-if="person" class="person-detail">
+      <view class="name-row">
+        <image
+          v-if="genderIcon"
+          class="gender-badge"
+          :src="genderIcon"
+          mode="aspectFit"
+        />
+        <text class="name">{{ person.name }}</text>
+        <!-- 称号（封号优先，其次号/谥号）：毕公 / 周文王 … -->
+        <text v-if="titleTag" class="name-title">{{ titleTag }}</text>
+        <!-- 编辑按钮（有编辑权限时显示） -->
+        <t-button
+          v-if="canEdit"
+          size="small"
+          variant="outline"
+          theme="primary"
+          class="edit-btn"
+          @click="openEdit"
+        >✏️ 编辑</t-button>
+        <!-- 跨树嫁娶（docs/marriage.spec.md）：嫁出（女）/ 娶入（男）→ 提交申请，对方家族审批后生效 -->
+        <t-button
+          v-if="canMarryOut"
+          size="small"
+          variant="outline"
+          theme="warning"
+          class="edit-btn"
+          @click="openMarry"
+        >💍 嫁出</t-button>
+        <t-button
+          v-if="canMarryIn"
+          size="small"
+          variant="outline"
+          theme="warning"
+          class="edit-btn"
+          @click="openMarry"
+        >🤵 娶入</t-button>
+        <!-- 始祖挂载（docs/founder-attach.spec.md）：未挂载的始祖节点 →「认祖」；镜像态 →「解除挂载」 -->
+        <t-button
+          v-if="canFounderAttach"
+          size="small"
+          variant="outline"
+          theme="primary"
+          class="edit-btn"
+          @click="openFounderAttach"
+        >⛩ 认祖（挂到{{ founderTargetKindLabel }}）</t-button>
+        <t-button
+          v-if="canFounderDetach"
+          size="small"
+          variant="outline"
+          theme="danger"
+          class="edit-btn"
+          @click="detachFounderHere"
+        >⛓ 解除挂载</t-button>
+        <!-- 重置始祖：清空本树始祖登记 → 本树回到「无始祖」态（可在任意节点用「⛩ 认祖」重新指定） -->
+        <t-button
+          v-if="canFounderReset"
+          size="small"
+          variant="outline"
+          theme="danger"
+          class="edit-btn"
+          @click="resetFounderHere"
+        >🔁 重置始祖</t-button>
+        <!-- 身份认定已取消（申请-审批制；docs/permission-tier.spec.md §9）：自助认领不再提供 -->
+      </view>
+
+      <view class="info-row" v-if="isLivingPerson">
+        <t-tag theme="warning" variant="light">在世</t-tag>
+      </view>
+
+      <!-- 始祖节点只读态（镜像 / 空白占位）：整节点只读，信息需在中华世本修改 -->
+      <view v-if="founderLocked" class="info-row founder-lock">
+        <t-tag theme="warning" variant="light">{{ founderMirror ? '始祖节点 · 中华世本镜像' : '始祖节点 · 空白占位' }}</t-tag>
+      </view>
+      <text v-if="founderLocked" class="founder-hint">{{ founderLockHint }}</text>
+
+      <view class="info-card">
+        <t-cell-group :bordered="false">
+          <!-- 生：有录入即显示（仅年份 → 年份；完整日期 → 日期）。在世者也显示出生信息。 -->
+          <t-cell
+            v-if="birthText"
+            title="生"
+            :note="birthText"
+          />
+          <!-- 卒：仅已故显示；有日期写日期，卒年不详显示「不详」 -->
+          <t-cell
+            v-if="!isLivingPerson"
+            title="卒"
+            :note="deathText"
+          />
+          <t-cell title="编号" :note="personIdDisplay(person.gramps_id)" />
+          <!-- 称号：封号 → 谥号 → 号（有录入才显示；与姓名顺序一致） -->
+          <t-cell v-if="titleMap['封号']" title="封号" :note="titleMap['封号']" />
+          <t-cell v-if="titleMap['谥号']" title="谥号" :note="titleMap['谥号']" />
+          <t-cell v-if="titleMap['号']" title="号" :note="titleMap['号']" />
+        </t-cell-group>
+      </view>
+
+      <view v-if="parentsFamily" class="section">
+        <text class="section-title">父母</text>
+        <t-cell-group :bordered="false">
+          <t-cell
+            v-if="parentsFamily.father"
+            title="父"
+            :note="parentsFamily.father.name"
+            arrow
+            @click="goPerson(parentsFamily.father)"
+          />
+          <t-cell
+            v-if="parentsFamily.mother"
+            title="母"
+            :note="parentsFamily.mother.name"
+            arrow
+            @click="goPerson(parentsFamily.mother)"
+          />
+        </t-cell-group>
+      </view>
+
+      <!-- 跨树婚姻（嫁出/娶入/绝婚/合离）：外树配偶 + 婚姻序号 + 成婚/结束日期 -->
+      <view v-if="crossMarriage" class="section">
+        <text class="section-title">跨树婚姻</text>
+        <t-cell-group :bordered="false">
+          <t-cell :title="crossMarriage.title" :note="crossMarriage.note" />
+        </t-cell-group>
+        <view v-if="crossMarriage.active" class="marriage-actions">
+          <t-button
+            v-if="person && person.gender === 'M'"
+            size="small"
+            variant="outline"
+            theme="danger"
+            @click="openEndMarriage('绝婚')"
+          >⚔️ 绝婚</t-button>
+          <t-button
+            size="small"
+            variant="outline"
+            theme="warning"
+            @click="openEndMarriage('合离')"
+          >🤝 合离</t-button>
+        </view>
+        <text v-else class="marriage-hint">{{ crossMarriage.endedHint }}</text>
+      </view>
+
+      <view v-if="spouseFamilies.length" class="section">
+        <text class="section-title">配偶与子女</text>
+        <t-cell-group :bordered="false">
+          <view v-for="fam in spouseFamilies" :key="fam.handle" class="fam-block">
+            <view class="fam-row">
+              <text class="fam-label">配偶</text>
+              <text
+                v-if="spouseOf(fam)"
+                class="fam-link"
+                @click="goPerson(spouseOf(fam))"
+              >{{ spouseOf(fam)?.name }}</text>
+              <text v-else class="fam-none">未记录</text>
+            </view>
+            <view class="fam-row" v-if="fam.children.length">
+              <text class="fam-label">子女</text>
+              <view class="fam-kids">
+                <text
+                  v-for="c in fam.children"
+                  :key="c.handle"
+                  class="fam-link"
+                  @click="goPerson(c)"
+                >{{ c.name }}</text>
+              </view>
+            </view>
+          </view>
+        </t-cell-group>
+      </view>
+
+      <!-- 始祖挂载（zhonghua 真身侧）：本节点被哪些家族树认作始祖 + 总编辑直接挂载入口 -->
+      <view v-if="isMasterTree && (attachedTrees.length || canAttachFounder)" class="section">
+        <text class="section-title">始祖挂载</text>
+        <view v-for="att in attachedTrees" :key="att.tree_id" class="fam-block">
+          <view class="fam-row">
+            <text class="fam-label">挂载</text>
+            <text class="fam-link" @click="goToAttachedTree(att)">【{{ attachedTreeLabel(att) }}】{{ att.tree_title }}</text>
+          </view>
+          <view v-if="canAttachFounder" class="fam-row">
+            <text class="fam-label"></text>
+            <t-button size="small" variant="outline" theme="danger" @click="detachFounderHere(att)">解除挂载</t-button>
+          </view>
+        </view>
+        <text v-if="!attachedTrees.length" class="founder-hint">该节点暂未挂载任何下层树的始祖。</text>
+        <text v-if="canAttachFounder" class="founder-hint">
+          普通家族树须先认祖到本姓宗谱（不得直挂世本），因此世本侧可直接挂载的只有宗谱。
+        </text>
+        <view v-if="canAttachFounder" class="marriage-actions">
+          <t-button size="small" variant="outline" theme="primary" @click="openAttachFounder">⛩ 挂载宗谱</t-button>
+        </view>
+      </view>
+
+      <view v-if="person.events && person.events.length" class="section">
+        <text class="section-title">生平大事</text>
+        <t-cell-group :bordered="false">
+          <t-cell
+            v-for="evt in person.events"
+            :key="evt.handle"
+            :title="evt.type"
+            :description="evt.place"
+            :note="evt.date"
+          />
+        </t-cell-group>
+      </view>
+
+      <view v-if="externalLinks.length" class="section">
+        <text class="section-title">关联信息</text>
+        <t-cell-group :bordered="false">
+          <t-cell
+            v-for="link in externalLinks"
+            :key="link.tree_id"
+            :title="link.note"
+            :description="link.tree_id"
+            arrow
+            @click="goToExternal(link)"
+          />
+        </t-cell-group>
+        <!-- 分迁占位节点：管理员可删除链接（彻底断开） -->
+        <view v-if="canRemoveBranchHere" class="branch-admin">
+          <t-button
+            size="small"
+            variant="outline"
+            theme="danger"
+            block
+            :loading="removingBranch"
+            @click="removeBranchLinkHere"
+          >🗑 删除分迁链接（彻底断开）</t-button>
+        </view>
+      </view>
+
+      <!-- 危险区：删除节点（管理员；总谱 / 始祖 / 镜像节点不显示；跨树关联由后端拒绝） -->
+      <view v-if="canDeleteNode" class="section danger-zone">
+        <text class="section-title">危险区</text>
+        <t-button
+          size="small"
+          variant="outline"
+          theme="danger"
+          block
+          :loading="deleting"
+          @click="openDelete"
+        >🗑 删除节点</t-button>
+        <text class="danger-hint">
+          删除不可恢复：可「连本节点带全部后代」一起删除，或「仅删本节点」——配偶健在时子女留在原家族
+          （只清本人槽位）；本人是该家族唯一家长时子女上提一级并入父母的家族。
+          被其它家族树引用的节点一律拒绝删除，请先到对应家族树解除关系。
+        </text>
+        <text v-if="isClanTree" class="danger-hint clan-danger-hint">
+          ⚠️ 本树为宗谱：删支系节点风险较高——宗谱自有支系常是下级普通家族树的认祖落点，
+          删除后这些树会失去锚点。该操作仅总编（chief_editor）可见/可执行。
+        </text>
+      </view>
+
+      <!-- 谱系管理操作区（树图/总谱时间轴宿主开启；加父加子/续编/晋宗/拆分内联在档案内） -->
+      <PersonManagePanel
+        v-if="treeManage && person"
+        :tree-id="treeId"
+        :person-name="person.name"
+        :handle="person.handle"
+        :chain-gen="chainGen"
+        :chain-aggregate="chainAggregate"
+        :person-surname="person.surname"
+        :person-gender="person.gender"
+        :child-surname-default="childSurnameDefault"
+        @tree-changed="onManageTreeChanged"
+      />
+    </view>
+
+    <view v-else-if="loadError" class="loading archive-error">
+      <text class="error-text">{{ loadError }}</text>
+      <t-button size="small" variant="outline" @click="load()">重试</t-button>
+    </view>
+
+    <view v-else class="loading">
+      <t-loading size="40px" theme="spinner" text="加载中..." />
+    </view>
+    </view>
+
+    <!-- 编辑面板（原位替换档案视图：同一弹窗/页面内切换，不再是独立弹窗） -->
+    <view v-if="showEdit && person" class="edit-inline">
+      <view class="edit-inline-head">
+        <text class="edit-inline-title">编辑「{{ person.name }}」</text>
+        <text class="edit-inline-close" @click="cancelEdit">✕</text>
+      </view>
+      <view class="edit-inline-body">
+        <!-- 基本信息：姓 → 名 → 性别（顺序与卡片人物名称一致） -->
+        <text class="field-label">基本信息</text>
+          <t-input :value="editForm.surname" placeholder="姓" class="field" 
+          @update:value="(v: any) => editForm.surname = v"
+          />
+          <t-input :value="editForm.first_name" placeholder="名" class="field" 
+          @update:value="(v: any) => editForm.first_name = v"
+          />
+          <t-radio-group :value="editForm.gender" placement="horizontal" class="field"
+          @update:value="(v: any) => editForm.gender = v">
+            <t-radio value="M">男</t-radio>
+            <t-radio value="F">女</t-radio>
+            <t-radio value="U">未知</t-radio>
+          </t-radio-group>
+
+          <!-- 称号：封号 → 谥号 → 号（与姓名分离，可留空；顺序同人物名称显示） -->
+          <text class="field-label">封号（封国/爵位称号，选填）</text>
+          <t-input :value="editForm.feng" placeholder="如：毕公 / 周文王" class="field"
+          @update:value="(v: any) => editForm.feng = v"
+          />
+          <text class="field-label">谥号（选填）</text>
+          <t-input :value="editForm.shi" placeholder="如：文忠" class="field"
+          @update:value="(v: any) => editForm.shi = v"
+          />
+          <text class="field-label">号（别号/字号，选填）</text>
+          <t-input :value="editForm.hao" placeholder="如：青莲居士" class="field"
+          @update:value="(v: any) => editForm.hao = v"
+          />
+
+          <!-- 改挂父节点（管理员）：填节点编号或 handle 即可把本节点改到该节点家族下（槽位按新父节点性别） -->
+          <text class="field-label">父节点编号 / handle（改挂上级，选填）</text>
+          <t-input :value="editForm.parent_id" placeholder="节点编号（如 0052）或 handle；留空 = 不改" class="field"
+          @update:value="(v: any) => editForm.parent_id = v"
+          />
+          <text class="field-hint">{{ parentsHint }}</text>
+
+          <!-- 跨家族树迁移：节点编号/handle 属于所选家族树 → 本节点及其全部后代整体迁入该树 -->
+          <text class="field-label">目标家族树（跨树迁移，选填）</text>
+          <view v-if="migrateTrees.length" class="tree-options">
+            <view
+              v-for="t in migrateTrees"
+              :key="t.tree_id"
+              class="tree-opt"
+              :class="{ selected: editForm.target_tree_id === t.tree_id }"
+              @click="selectMigrateTree(t.tree_id)"
+            >
+              <text class="tree-opt-name">{{ t.label }}</text>
+            </view>
+          </view>
+          <text v-else class="field-hint">暂无可迁入的其它家族树</text>
+          <text class="field-hint">
+            选填：上面的输入框可填「节点编号（如 0052）或 handle」——若该节点属于所选家族树，
+            则本节点及其全部后代整体迁入该树（编号按目标树重新分配，跨树关联节点将被拒绝）。
+            留空 = 只在本树查找父节点。
+          </text>
+
+          <!-- 生卒：出生时间可填年份或完整日期；是否健在选择；已故时可选填离世时间 -->
+          <text class="field-label">出生时间（可填年份，如 1957；或完整日期，如 1957-12-04）</text>
+          <t-input :value="editForm.birth_date" placeholder="1957 或 1957-12-04" class="field"
+          @update:value="(v: any) => editForm.birth_date = v"
+          />
+
+          <text class="field-label">是否健在</text>
+          <!-- 总谱（中华世本）节点一律已故：字段锁死，仅展示不可改 -->
+          <view v-if="isMasterTree" class="living-locked">
+            <t-tag theme="default" variant="light">已故（总谱锁定）</t-tag>
+            <text class="field-hint">总谱节点一律为「已故」，此字段不可修改</text>
+          </view>
+          <t-radio-group v-else :value="editForm.is_living ? '1' : '0'" placement="horizontal" class="field"
+          @update:value="(v: any) => editForm.is_living = v === '1'">
+            <t-radio value="1">健在</t-radio>
+            <t-radio value="0">已故</t-radio>
+          </t-radio-group>
+
+          <view v-if="!editForm.is_living" class="living-block">
+            <text class="field-label">离世时间（选填，可留空 = 已故但卒年不详）</text>
+            <t-input :value="editForm.death_date" placeholder="2020 或 2020-05-01" class="field"
+            @update:value="(v: any) => editForm.death_date = v"
+            />
+          </view>
+
+          <!-- 生平事件 -->
+          <text class="field-label">生平事件</text>
+          <view v-for="(evt, i) in editForm.events" :key="i" class="event-edit-row">
+            <t-input :value="evt.type" placeholder="事件类型（如：出生/结婚）" class="field" 
+            @update:value="(v: any) => evt.type = v"
+            />
+            <t-input :value="evt.date" placeholder="日期" class="field" 
+            @update:value="(v: any) => evt.date = v"
+            />
+            <t-input :value="evt.place" placeholder="地点" class="field" 
+            @update:value="(v: any) => evt.place = v"
+            />
+            <t-button size="small" variant="outline" theme="danger" @click="removeEvent(i)">删除</t-button>
+          </view>
+          <t-button size="small" variant="outline" @click="addEvent">＋ 添加事件</t-button>
+        </view>
+
+        <view v-if="editError" class="edit-error">{{ editError }}</view>
+        <view class="edit-actions">
+          <t-button theme="primary" block :loading="saving" @click="doSave">保存</t-button>
+          <t-button variant="outline" block @click="cancelEdit">取消</t-button>
+        </view>
+    </view>
+
+    <!-- 嫁出/娶入弹窗：选目标家族树的配偶节点 + 选填成婚日期 → 提交申请，对方家族审批后生效 -->
+    <view v-if="showMarry" class="modal-mask" @click.self="showMarry = false">
+      <view class="modal">
+        <text class="modal-title">{{ marryTitle }}</text>
+        <text class="modal-sub">
+          在对方家族树中选择配偶节点（本人节点保留在本树）。提交后需「对方家族审批」通过才生效；两人各自树内都会建立配偶关系。
+        </text>
+
+        <text class="field-label">选择目标家族树</text>
+        <view class="tree-options">
+          <view
+            v-for="t in marryTrees"
+            :key="t.tree_id"
+            class="tree-opt"
+            :class="{ selected: marryTreeId === t.tree_id }"
+            @click="selectMarryTree(t.tree_id)"
+          >
+            <text class="tree-opt-name">{{ treeDisplayLabel(t.display_title, t.surname_char) }}</text>
+          </view>
+        </view>
+
+        <template v-if="marryTreeId">
+          <text class="field-label">搜索目标家族树中的{{ marryDirection === 'out' ? '男性' : '女性' }}节点</text>
+          <view class="search-row">
+            <t-input
+              :value="marryQuery"
+              placeholder="输入姓名搜索"
+              class="search-input"
+              @update:value="(v: any) => marryQuery = v"
+              @confirm="doSearchMarry"
+            />
+            <t-button size="small" theme="primary" @click="doSearchMarry">搜索</t-button>
+          </view>
+          <view v-if="marrySearching" class="join-tip">搜索中...</view>
+          <view v-else-if="marryResults.length" class="join-results">
+            <view
+              v-for="r in marryResults"
+              :key="r.handle"
+              class="join-result"
+              :class="{ selected: selectedMarry?.handle === r.handle }"
+              @click="selectMarry(r)"
+            >
+              <text class="result-name">{{ r.name }}</text>
+              <text class="result-id">{{ personIdDisplay(r.gramps_id) }}</text>
+              <text class="result-gender">{{ r.gender === 'M' ? '男' : '女' }}</text>
+            </view>
+          </view>
+          <view v-else-if="marrySearched" class="join-tip">未找到{{ marryDirection === 'out' ? '男性' : '女性' }}节点</view>
+        </template>
+
+        <text class="field-label">成婚年份/日期（选填，如 1957 或 1957-12-04）</text>
+        <t-input
+          :value="marryDate"
+          placeholder="留空表示不记录"
+          class="search-input"
+          @update:value="(v: any) => marryDate = v"
+        />
+
+        <view v-if="selectedMarry" class="identity-confirm">
+          <text class="identity-text">
+            将「{{ person?.name }}」{{ marryVerb }}至 {{ marryTreeName }} 的「{{ selectedMarry.name }}」（{{ marryOrdinalHint }}）。
+            提交后由对方家族审批。
+          </text>
+        </view>
+
+        <view v-if="marryError" class="edit-error">{{ marryError }}</view>
+        <view class="modal-actions">
+          <t-button
+            theme="primary"
+            block
+            :loading="marrying"
+            :disabled="!selectedMarry"
+            @click="doMarry"
+          >提交申请</t-button>
+          <t-button variant="text" block @click="showMarry = false">取消</t-button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 删除节点弹窗：选模式 → 先跑 dry_run 拿统计 → 强确认（带 confirm_count）→ 正式提交 -->
+    <view v-if="showDelete" class="modal-mask" @click.self="showDelete = false">
+      <view class="modal">
+        <text class="modal-title">🗑 删除节点</text>
+        <text class="modal-sub">
+          将删除「{{ person?.name }}」（{{ personIdDisplay(person?.gramps_id || '') }}）及其相关记录。
+        </text>
+        <!-- 不可恢复用红色文字表达；此前写 **不可恢复**，星号会被字面显示在页面上 -->
+        <text class="del-warn">注意：此操作不可恢复</text>
+        <!-- 删除方式：subtree 实际删的是整支后代，措辞与后端 message 统一为「全部后代」 -->
+        <text class="field-label">删除方式</text>
+        <view
+          v-for="m in deleteModes"
+          :key="m.value"
+          class="del-mode"
+          :class="{ selected: deleteMode === m.value }"
+          @click="selectDeleteMode(m.value)"
+        >
+          <text class="del-mode-name">{{ m.label }}</text>
+          <text class="del-mode-hint">{{ m.hint }}</text>
+        </view>
+
+        <!-- dry_run 结果：人数 / 家族数 / 后端文案（范围说明与「不可恢复」均取后端 message，避免前后端各说一套） -->
+        <view v-if="deletePreview" class="del-stat">
+          <text class="del-stat-line">本次将删除 {{ deletePreview.people_count }} 人</text>
+          <text class="del-stat-line">涉及家族记录 {{ deletePreview.families_count }} 个</text>
+          <text class="del-stat-line del-stat-msg">{{ deletePreviewText }}</text>
+        </view>
+
+        <view v-if="deleteError" class="edit-error">{{ deleteError }}</view>
+        <view class="modal-actions">
+          <t-button
+            theme="danger"
+            block
+            :loading="deleting"
+            @click="startDelete"
+          >{{ deletePreview ? '确认删除' : '下一步：查看删除范围' }}</t-button>
+          <t-button variant="text" block @click="showDelete = false">取消</t-button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 认祖选择器（方式 A）：先选目标上层树（宗谱 / 中华世本），再在该树内搜索真身节点 -->
+    <view v-if="showFounderPicker" class="modal-mask" @click.self="showFounderPicker = false">
+      <view class="modal">
+        <text class="modal-title">⛩ 认祖（挂到{{ founderTargetKindLabel }}）</text>
+        <text class="modal-sub">{{ founderPickerHint }}</text>
+
+        <text class="field-label">选择认祖目标</text>
+        <view v-if="founderTargetsLoading" class="join-tip">加载可选宗谱...</view>
+        <view v-else class="tree-options">
+          <view
+            v-for="t in founderTargets"
+            :key="t.tree_id"
+            class="tree-opt"
+            :class="{ selected: founderTargetId === t.tree_id }"
+            @click="selectFounderTarget(t)"
+          >
+            <text class="tree-opt-name">{{ t.label }}</text>
+          </view>
+        </view>
+
+        <template v-if="founderTargetId">
+          <text class="field-label">搜索目标树中的真身节点</text>
+          <view class="search-row">
+            <t-input
+              :value="founderQuery"
+              placeholder="输入姓名搜索"
+              class="search-input"
+              @update:value="(v: any) => founderQuery = v"
+              @confirm="doSearchFounderTarget"
+            />
+            <t-button size="small" theme="primary" @click="doSearchFounderTarget">搜索</t-button>
+          </view>
+          <view v-if="founderSearching" class="join-tip">搜索中...</view>
+          <view v-else-if="founderResults.length" class="join-results">
+            <view
+              v-for="r in founderResults"
+              :key="r.handle"
+              class="join-result"
+              :class="{ selected: selectedFounderTarget?.handle === r.handle }"
+              @click="selectedFounderTarget = r"
+            >
+              <text class="result-name">{{ r.name }}</text>
+              <text class="result-id">{{ personIdDisplay(r.gramps_id) }}</text>
+              <text class="result-birth">{{ r.birth_date || '' }}</text>
+            </view>
+          </view>
+          <view v-else-if="founderSearched" class="join-tip">未找到匹配节点</view>
+        </template>
+
+        <view v-if="selectedFounderTarget" class="identity-confirm">
+          <text class="identity-text">
+            将本树始祖节点「{{ person?.name }}」认祖挂到 {{ founderTargetName }} 的
+            「{{ selectedFounderTarget.name }}」（{{ personIdDisplay(selectedFounderTarget.gramps_id) }}）。
+            提交后由该层总编审批，通过即建立镜像挂载（始祖节点转只读）。
+          </text>
+        </view>
+
+        <view v-if="founderPickerError" class="edit-error">{{ founderPickerError }}</view>
+        <view class="modal-actions">
+          <t-button
+            theme="primary"
+            block
+            :loading="founderSubmitting"
+            :disabled="!selectedFounderTarget"
+            @click="doFounderRequest"
+          >提交认祖申请</t-button>
+          <t-button variant="text" block @click="showFounderPicker = false">取消</t-button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 直接挂载选择器（方式 B，仅总编辑）：在真身节点上从宗谱清单里选择要挂载的下层树 -->
+    <view v-if="showAttachPicker" class="modal-mask" @click.self="showAttachPicker = false">
+      <view class="modal">
+        <text class="modal-title">⛩ 挂载宗谱</text>
+        <text class="modal-sub">
+          在真身节点「{{ person?.name }}」上选择要挂载的宗谱（无需申请，立即生效；该宗谱顶端随即出现世本镜像段）。
+        </text>
+
+        <text class="field-label">选择要挂载的宗谱</text>
+        <view v-if="attachLoading" class="join-tip">加载宗谱清单...</view>
+        <view v-else-if="!attachCandidates.length" class="join-tip">
+          暂无宗谱可挂载：请由本姓现有家族树先申请建立宗谱。
+        </view>
+        <view v-else class="tree-options">
+          <view
+            v-for="c in attachCandidates"
+            :key="c.tree_id"
+            class="tree-opt"
+            :class="{ selected: attachTargetId === c.tree_id }"
+            @click="attachTargetId = c.tree_id"
+          >
+            <text class="tree-opt-name">{{ treeDisplayLabel(c.tree_title, c.surname) }}</text>
+            <text class="tree-opt-sub">
+              {{ c.tree_id }} · 自有 {{ c.own_count }} 人{{ c.attached_to_master ? ' · 已认祖世本' : ' · 未认祖世本' }}
+            </text>
+          </view>
+        </view>
+
+        <view v-if="attachError" class="edit-error">{{ attachError }}</view>
+        <view class="modal-actions">
+          <t-button
+            theme="primary"
+            block
+            :loading="attachSubmitting"
+            :disabled="!attachTargetId"
+            @click="doAttachFounder"
+          >确认挂载</t-button>
+          <t-button variant="text" block @click="showAttachPicker = false">取消</t-button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 绝婚 / 合离弹窗：绝婚=男方主动（单方生效）/ 合离=双方自愿（需对方审批）；日期均选填 -->
+    <view v-if="showEndMarriage" class="modal-mask" @click.self="showEndMarriage = false">
+      <view class="modal">
+        <text class="modal-title">{{ endKind === '绝婚' ? '⚔️ 绝婚（男方主动解除）' : '🤝 合离（双方自愿解除）' }}</text>
+        <text class="modal-sub">
+          {{ endKind === '绝婚'
+            ? '绝婚由男方家族单方发起，立即生效（无需对方审批）；双方树内的配偶关系与镜像节点会被一并清理。'
+            : '合离需对方家族确认后生效：提交后进入待审批列表，对方通过即解除。' }}
+        </text>
+        <text class="field-label">{{ endKind === '绝婚' ? '绝婚' : '合离' }}年份/日期（选填，如 1960 或 1960-03-15）</text>
+        <t-input
+          :value="endDate"
+          placeholder="留空表示不记录"
+          class="search-input"
+          @update:value="(v: any) => endDate = v"
+        />
+        <text class="field-label">说明（选填）</text>
+        <t-input
+          :value="endNote"
+          placeholder="如：和离书已立 / 因故绝婚"
+          class="search-input"
+          @update:value="(v: any) => endNote = v"
+        />
+        <view v-if="endError" class="edit-error">{{ endError }}</view>
+        <view class="modal-actions">
+          <t-button theme="primary" block :loading="ending" @click="doEndMarriage">确认{{ endKind }}</t-button>
+          <t-button variant="text" block @click="showEndMarriage = false">取消</t-button>
+        </view>
+      </view>
+    </view>
+  </view>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted, watch } from 'vue';
+import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel } from '@/business';
+import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
+import type { PersonDetail, PersonSummary } from '@/business/types';
+import type { ClanSummary, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
+import { personIdDisplay, dateDisplay, titleLabel, attrMapOf, treeDisplayLabel } from '@/business/format';
+import { genderIconSrc } from '@/business/icons';
+import PersonManagePanel from '@/components/person-manage-panel/person-manage-panel.vue';
+
+/**
+ * 人物档案面板（共享组件）
+ * - mode='page'：作为 /pages/person/detail 页面主体（深链/跨树跳转落点）
+ * - mode='modal'：作为 PersonDetailModal 弹窗内容（同树人物互跳不换页）
+ * 人物跳转一律 emit 给宿主决定：open-person（同树→弹窗内换人 / 页面→push 详情页）、
+ * open-tree（跨树无具体人物 → 打开对应家族树首页）。
+ */
+const props = withDefaults(defineProps<{
+  treeId: string;
+  handle: string;
+  mode?: 'page' | 'modal';
+  /** 是否为树图宿主（启用底部「谱系管理」操作区：加父/加子/晋宗/拆分等） */
+  treeManage?: boolean;
+}>(), {
+  mode: 'page',
+  treeManage: false,
+});
+
+const emit = defineEmits<{
+  (e: 'open-person', payload: { treeId: string; handle: string }): void;
+  (e: 'open-tree', payload: string): void;
+  /** 树结构被管理操作修改（加父/加子/晋宗/拆分等），宿主需刷新树图 */
+  (e: 'tree-changed'): void;
+}>();
+
+// 别名（沿用原页面代码，props 变更时按 :key 整体重挂载，无需 watch）
+const treeId = computed(() => props.treeId);
+const handle = computed(() => props.handle);
+
+const person = ref<PersonDetail | null>(null);
+const loadError = ref('');
+
+const showEdit = ref(false);
+const saving = ref(false);
+const editError = ref('');
+/** 总谱（中华世本）：节点一律已故，在世字段锁死 */
+
+// ===== 始祖挂载（docs/founder-attach.spec.md）=====
+const founderMeta = ref<any>(null);
+async function loadFounderMeta() {
+  try {
+    const meta = await fetchTreeMetaRemote();
+    founderMeta.value = Object.values(meta.trees).find((t: any) => t.tree_id === props.treeId) || null;
+  } catch { founderMeta.value = null; }
+}
+/** 本树始祖节点判定：tree-meta 的 founder_handle → founder_gramps_id → I0001 兜底 */
+const isFounderNode = computed(() => {
+  const h = founderMeta.value?.founder_handle;
+  if (h) return h === handle.value;
+  const gid = founderMeta.value?.founder_gramps_id;
+  // 不再用 'I0001' 兜底：未登记始祖的树不应把 I0001 误判为始祖
+  // （无始祖的树由 founderMissing 逻辑允许在任意节点发起认祖）
+  return !!gid && (person.value as any)?.gramps_id === gid;
+});
+/** 始祖镜像态：指向中华世本真身（整节点只读） */
+const founderMirror = computed(() => {
+  const m = attrMapOf((person.value as any)?.attributes);
+  return m['external_link_type'] === 'founder';
+});
+/** 空白占位始祖（未挂载 / 已解除） */
+const founderLocked = computed(() => isFounderNode.value && (founderMirror.value || !founderMirror.value));
+const founderLockHint = computed(() =>
+  founderMirror.value
+    ? '始祖节点信息以中华世本（总谱）为准，本家族树内不可修改；如需修改请到总谱对应节点编辑。'
+    : '该始祖节点为空白占位：本树内不可编辑，请先「认祖」挂到中华世本。');
+/** 本树尚未指定始祖（tree-meta.founder_state === 'none'） */
+const founderMissing = computed(() => founderMeta.value?.founder_state === 'none');
+/** 无始祖的树：任意节点都可发起认祖（由管理员手动选择始祖节点）；有始祖的树仅在始祖节点上出现 */
+const canFounderAttach = computed(
+  () => canEdit.value && !founderMirror.value && (isFounderNode.value || founderMissing.value),
+);
+const canFounderDetach = computed(() => isFounderNode.value && founderMirror.value && canEdit.value);
+/**
+ * 重置始祖（本人是始祖节点 + 非镜像 + 有编辑权）：
+ * 清空本树始祖登记 → 本树回到「无始祖」态（可重新认祖）；镜像态须先「解除挂载」。
+ */
+const canFounderReset = computed(() => isFounderNode.value && !founderMirror.value && canEdit.value);
+
+/** 真身侧：本节点被哪些家族树 / 宗谱认作始祖（读侧推导，无反指针） */
+const attachedTrees = ref<any[]>([]);
+const canAttachFounder = computed(() => isMasterTree.value && authState.role === 'chief_editor');
+function attachedTreeLabel(att: any) { return `${treeKindLabel(att.kind)}「${att.tree_title || att.tree_id}」的始祖节点`; }
+function goToAttachedTree(att: any) { uni.navigateTo({ url: `/pages/hall/index?tree_id=${att.tree_id}` }); }
+async function loadAttachedTrees() {
+  if (!isMasterTree.value || !handle.value) return;
+  try {
+    const res: any = await fetchFounderRequests(props.treeId, getAuthToken(), handle.value);
+    // 后端字段为 attachments（读侧推导的挂载树清单：宗谱 / 普通家族树）
+    attachedTrees.value = res.attachments || res.attached_trees || [];
+  } catch { attachedTrees.value = []; }
+}
+watch(handle, () => { if (handle.value) loadAttachedTrees(); }, { immediate: true });
+loadFounderMeta();
+
+// ---- 认祖目标选择器（docs/founder-attach.spec.md 方式 A / docs/clan-tree.spec.md §5）----
+/**
+ * 本树层级（tree-meta.kind；旧数据缺省 family）：
+ * - clan（宗谱）→ 认祖目标只能是中华世本
+ * - family（普通树）→ 认祖目标只能是宗谱（硬口径 2：不得直挂世本）
+ */
+const treeKind = computed(() => (founderMeta.value?.kind as string) || 'family');
+const founderTargetKindLabel = computed(() => (treeKind.value === 'clan' ? '中华世本' : '宗谱'));
+const founderPickerHint = computed(() =>
+  treeKind.value === 'clan'
+    ? '宗谱只能认祖到中华世本（总谱）：先选目标，再在世本中搜索始祖节点，提交后待总编审批。'
+    : '普通家族树须先认祖到本姓宗谱（不得直挂世本）：选择宗谱 → 搜索宗谱中的始祖节点 → 提交，待该宗谱总编审批。',
+);
+
+interface FounderTargetOption { tree_id: string; label: string }
+
+const showFounderPicker = ref(false);
+const founderTargets = ref<FounderTargetOption[]>([]);
+const founderTargetsLoading = ref(false);
+const founderTargetId = ref('');
+const founderTargetName = ref('');
+const founderQuery = ref('');
+const founderResults = ref<PersonSummary[]>([]);
+const founderSearching = ref(false);
+const founderSearched = ref(false);
+const selectedFounderTarget = ref<PersonSummary | null>(null);
+const founderSubmitting = ref(false);
+const founderPickerError = ref('');
+
+/** 认祖入口（选择器）：宗谱 → 列中华世本；普通树 → 列可选宗谱（GET /admin/clans） */
+async function openFounderAttach() {
+  founderPickerError.value = '';
+  founderQuery.value = '';
+  founderResults.value = [];
+  founderSearched.value = false;
+  selectedFounderTarget.value = null;
+  founderTargetId.value = '';
+  founderTargetName.value = '';
+  showFounderPicker.value = true;
+  founderTargetsLoading.value = true;
+  try {
+    if (treeKind.value === 'clan') {
+      founderTargets.value = [{ tree_id: 'zhonghua', label: '中华世本 · 全球华人家谱总谱' }];
+      founderTargetId.value = 'zhonghua';
+      founderTargetName.value = '中华世本（总谱）';
+    } else {
+      const surname = founderMeta.value?.surname_char || founderMeta.value?.surname || '';
+      const clans: ClanSummary[] = await fetchClans(surname);
+      founderTargets.value = clans.map((c) => ({
+        tree_id: c.tree_id,
+        label: `${treeDisplayLabel(c.tree_title, c.surname || surname)}${c.attached_to_master ? '' : '（未认祖世本）'}`,
+      }));
+      if (!clans.length) {
+        founderPickerError.value = surname
+          ? `本姓（${surname}氏）尚无宗谱：请先申请建立宗谱，再将本树始祖认祖到该宗谱。`
+          : '暂无宗谱可认祖：请先申请建立本姓宗谱。';
+      }
+    }
+  } catch (e: any) {
+    founderPickerError.value = e?.message || '加载认祖目标失败';
+  } finally {
+    founderTargetsLoading.value = false;
+  }
+}
+
+function selectFounderTarget(t: FounderTargetOption) {
+  founderTargetId.value = t.tree_id;
+  founderTargetName.value = t.label;
+  founderQuery.value = '';
+  founderResults.value = [];
+  founderSearched.value = false;
+  selectedFounderTarget.value = null;
+}
+
+/** 在目标上层树内搜索真身节点（复用树内搜索接口，按目标 tree_id 隔离） */
+async function doSearchFounderTarget() {
+  if (!founderTargetId.value) return;
+  const q = founderQuery.value.trim();
+  if (!q) {
+    founderPickerError.value = '请输入姓名关键字';
+    return;
+  }
+  founderSearching.value = true;
+  founderSearched.value = true;
+  founderPickerError.value = '';
+  selectedFounderTarget.value = null;
+  try {
+    const res = await searchPeople({ query: q, tree_id: founderTargetId.value });
+    founderResults.value = res.people;
+  } catch (e: any) {
+    founderPickerError.value = e?.message || '搜索失败';
+    founderResults.value = [];
+  } finally {
+    founderSearching.value = false;
+  }
+}
+
+/** 提交认祖申请（写 pending，目标树的 chief_editor 审批后建立镜像） */
+async function doFounderRequest() {
+  const token = getAuthToken();
+  if (!token) {
+    founderPickerError.value = '登录已过期，请重新登录';
+    return;
+  }
+  const target = selectedFounderTarget.value;
+  if (!target) return;
+  founderSubmitting.value = true;
+  founderPickerError.value = '';
+  try {
+    const res = await founderRequest(
+      props.treeId,
+      { person_handle: handle.value, master_handle: target.handle, target_tree_id: founderTargetId.value },
+      token,
+    );
+    showFounderPicker.value = false;
+    uni.showModal({
+      title: '认祖申请已提交',
+      content: res?.message || '等待上层总编审批后生效。',
+      showCancel: false,
+      confirmText: '知道了',
+    });
+  } catch (e: any) {
+    founderPickerError.value = e?.message || '提交认祖申请失败';
+  } finally {
+    founderSubmitting.value = false;
+  }
+}
+
+// ---- 直接挂载选择器（方式 B，仅总编辑；真身侧）----
+const showAttachPicker = ref(false);
+const attachCandidates = ref<ClanSummary[]>([]);
+const attachLoading = ref(false);
+const attachTargetId = ref('');
+const attachSubmitting = ref(false);
+const attachError = ref('');
+
+/** 挂载入口（选择器）：普通树不得直挂世本 → 候选仅为宗谱清单 */
+async function openAttachFounder() {
+  attachError.value = '';
+  attachTargetId.value = '';
+  showAttachPicker.value = true;
+  attachLoading.value = true;
+  try {
+    attachCandidates.value = (await fetchClans()).filter((c) => c.tree_id !== props.treeId);
+  } catch (e: any) {
+    attachCandidates.value = [];
+    attachError.value = e?.message || '加载宗谱清单失败';
+  } finally {
+    attachLoading.value = false;
+  }
+}
+
+async function doAttachFounder() {
+  const token = getAuthToken();
+  if (!token) {
+    attachError.value = '登录已过期，请重新登录';
+    return;
+  }
+  if (!attachTargetId.value) return;
+  attachSubmitting.value = true;
+  attachError.value = '';
+  try {
+    await attachFounder(
+      props.treeId,
+      { master_handle: handle.value, tree_id: attachTargetId.value, target_tree_id: props.treeId },
+      token,
+    );
+    showAttachPicker.value = false;
+    uni.showToast({ title: '已挂载，该宗谱进入只读镜像', icon: 'success' });
+    await loadAttachedTrees();
+    emit('tree-changed');
+  } catch (e: any) {
+    attachError.value = e?.message || '挂载失败';
+  } finally {
+    attachSubmitting.value = false;
+  }
+}
+/** 解除挂载：双方均可，无需申请；始祖回到空白占位态 */
+function detachFounderHere(att?: any) {
+  uni.showModal({
+    title: '解除挂载',
+    content: att
+      ? `确定解除「${att.tree_title || att.tree_id}」的始祖挂载？该树始祖将变为空白占位节点。`
+      : '确定解除本树与中华世本的挂载？始祖节点将变为空白占位节点。',
+    success: async (r: any) => {
+      if (!r.confirm) return;
+      try {
+        await detachFounder(
+          props.treeId,
+          att ? { attached_tree_id: att.tree_id, master_handle: handle.value } : { person_handle: handle.value },
+          getAuthToken(),
+        );
+        uni.showToast({ title: '已解除挂载', icon: 'success' });
+        if (att) await loadAttachedTrees();
+        emit('tree-changed');
+      } catch (e: any) {
+        uni.showModal({ title: '解除失败', content: e?.message || '请稍后重试', showCancel: false });
+      }
+    },
+  });
+}
+
+/**
+ * 重置始祖：清空本树始祖登记（只写 tree-meta）→ 本树回到「无始祖」态。
+ * 始祖节点本身不变（仍是可编辑的普通节点）；重置后可在任意节点用「⛩ 认祖」重新指定。
+ */
+function resetFounderHere() {
+  const who = person.value?.name || '本节点';
+  uni.showModal({
+    title: '重置始祖',
+    content: `确定重置本树始祖？重置后本家族树暂无始祖，可在任意节点用「⛩ 认祖」重新指定；节点「${who}」本身仍是可编辑的普通节点。`,
+    success: async (r: any) => {
+      if (!r.confirm) return;
+      const token = getAuthToken();
+      if (!token) {
+        uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+        return;
+      }
+      try {
+        await resetFounder(props.treeId, { person_handle: handle.value }, token);
+        uni.showToast({ title: '已重置始祖', icon: 'success' });
+        // 重新读 tree-meta（fetchTreeMetaRemote 直取，无缓存）→ 页面立即变为「无始祖」态
+        await loadFounderMeta();
+        emit('tree-changed');
+      } catch (e: any) {
+        uni.showModal({ title: '重置失败', content: e?.message || '请稍后重试', showCancel: false });
+      }
+    },
+  });
+}
+
+const isMasterTree = computed(() => props.treeId === 'zhonghua');
+
+// ===== 删除节点（危险区；总谱 / 始祖 / 镜像不可删；跨树引用一律拒绝，不级联改对方树）=====
+/** 外树镜像节点（嫁娶/认祖生成的「对方在本树的代表」）→ 删除须到真身所在树 */
+const isExternalMirror = computed(() => attrMapOf(person.value?.attributes)['external_mirror'] === 'true');
+/** 宗谱（tree-meta.kind='clan'）：自有支系常是多棵普通家族树的认祖落点，删除风险高 */
+const isClanTree = computed(() => treeKind.value === 'clan');
+const canDeleteNode = computed(
+  () =>
+    canEdit.value &&
+    treeId.value !== 'zhonghua' &&
+    !isFounderNode.value &&
+    !founderMirror.value &&
+    !isExternalMirror.value &&
+    // 宗谱：删支系节点风险较高（下级树的认祖落点）→ 仅总编可见；普通家族树维持 canEdit 口径
+    (!isClanTree.value || authState.role === 'chief_editor'),
+);
+
+interface DeleteModeOption { value: NodeDeleteMode; label: string; hint: string }
+/** 两种删除模式（默认 = 连全部后代一起删） */
+const deleteModes: DeleteModeOption[] = [
+  {
+    value: 'subtree',
+    label: '删除本节点及全部后代（默认）',
+    hint: '本人连同全部后代一并删除（家族记录同时清理），不可恢复',
+  },
+  {
+    value: 'promote',
+    label: '仅删除本节点，子节点上提一级',
+    hint: '① 配偶健在时：子女留在原家族（只清本人槽位）；② 本人是该家族唯一家长时：子女上提一级并入父母的家族（本人是根节点则子女成为根）',
+  },
+];
+const showDelete = ref(false);
+const deleteMode = ref<NodeDeleteMode>('subtree');
+/** dry_run 统计结果（点「下一步」后填充；模式切换即作废，须重新预览） */
+const deletePreview = ref<NodeDeleteResult | null>(null);
+const deleteError = ref('');
+const deleting = ref(false);
+
+/**
+ * dry_run 范围文案 = **后端 message（单一真源）**。
+ * 后端 deleteNode 的 dry_run message 已按 promoteChildrenUp 的实际行为分支：
+ * ① promote 且 0 人上提 → 「子女留在原家族（配偶健在时只清本人槽位）」
+ * ② promote 且 N 人上提 → 「子节点上提一级：N 人（并入父母的家族 / 成为根节点）」
+ * ③ subtree → 「及其全部后代共 N 人（含 N 个家族记录）」
+ * 前端不再自行拼同义文案（此前两处口径不一致，0 人上提时前端与后端各说一套）。
+ */
+const deletePreviewText = computed(() => deletePreview.value?.message || '');
+
+function openDelete() {
+  deleteError.value = '';
+  deletePreview.value = null;
+  deleteMode.value = 'subtree';
+  showDelete.value = true;
+}
+
+function selectDeleteMode(m: NodeDeleteMode) {
+  if (deleteMode.value === m) return;
+  deleteMode.value = m;
+  // 范围随模式变化 → 上次统计作废，必须重新 dry_run
+  deletePreview.value = null;
+  deleteError.value = '';
+}
+
+/**
+ * 两段式删除：
+ * ① 未取统计 → 先 dry_run（只算不写）拿到 people_count/families_count/promoted 清单；
+ * ② 已有统计 → uni.showModal 强确认（文案写清人数与「不可恢复」）→ 带 confirm_count 正式提交
+ *    （范围在两步之间被人改动 → 后端 409 拒绝，须重新预览）。
+ */
+async function startDelete() {
+  const token = getAuthToken();
+  if (!token) {
+    deleteError.value = '登录已过期，请重新登录';
+    return;
+  }
+  deleting.value = true;
+  deleteError.value = '';
+  try {
+    if (!deletePreview.value) {
+      deletePreview.value = await deleteNode(treeId.value, handle.value, deleteMode.value, token, { dry_run: true });
+      return;
+    }
+    const preview = deletePreview.value;
+    // 强确认文案直接用后端 dry_run message（同一真源），前端不再拼同义文案
+    const content = preview.message || '将永久删除该节点及其相关记录，不可恢复。';
+    const confirmed = await new Promise<boolean>((resolve) => {
+      uni.showModal({
+        title: '⚠️ 删除不可恢复',
+        content,
+        confirmText: '永久删除',
+        cancelText: '取消',
+        success: (res) => resolve(!!res.confirm),
+        fail: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+
+    const res = await deleteNode(treeId.value, handle.value, deleteMode.value, token, {
+      confirm_count: preview.people_count,
+    });
+    showDelete.value = false;
+    // 成功提示直接用后端 message（与 promoteChildrenUp 实际行为一致；前端不再自行拼 0 人上提的文案）
+    uni.showToast({ title: res.message || '已删除', icon: 'none', duration: 3200 });
+    // 本人已被删除 → 档案显示删除结果（宿主刷新树图）
+    person.value = null;
+    loadError.value = `节点「${res.person_name}」已删除（共 ${res.people_count} 人）`;
+    emit('tree-changed');
+  } catch (e: any) {
+    const msg = e?.message || '删除失败';
+    deleteError.value = msg;
+    // 跨树引用 / 结构校验失败等：后端已拒绝（两棵树都不写）→ 弹窗说明，保留在弹窗内可改模式重试
+    if (/引用|关联|家族树|始祖|镜像|权限|范围已变化/.test(msg)) {
+      uni.showModal({ title: '删除被拒绝', content: msg, showCancel: false });
+    }
+  } finally {
+    deleting.value = false;
+  }
+}
+
+// ===== 跨家族树迁移（改父的目标树选择器）=====
+
+/** 可选目标家族树（非总谱、非本树；含宗谱） */
+const migrateTrees = ref<Array<{ tree_id: string; label: string }>>([]);
+
+async function loadMigrateTrees() {
+  try {
+    const meta = await fetchTreeMetaRemote();
+    migrateTrees.value = Object.values(meta.trees)
+      .filter((t) => !t.is_master && t.tree_id !== treeId.value)
+      .map((t) => ({
+        tree_id: t.tree_id,
+        label: treeDisplayLabel(t.display_title || t.tree_id, t.surname_char || t.surname),
+      }));
+  } catch {
+    migrateTrees.value = [];
+  }
+}
+
+/** 点选目标树（再点一次 = 取消选择，回到「仅本树查找」） */
+function selectMigrateTree(tid: string) {
+  editForm.value.target_tree_id = editForm.value.target_tree_id === tid ? '' : tid;
+}
+
+/** 目标树展示名（迁移成功提示用） */
+function migrateTreeLabel(tid: string): string {
+  return migrateTrees.value.find((t) => t.tree_id === tid)?.label || tid;
+}
+
+const editForm = ref({
+  first_name: '',
+  surname: '',
+  gender: 'U',
+  birth_date: '',
+  is_living: true, // 默认健在
+  death_date: '',
+  hao: '',
+  feng: '',
+  shi: '',
+  /** 改挂父节点：填编号（I0101 / 0101）；留空 = 不改 */
+  parent_id: '',
+  /** 跨家族树迁移目标（选填）：编号属于该树 → 本节点及全部后代整体迁入 */
+  target_tree_id: '',
+  events: [] as Array<{ type: string; date: string; place: string }>,
+});
+
+// 出嫁状态（跨树联姻软链接）
+const showMarry = ref(false);
+const marryTrees = ref<Array<{ tree_id: string; display_title: string; surname_char: string }>>([]);
+const marryTreeId = ref('');
+const marryTreeName = ref('');
+const marryQuery = ref('');
+const marryResults = ref<PersonSummary[]>([]);
+const marrySearching = ref(false);
+const marrySearched = ref(false);
+const selectedMarry = ref<PersonSummary | null>(null);
+const marrying = ref(false);
+const marryError = ref('');
+/** 成婚年份/日期（选填） */
+const marryDate = ref('');
+
+/** 嫁出（女）/ 娶入（男）：方向由本人性别决定 */
+const marryDirection = computed<'out' | 'in'>(() => (person.value?.gender === 'M' ? 'in' : 'out'));
+const marryVerb = computed(() => (marryDirection.value === 'in' ? '娶' : '嫁'));
+const marryTitle = computed(() => (marryDirection.value === 'in' ? '娶入（从其他家族树迎娶）' : '嫁出（嫁到其他家族树）'));
+/** 本次是第几次（依据已记录的婚姻序号：≥1 → 再嫁/再娶） */
+const marryOrdinalHint = computed(() => {
+  const n = Number(person.value?.attributes?.find((a) => a.key === 'external_marriage_no')?.value) || 0;
+  return n >= 1 ? `再${marryVerb.value}（第 ${n + 1} 次）` : `初${marryVerb.value}`;
+});
+
+// ---- 绝婚 / 合离（跨树婚姻解除）----
+const showEndMarriage = ref(false);
+const endKind = ref<'绝婚' | '合离'>('合离');
+const endDate = ref('');
+const endNote = ref('');
+const ending = ref(false);
+const endError = ref('');
+
+/** 跨树婚姻信息（嫁出/娶入写入的指针字段；含结束历史） */
+const crossMarriage = computed(() => {
+  const map = attrMapOf(person.value?.attributes);
+  if (!map['external_person_handle'] || !map['external_tree']) return null;
+  const linkType = map['external_link_type'] || '';
+  // 有效婚姻：link_type=marriage 即视为有效（旧版出嫁链接没有 marriage_id，也属有效，可经绝婚/合离收尾）
+  const active = linkType === 'marriage';
+  const no = Number(map['external_marriage_no']) || 0;
+  const verb = person.value?.gender === 'M' ? '娶' : '嫁';
+  const ordinal = no >= 2 ? `再${verb}（第 ${no} 次）` : no === 1 ? `初${verb}` : '';
+  const treeLabel = map['external_tree'];
+  const title = `配偶（外树 ${treeLabel}）`;
+  const bits: string[] = [];
+  if (ordinal) bits.push(ordinal);
+  if (map['external_marriage_date']) bits.push(`成婚 ${map['external_marriage_date']}`);
+  if (!active && map['external_marriage_end_kind']) {
+    bits.push(`${map['external_marriage_end_kind']}${map['external_marriage_end_date'] ? ' ' + map['external_marriage_end_date'] : ''}`);
+  }
+  if (!active) bits.push('（已解除）');
+  // 旧版出嫁链接（无 marriage_id）也在这里展示
+  if (!active && !map['external_marriage_end_kind'] && linkType !== 'marriage') return null;
+  return {
+    active,
+    title,
+    note: bits.join(' · ') || (active ? '已建立婚姻关系' : '已解除'),
+    endKind: map['external_marriage_end_kind'] || '',
+    endDate: map['external_marriage_end_date'] || '',
+    endedHint: `${map['external_marriage_end_kind'] || '已解除'}${map['external_marriage_end_date'] ? '（' + map['external_marriage_end_date'] + '）' : ''} —— 可再次嫁娶，系统会自动记为再嫁/再娶`,
+  };
+});
+
+const isLivingPerson = computed(() => (person.value ? isLiving(person.value) : false));
+
+/** 性别徽章图标（男/女；性别未知不显示）——路径统一走 @/business/icons 固化引用 */
+const genderIcon = computed(() => (person.value ? genderIconSrc(person.value.gender) : ''));
+
+/**
+ * 生卒展示文本：
+ * - 生：birth_date 有录入才显示；纯年份 → 年份，完整日期 → YYYY-MM-DD
+ * - 卒：仅已故显示；有卒期 → 日期，卒年不详 → 「不详」
+ */
+const birthText = computed(() => dateDisplay(person.value?.birth_date));
+const deathText = computed(() => {
+  if (!person.value || isLivingPerson.value) return '';
+  return dateDisplay(person.value.death_date) || '不详';
+});
+
+// 编辑权限：登录 + 非 guest；总谱仅 chief_editor
+const canEdit = computed(() => {
+  if (!isAuthenticated()) return false;
+  if (authState.role === 'guest') return false;
+  if (treeId.value === 'zhonghua' && authState.role !== 'chief_editor') return false;
+  return true;
+});
+
+// 出嫁权限：女性节点 + 有编辑权 + 非总谱（总谱为先祖，不出嫁）
+const canMarryOut = computed(() => {
+  if (!person.value) return false;
+  if (person.value.gender !== 'F') return false;
+  if (treeId.value === 'zhonghua') return false;
+  return canEdit.value;
+});
+
+// 娶入权限：男性节点 + 有编辑权 + 非总谱（与嫁出对称）
+const canMarryIn = computed(() => {
+  if (!person.value) return false;
+  if (person.value.gender !== 'M') return false;
+  if (treeId.value === 'zhonghua') return false;
+  return canEdit.value;
+});
+
+// 分迁占位节点：管理员可删除链接（tree_steward / chief_editor）
+const isBranchPlaceholder = computed(() => {
+  if (!person.value?.attributes) return false;
+  return person.value.attributes.some(
+    (a) => a.key === 'external_link_type' && a.value === 'branch',
+  );
+});
+const canRemoveBranchHere = computed(() => {
+  if (!isAuthenticated()) return false;
+  const role = authState.role;
+  if (role !== 'tree_steward' && role !== 'chief_editor') return false;
+  return isBranchPlaceholder.value;
+});
+const removingBranch = ref(false);
+
+async function removeBranchLinkHere() {
+  const token = getAuthToken();
+  if (!token) {
+    uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+    return;
+  }
+  const confirmed = await new Promise<boolean>((resolve) => {
+    uni.showModal({
+      title: '删除分迁链接',
+      content: '确定删除该分迁链接吗？删除后与本支系彻底断开，且无法恢复。',
+      confirmText: '彻底删除',
+      cancelText: '取消',
+      success: (res) => resolve(res.confirm),
+      fail: () => resolve(false),
+    });
+  });
+  if (!confirmed) return;
+  removingBranch.value = true;
+  try {
+    await removeBranchLink(token, treeId.value, handle.value);
+    uni.showToast({ title: '分迁链接已删除', icon: 'success' });
+    // 刷新详情（关联信息消失）
+    const fresh = await fetchPerson(treeId.value, handle.value);
+    person.value = fresh;
+  } catch (e: any) {
+    uni.showToast({ title: e.message || '删除失败', icon: 'none' });
+  } finally {
+    removingBranch.value = false;
+  }
+}
+
+const externalRefs = computed(() => {
+  if (!person.value?.attributes) return [];
+  return person.value.attributes.filter(
+    (a) => a.key === 'external_tree' || a.key === 'external_person_handle' || a.key === 'external_relation_note',
+  );
+});
+
+/** 中华世本源流链世数（详情属性 external_chain_gen；undefined = 不在链上；0 = 原始节点，在链上） */
+const chainGen = computed<number | undefined>(() => {
+  const v = person.value?.attributes?.find((a) => a.key === 'external_chain_gen')?.value;
+  if (v === undefined || v === '') return undefined;
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : undefined;
+});
+
+/** 称号三字段（号/封号/谥号）取值映射 */
+const titleMap = computed(() => attrMapOf(person.value?.attributes));
+
+/** 姓名旁称号短标签（封号优先） */
+const titleTag = computed(() => titleLabel(person.value?.attributes));
+
+/** 链上聚合虚位节点（代表多世，如「伏羲氏诸世」2–44 世 → 不可续编） */
+const chainAggregate = computed(
+  () => person.value?.attributes?.some((a) => a.key === 'external_chain_aggregate' && a.value === 'true') ?? false,
+);
+
+/** 父母家族（本人作为子女的家族） */
+const parentsFamily = computed(() =>
+  person.value?.families.find((f) => f.type === 'parents') || null,
+);
+
+/** 当前父母提示（改父输入框下方）：父/母 姓名（编号） */
+const parentsHint = computed(() => {
+  const f = parentsFamily.value;
+  const parts: string[] = [];
+  if (f?.father) parts.push(`父 ${f.father.name}（${personIdDisplay(f.father.gramps_id)}）`);
+  if (f?.mother) parts.push(`母 ${f.mother.name}（${personIdDisplay(f.mother.gramps_id)}）`);
+  return parts.length ? `当前：${parts.join(' · ')}` : '当前：未记录父母';
+});
+
+/** 配偶家族（本人作为父/母的家族） */
+const spouseFamilies = computed(() =>
+  (person.value?.families || []).filter((f) => f.type === 'spouse'),
+);
+
+/** 某配偶家族中本人的配偶（另一个家长） */
+function spouseOf(fam: { father?: any; mother?: any }): any {
+  if (!person.value) return null;
+  return fam.father?.handle === person.value.handle
+    ? (fam.mother || null)
+    : (fam.father || null);
+}
+
+/**
+ * 新增子节点的默认姓氏（随父姓）：本人是父 → 本人姓；
+ * 本人是母且家族里记有父亲 → 父亲姓；无配偶家族/父不详 → 本人姓。
+ * 面板只把该值作为默认展示；未「改姓」时提交空姓 → 服务端按同一规则继承。
+ */
+const childSurnameDefault = computed(() => {
+  const p = person.value;
+  if (!p) return '';
+  for (const fam of spouseFamilies.value) {
+    if (fam.father && fam.father.handle !== p.handle) return fam.father.surname || p.surname || '';
+  }
+  return p.surname || '';
+});
+
+/** 跳转同树人物（由宿主决定：弹窗内换人 / 页面 push） */
+function goPerson(p: { handle: string } | null | undefined) {
+  if (!p?.handle) return;
+  emit('open-person', { treeId: treeId.value, handle: p.handle });
+}
+
+/** 跨树关联链接（external_* 属性聚合成一条，直达目标人物） */
+const externalLinks = computed(() => {
+  if (!person.value?.attributes) return [];
+  const byKey: Record<string, string> = {};
+  for (const a of person.value.attributes) byKey[a.key] = a.value;
+  // 指向本树的 external_tree 是「链归属」标记（如总谱源流链节点），不是跨树链接 → 不显示
+  if (!byKey.external_tree || byKey.external_tree === treeId.value) return [];
+  return [
+    {
+      tree_id: byKey.external_tree,
+      person_handle: byKey.external_person_handle || '',
+      note: byKey.external_relation_note || `关联家族树 ${byKey.external_tree}`,
+    },
+  ];
+});
+
+/** 跨树链接（有具体人物 → open-person 跨树；否则 → open-tree 打开对应家族树） */
+function goToExternal(link: { tree_id: string; person_handle: string }) {
+  if (link.person_handle) {
+    emit('open-person', { treeId: link.tree_id, handle: link.person_handle });
+  } else {
+    emit('open-tree', link.tree_id);
+  }
+}
+
+async function load() {
+  loadError.value = '';
+  try {
+    const raw = await fetchPerson(treeId.value, handle.value);
+    person.value = raw;
+  } catch (e: any) {
+    // 节点级可见分层：隐藏人物详情返回 404（docs/permission-tier.spec.md）
+    const msg = /404/.test(e?.message || '')
+      ? '该人物不存在或您无权查看'
+      : (e?.message || '加载失败');
+    loadError.value = msg;
+  }
+}
+
+onMounted(load);
+
+async function openEdit() {
+  editError.value = '';
+  const token = getAuthToken();
+  if (!token) {
+    uni.showToast({ title: '登录已过期，请重新登录', icon: 'none' });
+    return;
+  }
+  try {
+    const raw = await fetchPersonForEdit(treeId.value, handle.value, token);
+    const pn = raw.primary_name || {};
+    const surname = pn.surname_list?.[0]?.surname || '';
+    // gender 数字枚举 → M/F/U
+    const genderNum = raw.gender;
+    const genderStr = genderNum === 1 ? 'M' : genderNum === 2 ? 'F' : genderNum === 0 ? 'U' : (genderNum || 'U');
+    // 生卒：优先取 profile（树 JSON 真源，compat 输出）；events 兜底（Gramps 旧链路）
+    // 显式健在状态优先（compat 已存 is_living）；否则按死亡日期推断；再兜底默认健在
+    const prof = raw.profile || raw.extended?.profile;
+    let birth = prof?.birth?.date || '';
+    let death = prof?.death?.date || '';
+    const events: Array<{ type: string; date: string; place: string }> = [];
+    // event_ref_list 只有 ref handle，需要逐个拉事件详情
+    const refs = raw.event_ref_list || [];
+    const eventPromises = refs.map(async (er: any) => {
+      try {
+        const evtRes = await fetch(
+          `${API_BASE}/events/${er.ref}`,
+          { headers: { 'X-Tree-Id': treeId.value } },
+        );
+        if (!evtRes.ok) return null;
+        return evtRes.json();
+      } catch {
+        return null;
+      }
+    });
+    const eventObjs = await Promise.all(eventPromises);
+    for (const evt of eventObjs) {
+      if (!evt) continue;
+      const type = typeof evt.type === 'string' ? evt.type : evt.type?.text || '';
+      const date = evt.date?.text || '';
+      const place = evt.place?.name || evt.place || '';
+      if (!birth && type.includes('Birth')) birth = date;
+      if (!death && type.includes('Death')) death = date;
+      events.push({ type, date, place });
+    }
+    const living = raw.is_living !== undefined ? !!raw.is_living : !death;
+    // 称号三字段：从既有 attribute_list 读取（与结构字段姓名分离）
+    const attrByKey: Record<string, string> = {};
+    for (const a of raw.attribute_list || []) {
+      const k = typeof a.type === 'string' ? a.type : a.type?.string || '';
+      if (k) attrByKey[k] = a.value;
+    }
+    editForm.value = {
+      first_name: pn.first_name || '',
+      surname,
+      gender: genderStr,
+      birth_date: birth,
+      is_living: isMasterTree.value ? false : living,
+      death_date: death,
+      hao: attrByKey['号'] || '',
+      feng: attrByKey['封号'] || '',
+      shi: attrByKey['谥号'] || '',
+      parent_id: '',
+      target_tree_id: '',
+      events,
+    };
+    showEdit.value = true;
+    // 跨树迁移目标（选填）：列非总谱的其它家族树
+    loadMigrateTrees();
+  } catch (e: any) {
+    uni.showToast({ title: e.message || '加载编辑数据失败', icon: 'none' });
+  }
+}
+
+function addEvent() {
+  editForm.value.events.push({ type: '', date: '', place: '' });
+}
+
+function removeEvent(i: number) {
+  editForm.value.events.splice(i, 1);
+}
+
+/** 取消编辑：退出内嵌编辑面板，恢复档案视图 */
+function cancelEdit() {
+  editError.value = '';
+  showEdit.value = false;
+}
+
+/** 树管理操作完成（加父/加子/晋宗/拆分）：刷新当前档案 + 上抛宿主刷新树图 */
+async function onManageTreeChanged() {
+  // 管理操作可能改变当前人物自身（晋宗/拆分后节点可能移出本树）→ 先刷新档案
+  try {
+    const fresh = await fetchPerson(treeId.value, handle.value);
+    person.value = fresh;
+    loadError.value = '';
+  } catch (e: any) {
+    // 节点被移出本树（晋宗/拆分成功）→ 档案显示不可见提示
+    const msg = /404/.test(e?.message || '')
+      ? '该节点已移出本家族树（晋宗/拆分完成）'
+      : (e?.message || '刷新档案失败');
+    person.value = null;
+    loadError.value = msg;
+  }
+  emit('tree-changed');
+}
+
+async function doSave() {
+  saving.value = true;
+  editError.value = '';
+  const token = getAuthToken();
+  if (!token) {
+    editError.value = '登录已过期，请重新登录';
+    saving.value = false;
+    return;
+  }
+  try {
+    // 重新 GET 最新对象（避免构造完整对象）
+    const raw = await fetchPersonForEdit(treeId.value, handle.value, token);
+    // 关键：profile 字段会导致 PUT 反序列化失败（Unknown classes），必须删除
+    delete raw.profile;
+    // 注意：gender 保持数字枚举（1男/2女/0未知），PUT 接受数字，不要转 M/F/U
+    // 更新基本信息
+    raw.primary_name = raw.primary_name || {};
+    raw.primary_name.first_name = editForm.value.first_name;
+    raw.primary_name.surname_list = [{ surname: editForm.value.surname }];
+    // 表单 gender 是 M/F/U，映射回数字
+    const genderNumMap: Record<string, number> = { M: 1, F: 2, U: 0 };
+    raw.gender = genderNumMap[editForm.value.gender] ?? raw.gender;
+    // 生卒 + 健在（约定顶层字段；compat 写树 JSON；auth-server 转发前剥离，不影响 Gramps）
+    raw.birth_date = (editForm.value.birth_date || '').trim();
+    raw.is_living = isMasterTree.value ? false : editForm.value.is_living;
+    // 健在 ⇒ 无离世时间；已故 ⇒ 可留空（卒年不详）
+    raw.death_date = editForm.value.is_living ? '' : (editForm.value.death_date || '').trim();
+    // 称号三字段（号/封号/谥号）：合并进 attribute_list —— 保留其它属性，清空即删除该项
+    const titleKeys = ['号', '封号', '谥号'];
+    const titleValues: Record<string, string> = {
+      号: (editForm.value.hao || '').trim(),
+      封号: (editForm.value.feng || '').trim(),
+      谥号: (editForm.value.shi || '').trim(),
+    };
+    const keptAttrs = (raw.attribute_list || []).filter((a: any) => {
+      const k = typeof a.type === 'string' ? a.type : a.type?.string || '';
+      return !titleKeys.includes(k);
+    });
+    for (const k of titleKeys) {
+      if (titleValues[k]) keptAttrs.push({ type: k, value: titleValues[k] });
+    }
+    raw.attribute_list = keptAttrs;
+    await savePerson(treeId.value, handle.value, raw, token);
+
+    // 改挂父节点（含跨家族树迁移）：填了编号且与当前父母不同 → 调专用接口（留空 = 不改）
+    let reparentErr = '';
+    let reparentMsg = '';
+    /** 跨树迁移成功后的目标树展示名（非空 = 本节点已离本树） */
+    let migratedTo = '';
+    const newParentId = (editForm.value.parent_id || '').trim();
+    const targetTreeId = (editForm.value.target_tree_id || '').trim();
+    if (newParentId) {
+      const norm = (v: string) => String(v).toUpperCase().replace(/^I(?=\d)/, '');
+      const cur = [parentsFamily.value?.father?.gramps_id, parentsFamily.value?.mother?.gramps_id]
+        .filter(Boolean)
+        .map((v) => norm(String(v)));
+      // 跨树迁移时编号属于目标家族树 → 不做本树父编号去重判断
+      if (targetTreeId || !cur.includes(norm(newParentId))) {
+        try {
+          const r = await reparentNode(treeId.value, handle.value, newParentId, token, targetTreeId);
+          if (r.cross_tree) {
+            migratedTo = migrateTreeLabel(r.target_tree_id || targetTreeId);
+            reparentMsg = `已迁移到 ${migratedTo}（编号已重新分配，共 ${r.moved_people ?? 0} 人）`;
+          } else {
+            reparentMsg = r.chain_shift
+              ? `已改父 ${r.parent_name}（世数 ${r.chain_shift.delta > 0 ? '+' : ''}${r.chain_shift.delta}，含下代 ${r.chain_shift.affected} 个节点）`
+              : `已改父 ${r.parent_name}`;
+          }
+        } catch (e: any) {
+          reparentErr = e?.message || '改父失败';
+        }
+      }
+    }
+    if (reparentErr) {
+      uni.showToast({ title: `已保存，但改父失败：${reparentErr}`, icon: 'none', duration: 3200 });
+    } else {
+      uni.showToast({ title: reparentMsg || '保存成功', icon: 'success', duration: migratedTo ? 3200 : 2000 });
+    }
+    showEdit.value = false;
+    if (migratedTo) {
+      // 跨树迁移成功：节点及其全部后代已离开本树 → 档案显示迁移结果，宿主刷新树图
+      person.value = null;
+      loadError.value = `该节点已迁移到「${migratedTo}」（编号已重新分配）`;
+      emit('tree-changed');
+      return;
+    }
+    // 刷新详情
+    const fresh = await fetchPerson(treeId.value, handle.value);
+    person.value = fresh;
+  } catch (e: any) {
+    editError.value = e.message || '保存失败';
+  } finally {
+    saving.value = false;
+  }
+}
+
+/** 打开出嫁弹窗：加载可选目标家族树（排除总谱与当前树） */
+async function openMarry() {
+  marryError.value = '';
+  marryQuery.value = '';
+  marryResults.value = [];
+  marrySearched.value = false;
+  selectedMarry.value = null;
+  marryTreeId.value = '';
+  marryDate.value = '';
+  try {
+    const meta = await fetchTreeMetaRemote();
+    marryTrees.value = Object.values(meta.trees)
+      .filter((t) => !t.is_master && t.tree_id !== treeId.value)
+      .map((t) => ({ tree_id: t.tree_id, display_title: t.display_title, surname_char: t.surname_char || '' }));
+    if (!marryTrees.value.length) {
+      marryError.value = '暂无可联姻的家族树';
+      return;
+    }
+    showMarry.value = true;
+  } catch (e: any) {
+    marryError.value = e.message || '加载家族树失败';
+    showMarry.value = true;
+  }
+}
+
+function selectMarryTree(tid: string) {
+  marryTreeId.value = tid;
+  const t = marryTrees.value.find((x) => x.tree_id === tid);
+  marryTreeName.value = t ? treeDisplayLabel(t.display_title, t.surname_char) : tid;
+  marryResults.value = [];
+  marrySearched.value = false;
+  selectedMarry.value = null;
+}
+
+/** 搜索目标树男性节点 */
+async function doSearchMarry() {
+  const q = marryQuery.value.trim();
+  if (!q) {
+    marryError.value = '请输入姓名关键字';
+    return;
+  }
+  if (!marryTreeId.value) {
+    marryError.value = '请先选择目标家族树';
+    return;
+  }
+  marrySearching.value = true;
+  marrySearched.value = true;
+  marryError.value = '';
+  selectedMarry.value = null;
+  try {
+    const res = await searchPeople({ query: q, tree_id: marryTreeId.value });
+    // 嫁出 → 目标为男性；娶入 → 目标为女性
+    const want = marryDirection.value === 'out' ? 'M' : 'F';
+    marryResults.value = res.people.filter((p) => p.gender === want);
+  } catch (e: any) {
+    marryError.value = e.message || '搜索失败';
+    marryResults.value = [];
+  } finally {
+    marrySearching.value = false;
+  }
+}
+
+function selectMarry(p: PersonSummary) {
+  selectedMarry.value = p;
+}
+
+/** 确认出嫁：写跨树链接属性（external_tree / external_person_handle ...） */
+async function doMarry() {
+  if (!selectedMarry.value) return;
+  const token = getAuthToken();
+  if (!token) {
+    marryError.value = '登录已过期，请重新登录';
+    return;
+  }
+  marrying.value = true;
+  marryError.value = '';
+  try {
+    const res = await marriageRequest(treeId.value, {
+      action: 'marry',
+      direction: marryDirection.value,
+      person_handle: handle.value,
+      spouse_tree_id: marryTreeId.value,
+      spouse_handle: selectedMarry.value.handle,
+      marriage_date: marryDate.value.trim(),
+    }, token);
+    uni.showToast({
+      title: `已提交申请，等待对方家族（${res.to_person_name} 所在树）审批`,
+      icon: 'none',
+      duration: 3000,
+    });
+    showMarry.value = false;
+    const fresh = await fetchPerson(treeId.value, handle.value);
+    person.value = fresh;
+  } catch (e: any) {
+    marryError.value = e.message || '提交失败';
+  } finally {
+    marrying.value = false;
+  }
+}
+
+// ---- 绝婚 / 合离 ----
+
+/** 打开解除弹窗：绝婚=男方主动（单方生效）/ 合离=双方自愿（需对方审批） */
+function openEndMarriage(kind: '绝婚' | '合离') {
+  endKind.value = kind;
+  endDate.value = '';
+  endNote.value = '';
+  endError.value = '';
+  showEndMarriage.value = true;
+}
+
+/** 提交解除：绝婚走 /admin/marry-end（即时生效）；合离走申请（等对方审批） */
+async function doEndMarriage() {
+  const token = getAuthToken();
+  if (!token) {
+    endError.value = '登录已过期，请重新登录';
+    return;
+  }
+  ending.value = true;
+  endError.value = '';
+  try {
+    if (endKind.value === '绝婚') {
+      await marryEnd(treeId.value, {
+        person_handle: handle.value,
+        end_date: endDate.value.trim(),
+        note: endNote.value.trim(),
+      }, token);
+      uni.showToast({ title: '已绝婚（男方主动解除）', icon: 'success' });
+    } else {
+      const res = await marriageRequest(treeId.value, {
+        action: 'divorce',
+        person_handle: handle.value,
+        end_date: endDate.value.trim(),
+        note: endNote.value.trim(),
+      }, token);
+      uni.showToast({ title: `已提交合离申请，等待对方家族（${res.to_person_name} 所在树）审批`, icon: 'none', duration: 3000 });
+    }
+    showEndMarriage.value = false;
+    const fresh = await fetchPerson(treeId.value, handle.value);
+    person.value = fresh;
+  } catch (e: any) {
+    endError.value = e.message || '操作失败';
+  } finally {
+    ending.value = false;
+  }
+}
+</script>
+
+<style scoped>
+.danger-zone { border-top: 1px dashed #E0C9B0; padding-top: 10px; }
+.danger-hint { font-size: 12px; color: #A1887F; display: block; margin: 8px 2px 0; line-height: 1.5; }
+/* 宗谱删除风险提示（仅总编可见该危险区时同屏显示） */
+.clan-danger-hint { color: #C62828; }
+.del-mode {
+  border: 1px solid #E0D6CC;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: #FFFDF8;
+}
+.del-mode.selected { border-color: #C62828; background: #FDF2F2; }
+.del-mode-name { font-size: 13px; color: #3E2723; display: block; }
+.del-mode-hint { font-size: 11px; color: #A1887F; display: block; margin-top: 4px; }
+.del-stat {
+  border: 1px solid #E0C9B0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: #FBF6EF;
+}
+.del-stat-line { font-size: 12px; color: #3E2723; display: block; margin-bottom: 4px; }
+.del-stat-msg { color: #8B4513; }
+/* 「不可恢复」提示：用红色文字表达（此前的 **星号** 会被字面显示） */
+.del-warn { font-size: 12px; color: #D93025; font-weight: bold; display: block; text-align: center; margin: -8px 0 10px; }
+.founder-lock { margin: 6px 0 2px; }
+.founder-hint { font-size: 12px; color: #A1887F; display: block; margin: 4px 2px 8px; }
+.living-locked { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
+.container { padding: 20px; }
+.container.modal { padding: 2px 4px 8px; }
+.name-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 16px; }
+.name { font-size: 24px; font-weight: bold; color: #3E2723; }
+.name-title { font-size: 14px; color: #8B4513; background: #FBF6EF; border-radius: 6px; padding: 2px 8px; }
+.gender-badge { width: 26px; height: 26px; flex-shrink: 0; border-radius: 50%; }
+.edit-btn { flex-shrink: 0; }
+.info-row { display: flex; justify-content: center; margin-bottom: 12px; }
+.info-card :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
+.section { margin-top: 20px; }
+.section-title { font-size: 16px; font-weight: bold; color: #8B4513; display: block; margin-bottom: 8px; }
+.marriage-actions { display: flex; gap: 8px; margin-top: 8px; }
+.marriage-hint { font-size: 12px; color: #A1887F; display: block; margin-top: 6px; }
+.section :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
+.fam-block { padding: 12px 16px; border-bottom: 1px solid #F5F0EA; }
+.fam-block:last-child { border-bottom: none; }
+.fam-row { display: flex; align-items: flex-start; margin-bottom: 6px; }
+.fam-row:last-child { margin-bottom: 0; }
+.fam-label { font-size: 13px; color: #999; width: 52px; flex-shrink: 0; margin-top: 2px; }
+.fam-link { font-size: 14px; color: #5D4037; }
+.fam-link:active { color: #8B4513; }
+.fam-kids { display: flex; flex-wrap: wrap; gap: 4px 14px; flex: 1; }
+.fam-none { font-size: 13px; color: #ccc; }
+.branch-admin { margin-top: 10px; }
+.loading { text-align: center; padding: 60px; color: #999; }
+.loading .error-text { display: block; margin-bottom: 14px; color: #C62828; font-size: 14px; line-height: 1.6; }
+.archive-error { padding: 40px; }
+
+/* 编辑模态框 */
+.modal-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.55); z-index: 999;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  width: 88%; max-width: 420px; max-height: 85vh;
+  background: #fff; border-radius: 14px; padding: 20px;
+  display: flex; flex-direction: column;
+}
+.modal-title { font-size: 18px; font-weight: bold; color: #3E2723; text-align: center; margin-bottom: 12px; }
+.modal-body { flex: 1; max-height: 55vh; }
+.field-label { font-size: 13px; color: #8B4513; font-weight: bold; display: block; margin: 12px 0 6px; }
+.field-hint { font-size: 12px; color: #A1887F; display: block; margin: 4px 0 2px; }
+.field { margin-bottom: 8px; }
+.living-block { margin-top: 2px; }
+.event-edit-row { background: #FBF8F4; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+.edit-error { text-align: center; color: #C62828; font-size: 13px; margin: 8px 0; }
+.modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.modal-sub { font-size: 12px; color: #999; display: block; text-align: center; margin: 6px 0 14px; }
+
+/* 内嵌编辑面板（同一弹窗/页面内切换，不再独立弹窗） */
+.edit-inline { padding: 4px 0 8px; }
+.edit-inline-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 10px; border-bottom: 1px solid #F0E8DE; margin-bottom: 4px;
+}
+.edit-inline-title { font-size: 17px; font-weight: bold; color: #3E2723; }
+.edit-inline-close {
+  width: 30px; height: 30px; line-height: 30px; text-align: center;
+  font-size: 16px; color: #999; border-radius: 50%;
+}
+.edit-inline-close:active { background: #F5F0EA; }
+.edit-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+
+/* 出嫁弹窗 */
+.tree-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.tree-opt {
+  padding: 10px 12px; border: 1px solid #F0E8DE; border-radius: 8px;
+}
+.tree-opt.selected { border-color: #8B4513; background: #FBF6EF; }
+.tree-opt-name { font-size: 13px; color: #3E2723; }
+.tree-opt-sub { font-size: 11px; color: #A1887F; display: block; margin-top: 4px; }
+.search-row { display: flex; gap: 8px; align-items: center; }
+.search-input { flex: 1; }
+.join-tip { text-align: center; color: #999; font-size: 13px; padding: 16px 0; }
+.join-results { max-height: 30vh; overflow-y: auto; margin-top: 8px; }
+.join-result {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid #F0E8DE; border-radius: 8px;
+  margin-bottom: 8px;
+}
+.join-result.selected { border-color: #8B4513; background: #FBF6EF; }
+.result-name { font-size: 14px; color: #3E2723; font-weight: 500; }
+.result-id { font-size: 11px; color: #999; }
+.result-gender { font-size: 11px; color: #8B4513; margin-left: auto; }
+.identity-confirm {
+  margin-top: 10px; padding: 12px; background: #FFF8E1; border-radius: 8px;
+}
+.identity-text { font-size: 13px; color: #5D4037; line-height: 1.6; }
+</style>

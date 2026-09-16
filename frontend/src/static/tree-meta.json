@@ -1,30 +1,85 @@
 {
-  "_schema": "1.0",
+  "_schema": "1.1",
   "_description": "域名/路径 → tree-id 映射表。每次新增家族树后更新此文件，并提交到 git + 备份到 COS。",
+  "_root_domain": "jiapu100.com",
   "trees": {
     "zhonghua": {
       "tree_id": "zhonghua",
       "path_alias": "/zhonghua",
       "surname_char": "华",
       "display_title": "中华世本 · 全球华人家谱总谱",
+      "genealogy_name": "中华世本",
+      "archive_url": "",
       "hall_name": "中华世本",
       "origin": "中华",
       "description": "汇聚有记载的中国先人，串联本项目全部家族树始祖的超级总谱",
       "is_master": true,
       "enable_custom_domain": true,
+      "subdomain": "shiben",
       "custom_domains": [
-        "shiben.jiazutong.cn"
+        "shiben.jiapu100.com"
       ]
     },
     "ji_23395_01": {
       "tree_id": "ji_23395_01",
       "path_alias": "/ji_23395_01",
       "surname_char": "季",
-      "display_title": "季氏（白露村）家族历史数字馆",
+      "display_title": "季氏费县白露村家族",
+      "genealogy_name": "季氏家谱",
+      "archive_url": "",
       "hall_name": "暂无",
       "origin": "山东省临沂市费县新庄镇季家白露村",
       "description": "山东临沂季氏支系家谱数字化，收录旧谱与迁徙史料",
+      "founder_gramps_id": "I0058",
       "enable_custom_domain": true
+    },
+    "gu_39038_01": {
+      "tree_id": "gu_39038_01",
+      "path_alias": "/gu_39038_01",
+      "surname_char": "顾",
+      "display_title": "顾氏家族",
+      "genealogy_name": "顾氏家谱",
+      "archive_url": "",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：顾清学氏",
+      "enable_custom_domain": false
+    },
+    "liu_21016_01": {
+      "tree_id": "liu_21016_01",
+      "path_alias": "/liu_21016_01",
+      "surname_char": "刘",
+      "display_title": "刘氏家族",
+      "genealogy_name": "刘氏家谱",
+      "archive_url": "",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：刘芳池氏",
+      "enable_custom_domain": false
+    },
+    "shen_27784_01": {
+      "tree_id": "shen_27784_01",
+      "path_alias": "/shen_27784_01",
+      "surname_char": "沈",
+      "display_title": "沈氏家族",
+      "genealogy_name": "沈氏家谱",
+      "archive_url": "",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：沈克强氏",
+      "enable_custom_domain": false
+    },
+    "qin_31206_01": {
+      "tree_id": "qin_31206_01",
+      "path_alias": "/qin_31206_01",
+      "surname_char": "秦",
+      "display_title": "秦氏家族",
+      "genealogy_name": "秦氏家谱",
+      "archive_url": "",
+      "hall_name": "",
+      "origin": "",
+      "description": "由 ji_23395_01 拆分而来，始祖：秦氏",
+      "enable_custom_domain": false
     }
   }
 }

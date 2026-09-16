@@ -64,6 +64,124 @@
         </view>
       </view>
 
+      <!-- 解绑申请审批 -->
+      <view class="section">
+        <text class="section-title">解绑申请（{{ pendingLeaves.length }} 待审批）</text>
+        <view v-if="!leaveRequests.length" class="empty">暂无解绑申请</view>
+        <view v-for="lr in leaveRequests" :key="lr.id" class="leave-item">
+          <view class="leave-info">
+            <text class="leave-name">{{ lr.nickname }}（{{ lr.phone }}）</text>
+            <text class="leave-desc">申请离开 {{ lr.tree_id }} · {{ formatTime(lr.created_at) }}</text>
+            <text v-if="lr.reason" class="leave-desc">原因：{{ lr.reason }}</text>
+            <t-tag
+              :theme="lr.status === 'pending' ? 'warning' : lr.status === 'approved' ? 'success' : 'default'"
+              variant="light"
+              size="small"
+              class="leave-status"
+            >{{ leaveStatusText(lr.status) }}</t-tag>
+          </view>
+          <view v-if="lr.status === 'pending'" class="leave-actions">
+            <t-button size="small" theme="primary" @click="handleLeave(lr, true)">通过</t-button>
+            <t-button size="small" variant="outline" theme="danger" @click="handleLeave(lr, false)">拒绝</t-button>
+          </view>
+        </view>
+      </view>
+
+      <!-- 联姻/离异申请审批（docs/marriage.spec.md：发起 → 目标树审批；口径 C） -->
+      <view class="section">
+        <text class="section-title">联姻/离异申请（{{ pendingMarriages.length }} 待审批）</text>
+        <view v-if="!pendingMarriages.length" class="empty">暂无待审批申请</view>
+        <view v-for="mq in pendingMarriages" :key="mq._id" class="leave-item">
+          <view class="leave-info">
+            <text class="leave-name">
+              {{ marriageActionText(mq) }}：{{ mq.from_person_name }}（{{ mq.from_tree }}） ↔ {{ mq.to_person_name }}（{{ mq.to_tree }}）
+            </text>
+            <text class="leave-desc">
+              发起：{{ mq.requested_by }} · {{ formatTime(mq.created_at) }}
+              <template v-if="mq.action === 'marry' && mq.marriage_date"> · 成婚 {{ mq.marriage_date }}</template>
+              <template v-if="mq.action === 'divorce' && mq.end_date"> · 结束 {{ mq.end_date }}</template>
+            </text>
+            <text v-if="mq.note" class="leave-desc">说明：{{ mq.note }}</text>
+          </view>
+          <view class="leave-actions">
+            <t-button size="small" theme="primary" @click="approveMarriage(mq)">通过</t-button>
+            <t-button size="small" variant="outline" theme="danger" @click="rejectMarriage(mq)">驳回</t-button>
+          </view>
+        </view>
+      </view>
+
+      <!-- 加入申请审批（申请-审批制：docs/permission-tier.spec.md §9） -->
+      <view class="section">
+        <text class="section-title">加入申请（{{ pendingJoins.length }} 待审批）</text>
+        <view v-if="!joinRequests.length" class="empty">暂无加入申请</view>
+        <view v-for="jr in joinRequests" :key="jr.id" class="leave-item">
+          <view class="leave-info">
+            <text class="leave-name">{{ jr.self_name || jr.nickname || jr.phone }}</text>
+            <text class="leave-desc">
+              {{ jr.phone }} · 申请加入 {{ jr.tree_id }} · {{ formatTime(jr.created_at) }}
+            </text>
+            <text class="leave-desc">
+              支系节点：{{ jr.reference_name
+              }}<template v-if="jr.reference_depth">（第 {{ jr.reference_depth }} 世）</template>
+            </text>
+            <text v-if="jr.note" class="leave-desc">说明：{{ jr.note }}</text>
+            <t-tag
+              :theme="jr.status === 'pending' ? 'warning' : jr.status === 'approved' ? 'success' : 'default'"
+              variant="light"
+              size="small"
+              class="leave-status"
+            >{{ joinStatusText(jr.status) }}</t-tag>
+          </view>
+          <view v-if="jr.status === 'pending'" class="leave-actions">
+            <t-button size="small" theme="primary" @click="openApprove(jr)">通过</t-button>
+            <t-button size="small" variant="outline" theme="danger" @click="rejectJoin(jr)">拒绝</t-button>
+          </view>
+        </view>
+
+        <!-- 通过审批（在申请树中检索并绑定申请人本人节点；面板位于列表下方） -->
+        <view v-if="approving" class="approve-box">
+          <text class="leave-desc">
+            批准 {{ approving.self_name || approving.nickname || approving.phone }} 加入
+            {{ approving.tree_id }} —— 检索申请人本人节点（谱中已收录则直接选择；未收录请先在树中新增该成员）
+          </text>
+          <view class="search-row">
+            <t-input
+              :value="approveQuery"
+              placeholder="按姓名搜索本家族节点"
+              class="search-input"
+              @update:value="(v: string) => approveQuery = v"
+              @confirm="searchApproveCandidates"
+            />
+            <t-button size="small" theme="primary" @click="searchApproveCandidates">搜索</t-button>
+          </view>
+          <view v-if="approveSearching" class="approve-tip">搜索中...</view>
+          <view v-else-if="approveResults.length" class="approve-results">
+            <view
+              v-for="r in approveResults"
+              :key="r.handle"
+              class="approve-result"
+              :class="{ selected: approveCandidate?.handle === r.handle }"
+              @click="approveCandidate = r"
+            >
+              <text class="approve-result-name">{{ r.name }}</text>
+              <text class="approve-result-id">{{ personIdDisplay(r.gramps_id) }}</text>
+            </view>
+          </view>
+          <view v-else-if="approveSearched" class="approve-tip">未找到匹配节点，请换名字搜索或先新增节点</view>
+          <view v-if="joinError" class="approve-error">{{ joinError }}</view>
+          <view class="approve-actions">
+            <t-button
+              size="small"
+              theme="primary"
+              :disabled="!approveCandidate"
+              :loading="approvingSubmitting"
+              @click="confirmApprove(approving)"
+            >绑定并批准</t-button>
+            <t-button size="small" variant="text" @click="approving = null">收起</t-button>
+          </view>
+        </view>
+      </view>
+
       <view v-if="error" class="error">{{ error }}</view>
     </template>
   </view>
@@ -71,13 +189,196 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchUserList, setUserRole, setAnchor } from '@/business/api';
+import { fetchUserList, setUserRole, setAnchor, fetchLeaveRequests, approveLeave, fetchJoinRequests, approveJoinRequest, rejectJoinRequest, searchPeople, fetchMarriageRequests, decideMarriageRequest } from '@/business/api';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
-import type { ManagedUser } from '@/business/api';
+import type { ManagedUser, LeaveRequestItem, JoinRequestItem } from '@/business/api';
+import type { PersonSummary } from '@/business/types';
+import { personIdDisplay } from '@/business/format';
 
 const users = ref<ManagedUser[]>([]);
 const error = ref('');
 const anchorInputs = ref<Record<string, { tree: string; person: string }>>({});
+const leaveRequests = ref<LeaveRequestItem[]>([]);
+// 加入申请（申请-审批制；docs/permission-tier.spec.md §9）
+const joinRequests = ref<JoinRequestItem[]>([]);
+const approving = ref<JoinRequestItem | null>(null);
+const approveQuery = ref('');
+const approveResults = ref<PersonSummary[]>([]);
+const approveSearching = ref(false);
+const approveSearched = ref(false);
+const approveCandidate = ref<PersonSummary | null>(null);
+const joinError = ref('');
+const approvingSubmitting = ref(false);
+
+const pendingLeaves = computed(() => leaveRequests.value.filter((r) => r.status === 'pending'));
+const pendingJoins = computed(() => joinRequests.value.filter((r) => r.status === 'pending'));
+
+function leaveStatusText(s: string): string {
+  return s === 'pending' ? '待审批' : s === 'approved' ? '已通过' : '已拒绝';
+}
+
+function formatTime(iso: string): string {
+  try {
+    const d = new Date(iso);
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  } catch {
+    return iso;
+  }
+}
+
+async function loadLeaveRequests() {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    leaveRequests.value = await fetchLeaveRequests(token);
+  } catch (e: any) {
+    console.error('加载解绑申请失败:', e.message);
+  }
+}
+
+async function handleLeave(lr: LeaveRequestItem, approve: boolean) {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    await approveLeave(token, lr.id, approve);
+    uni.showToast({ title: approve ? '已通过解绑' : '已拒绝申请', icon: 'success' });
+    await loadLeaveRequests();
+  } catch (e: any) {
+    error.value = e.message || '审批失败';
+  }
+}
+
+// ---- 联姻/离异申请审批（docs/marriage.spec.md：目标树审批） ----
+
+const marriageRequests = ref<any[]>([]);
+const pendingMarriages = computed(() => marriageRequests.value.filter((r: any) => r.status === 'pending'));
+
+function marriageActionText(r: any): string {
+  if (r.action === 'marry') return r.direction === 'in' ? '娶入' : '嫁出';
+  return r.kind || '合离';
+}
+
+async function loadMarriageRequests() {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    const res = await fetchMarriageRequests('', token);
+    marriageRequests.value = res.list || [];
+  } catch (e: any) {
+    console.error('加载联姻申请失败:', e.message);
+  }
+}
+
+/** 通过：目标树审批 → 服务端在同一事务内完成双侧写入 */
+async function approveMarriage(r: any) {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    await decideMarriageRequest(r.to_tree, r._id, true, token);
+    uni.showToast({ title: '已通过，双方家族已建立/解除关系', icon: 'success' });
+    await loadMarriageRequests();
+  } catch (e: any) {
+    uni.showModal({ title: '审批失败', content: e.message || '请稍后重试', showCancel: false });
+  }
+}
+
+async function rejectMarriage(r: any) {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    await decideMarriageRequest(r.to_tree, r._id, false, token, '管理员驳回');
+    uni.showToast({ title: '已驳回', icon: 'none' });
+    await loadMarriageRequests();
+  } catch (e: any) {
+    uni.showModal({ title: '驳回失败', content: e.message || '请稍后重试', showCancel: false });
+  }
+}
+
+// ---- 加入申请审批（docs/permission-tier.spec.md §9） ----
+
+function joinStatusText(s: string): string {
+  return s === 'pending' ? '待审批' : s === 'approved' ? '已通过' : '已拒绝';
+}
+
+async function loadJoinRequests() {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    joinRequests.value = await fetchJoinRequests(token);
+  } catch (e: any) {
+    console.error('加载加入申请失败:', e.message);
+  }
+}
+
+/** 打开通过审批（在申请树中检索申请人本人节点） */
+function openApprove(jr: JoinRequestItem) {
+  approving.value = jr;
+  approveQuery.value = '';
+  approveResults.value = [];
+  approveSearched.value = false;
+  approveCandidate.value = null;
+  joinError.value = '';
+}
+
+async function searchApproveCandidates() {
+  if (!approving.value) return;
+  const q = approveQuery.value.trim();
+  if (!q) return;
+  approveSearching.value = true;
+  approveSearched.value = true;
+  approveCandidate.value = null;
+  joinError.value = '';
+  try {
+    const res = await searchPeople({ query: q, tree_id: approving.value.tree_id });
+    approveResults.value = res.people;
+  } catch (e: any) {
+    joinError.value = e.message || '搜索失败';
+    approveResults.value = [];
+  } finally {
+    approveSearching.value = false;
+  }
+}
+
+/** 绑定申请人本人节点并批准（handle 必须归属该树，服务端复验） */
+async function confirmApprove(jr: JoinRequestItem) {
+  const token = getAuthToken();
+  if (!token || !approveCandidate.value) return;
+  joinError.value = '';
+  approvingSubmitting.value = true;
+  try {
+    await approveJoinRequest(token, jr.id, approveCandidate.value.handle);
+    uni.showToast({ title: `已批准 ${jr.self_name || jr.phone} 加入`, icon: 'success' });
+    approving.value = null;
+    await loadJoinRequests();
+  } catch (e: any) {
+    joinError.value = e.message || '审批失败';
+  } finally {
+    approvingSubmitting.value = false;
+  }
+}
+
+async function rejectJoin(jr: JoinRequestItem) {
+  const token = getAuthToken();
+  if (!token) return;
+  const confirmed = await new Promise<boolean>((resolve) => {
+    uni.showModal({
+      title: '拒绝加入申请',
+      content: `确定拒绝 ${jr.self_name || jr.nickname || jr.phone} 加入 ${jr.tree_id} 吗？`,
+      confirmText: '拒绝',
+      cancelText: '取消',
+      success: (res) => resolve(res.confirm),
+      fail: () => resolve(false),
+    });
+  });
+  if (!confirmed) return;
+  try {
+    await rejectJoinRequest(token, jr.id);
+    uni.showToast({ title: '已拒绝', icon: 'success' });
+    await loadJoinRequests();
+  } catch (e: any) {
+    error.value = e.message || '操作失败';
+  }
+}
 
 const ROLE_LABELS: Record<string, string> = {
   guest: '游客',
@@ -167,7 +468,12 @@ async function loadUsers() {
 }
 
 onMounted(() => {
-  if (canManage.value) loadUsers();
+  if (canManage.value) {
+    loadUsers();
+    loadLeaveRequests();
+    loadJoinRequests();
+    loadMarriageRequests();
+  }
 });
 
 function goLogin() {
@@ -202,5 +508,35 @@ function goLogin() {
 .user-actions { margin-top: 8px; }
 .anchor-row { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
 .anchor-input { flex: 1; }
+.leave-item {
+  padding: 12px 0; border-bottom: 1px solid #f5f0ea;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.leave-item:last-child { border-bottom: none; }
+.leave-info { flex: 1; }
+.leave-name { font-size: 14px; color: #3E2723; font-weight: 500; display: block; }
+.leave-desc { font-size: 12px; color: #999; display: block; margin-top: 2px; }
+.leave-status { margin-top: 6px; }
+.leave-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .error { text-align: center; color: #C62828; font-size: 13px; margin-top: 12px; }
+
+/* 加入申请审批面板 */
+.approve-box {
+  margin-top: 10px; padding: 12px;
+  background: #FBF6EF; border: 1px solid #F0E0C8; border-radius: 10px;
+}
+.search-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.search-input { flex: 1; }
+.approve-tip { text-align: center; color: #999; font-size: 13px; padding: 12px 0; }
+.approve-results { max-height: 34vh; overflow-y: auto; margin-top: 8px; }
+.approve-result {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid #F0E8DE; border-radius: 8px;
+  margin-bottom: 6px;
+}
+.approve-result.selected { border-color: #8B4513; background: #FFF3E0; }
+.approve-result-name { font-size: 14px; color: #3E2723; font-weight: 500; }
+.approve-result-id { font-size: 11px; color: #999; margin-left: auto; }
+.approve-error { color: #C62828; font-size: 13px; text-align: center; margin: 8px 0; }
+.approve-actions { display: flex; gap: 8px; margin-top: 8px; }
 </style>

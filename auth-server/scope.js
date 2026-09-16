@@ -44,6 +44,14 @@ export function setAnchor(phone, treeId, personHandle) {
   persist();
 }
 
+/** 清除用户的锚点节点（解绑审批通过后） */
+export function clearAnchor(phone) {
+  if (!anchors[phone]) return false;
+  delete anchors[phone];
+  persist();
+  return true;
+}
+
 /** 获取用户锚点（每次读文件，支持运行时更新无需重启） */
 export function getAnchor(phone) {
   const fresh = load();

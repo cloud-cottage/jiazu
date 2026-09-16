@@ -32,6 +32,65 @@
       </view>
     </view>
 
+    <!-- 我的家族树（绑定状态 + 加入/解绑入口） -->
+    <view v-if="isAuthenticated()" class="bind-card">
+      <view class="bind-header">
+        <text class="bind-title">🌳 我的家族树</text>
+        <t-tag v-if="anchor" theme="primary" variant="light" size="small">已绑定</t-tag>
+        <t-tag v-else theme="default" variant="light" size="small">未绑定</t-tag>
+      </view>
+
+      <view v-if="anchor" class="bind-body">
+        <view class="bind-row">
+          <text class="bind-label">家族</text>
+          <text class="bind-value">{{ boundTreeName }}</text>
+        </view>
+        <view class="bind-row">
+          <text class="bind-label">我的节点</text>
+          <text class="bind-value">{{ anchorPersonName || anchor.person_handle }}</text>
+        </view>
+        <view v-if="anchorError" class="bind-error">{{ anchorError }}</view>
+        <t-button
+          size="small"
+          variant="outline"
+          theme="warning"
+          class="bind-btn"
+          :loading="leaving"
+          @click="openLeaveModal"
+        >申请解绑</t-button>
+        <text class="bind-hint">一人一树终身制：解绑需家族树主理人审批，通过后可改绑其他家族树</text>
+      </view>
+
+      <view v-else class="bind-body">
+        <text class="bind-empty">尚未加入任何家族树</text>
+        <t-button
+          size="small"
+          theme="primary"
+          class="bind-btn"
+          @click="goHall"
+        >去家族馆加入</t-button>
+      </view>
+    </view>
+
+    <!-- 解绑申请弹窗 -->
+    <view v-if="showLeaveModal" class="modal-mask" @click.self="showLeaveModal = false">
+      <view class="modal">
+        <text class="modal-title">申请解绑</text>
+        <text class="modal-sub">解绑后需主理人审批通过，才能加入其他家族树</text>
+        <t-input
+          :value="leaveReason"
+          placeholder="解绑原因（选填）"
+          class="field"
+          @update:value="(v: any) => leaveReason = v"
+        />
+        <view v-if="leaveError" class="bind-error">{{ leaveError }}</view>
+        <view class="modal-actions">
+          <t-button theme="primary" block :loading="leaving" @click="doLeave">提交申请</t-button>
+          <t-button variant="text" block @click="showLeaveModal = false">取消</t-button>
+        </view>
+      </view>
+    </view>
+
     <!-- 功能菜单 -->
     <view class="menu-card">
       <t-cell-group :bordered="false">
@@ -44,7 +103,7 @@
         <t-cell
           v-if="canManage"
           title="⚙️ 角色管理"
-          description="用户角色与锚点"
+          description="用户角色 / 锚点 / 解绑审批"
           arrow
           @click="go('/pages/admin/index')"
         />
@@ -64,8 +123,18 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
-import { isAuthenticated, authState, clearAuth } from '@/business/auth';
+import { ref, computed, onMounted } from 'vue';
+import { isAuthenticated, authState, clearAuth, getAuthToken } from '@/business/auth';
+import { fetchMyAnchor, requestLeave, fetchTreeMetaRemote } from '@/business';
+
+const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
+const anchorPersonName = ref('');
+const boundTreeName = ref('未绑定');
+const anchorError = ref('');
+const showLeaveModal = ref(false);
+const leaveReason = ref('');
+const leaveError = ref('');
+const leaving = ref(false);
 
 const ROLE_LABELS: Record<string, string> = {
   guest: '游客',
@@ -97,6 +166,74 @@ function maskPhone(phone: string): string {
   return phone ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : '';
 }
 
+async function loadAnchor() {
+  const token = getAuthToken();
+  if (!token) return;
+  anchorError.value = '';
+  try {
+    anchor.value = await fetchMyAnchor(token);
+    if (anchor.value) {
+      // 树名（tree-meta）
+      try {
+        const meta = await fetchTreeMetaRemote();
+        for (const [, entry] of Object.entries(meta.trees)) {
+          if (entry.tree_id === anchor.value.tree_id) {
+            boundTreeName.value = entry.display_title || entry.tree_id;
+            break;
+          }
+        }
+      } catch {
+        boundTreeName.value = anchor.value.tree_id;
+      }
+      // 节点名（读该树 person）
+      try {
+        const res = await fetch(`/api/people/${anchor.value.person_handle}?profile=all`, {
+          headers: { 'X-Tree-Id': anchor.value.tree_id },
+        });
+        if (res.ok) {
+          const p = await res.json();
+          const pn = p.primary_name || {};
+          anchorPersonName.value =
+            (pn.surname_list?.[0]?.surname || '') + (pn.first_name || '') || anchor.value.person_handle;
+        }
+      } catch {
+        /* 读不到节点名则显示 handle */
+      }
+    }
+  } catch (e: any) {
+    anchorError.value = e.message || '加载绑定状态失败';
+  }
+}
+
+function openLeaveModal() {
+  leaveError.value = '';
+  leaveReason.value = '';
+  showLeaveModal.value = true;
+}
+
+async function doLeave() {
+  const token = getAuthToken();
+  if (!token) {
+    leaveError.value = '登录已过期，请重新登录';
+    return;
+  }
+  leaving.value = true;
+  leaveError.value = '';
+  try {
+    await requestLeave(token, leaveReason.value);
+    showLeaveModal.value = false;
+    uni.showToast({ title: '解绑申请已提交，等待审批', icon: 'none' });
+  } catch (e: any) {
+    leaveError.value = e.message || '申请失败';
+  } finally {
+    leaving.value = false;
+  }
+}
+
+function goHall() {
+  uni.switchTab({ url: '/pages/index/index' });
+}
+
 function goLogin() {
   uni.navigateTo({ url: '/pages/login/index' });
 }
@@ -118,6 +255,10 @@ function doLogout() {
     },
   });
 }
+
+onMounted(() => {
+  if (isAuthenticated()) loadAnchor();
+});
 </script>
 
 <style scoped>
@@ -137,6 +278,37 @@ function doLogout() {
 .user-phone { font-size: 12px; color: #E8D5C0; display: block; margin-top: 2px; }
 .role-tag { margin-top: 4px; }
 .user-action { flex-shrink: 0; }
+
+/* 我的家族树 */
+.bind-card {
+  background: #fff; border-radius: 14px; padding: 16px;
+  margin-bottom: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+.bind-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.bind-title { font-size: 16px; font-weight: bold; color: #3E2723; }
+.bind-row { display: flex; margin-bottom: 8px; }
+.bind-label { font-size: 13px; color: #999; width: 64px; flex-shrink: 0; }
+.bind-value { font-size: 14px; color: #3E2723; flex: 1; }
+.bind-empty { font-size: 13px; color: #999; display: block; margin-bottom: 10px; }
+.bind-btn { margin-top: 10px; }
+.bind-hint { font-size: 11px; color: #B5A594; display: block; margin-top: 10px; line-height: 1.5; }
+.bind-error { font-size: 12px; color: #C62828; margin-top: 8px; }
+
+/* 弹窗 */
+.modal-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.55); z-index: 999;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal {
+  width: 86%; max-width: 380px; background: #fff; border-radius: 14px;
+  padding: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+}
+.modal-title { font-size: 17px; font-weight: bold; color: #3E2723; display: block; text-align: center; }
+.modal-sub { font-size: 12px; color: #999; display: block; text-align: center; margin: 6px 0 14px; }
+.field { margin-bottom: 10px; }
+.modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
 .menu-card :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .footer { text-align: center; margin-top: 30px; }
 .version { font-size: 12px; color: #B5A594; }

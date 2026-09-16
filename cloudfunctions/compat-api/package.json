@@ -1,0 +1,10 @@
+{
+  "name": "compat-api",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "description": "jiazu 兼容层 API（CloudBase 云函数，输出 Gramps-Web 形状）",
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.18.3"
+  }
+}

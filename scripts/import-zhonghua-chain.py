@@ -182,14 +182,14 @@ def main():
     token = login()
     print(f"✅ 总编辑登录成功: {CHIEF_USER}")
 
-    # 检查是否已导入（按名字查）
+    # 检查是否已导入（按名字查；姓在前，如「季文子」）
     s, existing = api("/people/?profile=all", token=token)
     existing_names = set()
     for p in existing:
         pn = p.get("primary_name", {})
         fn = pn.get("first_name", "")
         sn = pn.get("surname_list", [{}])[0].get("surname", "") if pn.get("surname_list") else ""
-        existing_names.add(f"{fn}{sn}".strip())
+        existing_names.add(f"{sn}{fn}".strip())
     if "季文子" in existing_names:
         print("⚠️  90 世链已存在（检测到季文子），跳过导入")
         return
@@ -227,6 +227,9 @@ def main():
                 "first_name": first,
                 "surname_list": [{"surname": surname}] if surname else [],
             },
+            # 必须显式给性别：Gramps-Web 的 POST /people/ 缺省 gender 会落成 2(女)，
+            # 整条父系源流链会全被标成「女」（前端性别徽章、父母挂接方向都会错）
+            "gender": 1,
             "attribute_list": [
                 {"type": "external_chain_gen", "value": str(gen)},
                 {"type": "external_tree", "value": MASTER_TREE},

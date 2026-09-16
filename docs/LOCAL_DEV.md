@@ -1,5 +1,9 @@
 # 本地开发环境（macOS，不使用 Docker）
 
+> ⚠️ **Gramps-Web 已退出运行时链路（退役中）**：现在只有排查历史链路/做离线 `.gramps` 转换时才启动。
+> 日常开发只需 `compat-api(3100)` + 前端(5199)，见 `README.md` 快速开始。
+> 前端默认代理已改指 3100；走本文件的 Gramps(8000)+auth-server(3000) 需 `npm run dev:h5:legacy`。
+
 本地开发用 venv 直接跑 Gramps-Web API（生产环境仍用 docker-compose.yml）。
 
 ## 首次安装

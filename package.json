@@ -1,0 +1,18 @@
+{
+  "name": "jiazu",
+  "version": "1.0.0",
+  "description": "多姓氏、多支派家谱数字化展示平台。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "node --test auth-server/tree-access.test.js auth-server/read-filter.test.js cloudfunctions/compat-api/lib/tree-access.test.js cloudfunctions/compat-api/lib/tree-write.test.js cloudfunctions/compat-api/lib/marriage.test.js cloudfunctions/compat-api/lib/child-write.test.js cloudfunctions/compat-api/lib/master-living.test.js cloudfunctions/compat-api/lib/founder-attach.test.js cloudfunctions/compat-api/lib/founder-reattach.test.js cloudfunctions/compat-api/lib/reset-founder.test.js cloudfunctions/compat-api/lib/meta-guard.test.js cloudfunctions/compat-api/lib/node-delete.test.js cloudfunctions/compat-api/lib/reparent-cross.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.18.3"
+  }
+}

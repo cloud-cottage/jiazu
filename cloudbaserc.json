@@ -1,0 +1,18 @@
+{
+  "envId": "liwu-d8gek6jjdab1d087c",
+  "functionRoot": "./cloudfunctions/deploy",
+  "functions": [
+    {
+      "name": "compat-api",
+      "runtime": "Nodejs16.13",
+      "handler": "index.main",
+      "timeout": 20,
+      "memorySize": 512,
+      "installDependency": true,
+      "envVariables": {
+        "MASTER_TREE_ID": "zhonghua",
+        "COMPAT_SOURCE": "cloud"
+      }
+    }
+  ]
+}

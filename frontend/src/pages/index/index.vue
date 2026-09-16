@@ -1,56 +1,26 @@
 <template>
   <view class="container">
     <view class="header">
-      <view class="header-top">
-        <view class="header-left">
-          <!-- 登录后显示钱包入口 -->
-          <view v-if="isAuthenticated()" class="wallet-badge" @click="goWallet">
-            <text class="wallet-text">💰 我的钱包</text>
-          </view>
-          <!-- 管理角色显示角色管理入口 -->
-          <view v-if="canManage" class="admin-badge" @click="goAdmin">
-            <text class="admin-text">⚙️ 角色管理</text>
-          </view>
-        </view>
-        <view class="auth-badge" @click="goAuth">
-          <text v-if="isAuthenticated()" class="auth-text">👤 {{ authState.nickname }}</text>
-          <text v-else class="auth-text">登录 / 注册</text>
-        </view>
-      </view>
       <text class="title">家族历史数字馆</text>
       <text class="subtitle">多姓氏、多支派家谱数字化展示平台</text>
     </view>
 
-    <!-- 双模式切换：矩阵式 / 总谱目录树 -->
-    <view class="mode-tabs">
-      <t-tabs :value="activeTab" :theme="'light'" @change="onTabChange">
-        <t-tab-panel label="家族馆" value="grid" />
-        <t-tab-panel label="中华世本目录" value="master" />
-      </t-tabs>
-    </view>
-
-    <!-- 模式1：矩阵式家族馆列表 -->
-    <view v-if="activeTab === 'grid'" class="hall-list">
+    <!-- 双视图：家族列表 / 中华世本（浮动按钮切换，无 t-tabs） -->
+    <!-- 视图1：普通家族树列表（不含 zhonghua） -->
+    <view v-if="!showMaster" class="hall-list">
       <t-cell-group :bordered="false">
         <t-cell
-          v-for="card in halls"
+          v-for="card in normalHalls"
           :key="card.tree_id"
-          :title="`${card.surname}氏 · ${card.title}`"
+          :title="card.title"
           :description="`发源地：${card.origin || '待完善'}`"
           :note="card.description"
-          :border="!card.isMaster"
+          :border="true"
           arrow
           @click="goToHall(card)"
         >
           <template #note>
-            <view v-if="card.isMaster">
-              <t-tag theme="primary" variant="light" size="small">总谱</t-tag>
-              <t-tag v-if="rankLabel(card.tree_id)" :theme="rankTheme(card.tree_id)" variant="light" size="small" class="rank-tag">
-                {{ rankLabel(card.tree_id) }}
-              </t-tag>
-              <text class="master-desc">{{ card.description }}</text>
-            </view>
-            <view v-else class="note-line">
+            <view class="note-line">
               <text class="note-text">{{ card.description }}</text>
               <t-tag v-if="rankLabel(card.tree_id)" :theme="rankTheme(card.tree_id)" variant="light" size="small" class="rank-tag">
                 {{ rankLabel(card.tree_id) }}
@@ -60,176 +30,198 @@
         </t-cell>
       </t-cell-group>
 
-      <view v-if="halls.length === 0" class="empty">
+      <view v-if="normalHalls.length === 0" class="empty">
         <text>暂无已上线的家族数字馆</text>
       </view>
-    </view>
 
-    <!-- 模式2：总谱目录树（中华世本为根 → 各家族树 → 始祖节点） -->
-    <view v-else class="master-view">
-      <view v-if="masterLoading" class="empty">
-        <t-loading theme="spinner" text="加载总谱目录..." />
+      <!-- 新建家族树（仅总编辑）：写树 JSON + 始祖 + tree-meta，扣建树费 -->
+      <view v-if="canCreateTree" class="create-entry" @click="openCreateTree">
+        <text class="create-icon">＋</text>
+        <text class="create-text">新建家族树</text>
+        <text class="create-hint">费用 ¥{{ feeYuan }}</text>
       </view>
-      <view v-else-if="masterError" class="error">{{ masterError }}</view>
-      <template v-else>
-        <!-- 总谱根 -->
-        <view class="master-root" @click="masterCard && goToHall(masterCard)">
-          <text class="root-icon">🌐</text>
-          <view class="root-info">
-            <text class="root-title">中华世本</text>
-            <text class="root-sub">{{ masterNodes.length }} 个始祖节点 · 串联 {{ masterGroups.length }} 棵家族树</text>
-          </view>
-          <text class="root-arrow">›</text>
-        </view>
-
-        <!-- 各家族树分支（可展开） -->
-        <view
-          v-for="g in masterGroups"
-          :key="g.tree_id"
-          class="tree-branch"
-        >
-          <view class="branch-header" @click="toggleBranch(g.tree_id)">
-            <text class="branch-arrow" :class="{ open: isOpen(g.tree_id) }">▸</text>
-            <text class="branch-name">{{ g.surname }}氏 · {{ g.title }}</text>
-            <text class="branch-count">{{ g.nodes.length }} 人</text>
-          </view>
-          <view v-if="isOpen(g.tree_id)" class="branch-nodes">
-            <view
-              v-for="node in g.nodes"
-              :key="node.handle"
-              class="branch-node"
-              @click="goToPerson(node)"
-            >
-              <text class="node-dot">•</text>
-              <text class="node-name">{{ node.name }}</text>
-              <text class="node-id">{{ node.gramps_id }}</text>
-            </view>
-          </view>
-        </view>
-      </template>
     </view>
+
+    <!-- 视图2：中华世本（纵向时间轴；与 /zhonghua 为同一页面组件） -->
+    <ShibenTimeline v-else />
 
     <view class="footer">
       <text class="link" @click="goToPage('/pages/about/about')">关于本站 · 免责声明</text>
+    </view>
+
+    <!-- 浮动切换按钮（右侧，固定在 tabbar 上方） -->
+    <view class="floating-switch" @click="toggleView">
+      <text class="floating-icon">{{ showMaster ? '🏠' : '🌐' }}</text>
+      <text class="floating-text">{{ showMaster ? '家族列表' : '中华世本' }}</text>
+    </view>
+
+    <!-- 新建家族树表单（内联弹层） -->
+    <view v-if="showCreate" class="ct-mask" @click="closeCreate">
+      <view class="ct-modal" @click.stop>
+        <view class="ct-head">
+          <text class="ct-title">新建家族树</text>
+          <text class="ct-close" @click="closeCreate">✕</text>
+        </view>
+        <view class="ct-body">
+          <text class="ct-label">姓氏（单个汉字）</text>
+          <t-input
+            :value="form.surname"
+            placeholder="如：季"
+            @update:value="(v: any) => (form.surname = v)"
+          />
+          <text class="ct-label">始祖名（姓随家族姓氏）</text>
+          <t-input
+            :value="form.founder_name"
+            placeholder="如：文子 → 季文子"
+            @update:value="(v: any) => (form.founder_name = v)"
+          />
+          <text class="ct-label">始祖性别</text>
+          <t-radio-group
+            :value="form.gender"
+            placement="horizontal"
+            @update:value="(v: any) => (form.gender = v)"
+          >
+            <t-radio value="M">男</t-radio>
+            <t-radio value="F">女</t-radio>
+            <t-radio value="U">未知</t-radio>
+          </t-radio-group>
+          <text class="ct-label">家族显示名（选填，默认「{{ form.surname || 'X' }}氏家族」）</text>
+          <t-input
+            :value="form.display_title"
+            placeholder="选填"
+            @update:value="(v: any) => (form.display_title = v)"
+          />
+          <text class="ct-label">发源地（选填）</text>
+          <t-input
+            :value="form.origin"
+            placeholder="选填，如：山东费县"
+            @update:value="(v: any) => (form.origin = v)"
+          />
+          <view class="ct-fee">
+            <text class="ct-fee-text">建树费用 ¥{{ feeYuan }}（余额 ¥{{ balanceYuan }}）</text>
+            <text class="ct-fee-sub">tree_id 自动生成（姓氏拼音_码点_序号），创建后可立即新增人物</text>
+          </view>
+          <text v-if="createError" class="ct-error">{{ createError }}</text>
+          <t-button
+            theme="primary"
+            block
+            :loading="creating"
+            :disabled="!canSubmitCreate"
+            @click="doCreateTree"
+          >创建家族树</t-button>
+        </view>
+      </view>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchTreeMetaRemote, buildTreeUrl, fetchMasterTree, fetchTreeRank } from '@/business';
-import { isAuthenticated, authState } from '@/business/auth';
+import { fetchTreeMetaRemote, buildTreeUrl, fetchTreeRank, openTreeHome, clearMetaCache, fetchWallet, createTree } from '@/business';
+import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
-import type { MasterNode, TreeRankInfo } from '@/business/api';
+import type { TreeRankInfo } from '@/business/api';
+import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
 
 const halls = ref<DigitalHallCard[]>([]);
 const meta = ref<TreeMeta | null>(null);
 
-// ---- 双模式切换 ----
-const activeTab = ref('grid');
+// ---- 双视图切换（浮动按钮） ----
+const showMaster = ref(false);
 
-// ---- 总谱目录树 ----
-const masterNodes = ref<MasterNode[]>([]);
-const masterLoading = ref(false);
-const masterError = ref('');
-const expanded = ref<Set<string>>(new Set());
+/** 普通家族树列表（不含总谱 zhonghua） */
+const normalHalls = computed(() => halls.value.filter((h) => !h.isMaster));
 
-interface MasterGroup {
-  tree_id: string;
-  surname: string;
-  title: string;
-  nodes: MasterNode[];
+function toggleView() {
+  showMaster.value = !showMaster.value;
 }
 
-const masterGroups = computed<MasterGroup[]>(() => {
-  const byTree = new Map<string, MasterNode[]>();
-  for (const n of masterNodes.value) {
-    const tid = n.external_tree || '';
-    if (!tid) continue;
-    if (!byTree.has(tid)) byTree.set(tid, []);
-    byTree.get(tid)!.push(n);
-  }
-  const groups: MasterGroup[] = [];
-  for (const [tid, nodes] of byTree) {
-    const card = halls.value.find((h) => h.tree_id === tid);
-    groups.push({
-      tree_id: tid,
-      surname: card?.surname || (tid.match(/^([a-z]+)_/) || [])[1] || '?',
-      title: card?.title || tid,
-      nodes,
-    });
-  }
-  return groups;
-});
-
-const masterCard = computed<DigitalHallCard | null>(
-  () => halls.value.find((h) => h.isMaster) || null,
-);
-
-function isOpen(treeId: string): boolean {
-  return expanded.value.has(treeId);
+/** 加载家族列表 + 等级徽章（建树后可重建调用） */
+async function loadHalls() {
+  // 用远程数据源（tree-meta），保证拆分/建树/编辑后首页立即同步
+  meta.value = await fetchTreeMetaRemote();
+  halls.value = Object.entries(meta.value.trees).map(([_, entry]) => ({
+    tree_id: entry.tree_id,
+    title: entry.display_title,
+    surname: entry.surname_char,
+    origin: entry.origin,
+    description: entry.description,
+    isMaster: !!entry.is_master,
+    url: buildTreeUrl(entry.tree_id, meta.value!) || `/tree/${entry.tree_id}`,
+  }));
+  loadRanks();
 }
-
-function toggleBranch(treeId: string) {
-  const next = new Set(expanded.value);
-  if (next.has(treeId)) next.delete(treeId);
-  else next.add(treeId);
-  expanded.value = next;
-}
-
-async function loadMasterTree() {
-  if (masterNodes.value.length) return;
-  masterLoading.value = true;
-  masterError.value = '';
-  try {
-    masterNodes.value = await fetchMasterTree();
-  } catch (e: any) {
-    masterError.value = e.message || '加载总谱失败';
-  } finally {
-    masterLoading.value = false;
-  }
-}
-
-function onTabChange(val: string | number) {
-  activeTab.value = String(val);
-  if (activeTab.value === 'master') {
-    loadMasterTree();
-  }
-}
-
-function goToPerson(node: MasterNode) {
-  // 跳转到该人物在总谱中的详情
-  uni.navigateTo({
-    url: `/pages/person/detail?tree_id=zhonghua&handle=${node.handle}`,
-  });
-}
-
-// 管理角色（tree_steward / chief_editor）显示角色管理入口
-const canManage = computed(() => {
-  if (!isAuthenticated()) return false;
-  return authState.role === 'tree_steward' || authState.role === 'chief_editor';
-});
 
 onMounted(async () => {
   try {
-    // 用远程数据源（auth-server → config/tree-meta.json），
-    // 保证拆分/编辑后首页立即同步，不依赖静态副本
-    meta.value = await fetchTreeMetaRemote();
-    halls.value = Object.entries(meta.value.trees).map(([_, entry]) => ({
-      tree_id: entry.tree_id,
-      title: entry.display_title,
-      surname: entry.surname_char,
-      origin: entry.origin,
-      description: entry.description,
-      isMaster: !!entry.is_master,
-      url: buildTreeUrl(entry.tree_id, meta.value!) || `/tree/${entry.tree_id}`,
-    }));
-    // 批量拉取家族等级（世代深度 → 等级徽章）
-    loadRanks();
+    await loadHalls();
   } catch (e) {
     console.error('加载元数据失败:', e);
   }
 });
+
+// ---- 新建家族树（仅总编辑） ----
+const showCreate = ref(false);
+const creating = ref(false);
+const createError = ref('');
+const feeYuan = ref('9.90');
+const balanceYuan = ref('0.00');
+const form = ref({ surname: '', founder_name: '', gender: 'M' as 'M' | 'F' | 'U', display_title: '', origin: '' });
+
+const canCreateTree = computed(() => isAuthenticated() && authState.role === 'chief_editor');
+const canSubmitCreate = computed(
+  () => /^[\u4e00-\u9fa5]$/.test(form.value.surname.trim()) && !!form.value.founder_name.trim(),
+);
+
+async function openCreateTree() {
+  createError.value = '';
+  showCreate.value = true;
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    const w = await fetchWallet(token);
+    feeYuan.value = w.tree_create_fee_yuan;
+    balanceYuan.value = w.user_balance_yuan;
+  } catch {
+    /* 钱包读取失败不阻塞；提交时服务端仍会校验余额 */
+  }
+}
+
+function closeCreate() {
+  showCreate.value = false;
+}
+
+async function doCreateTree() {
+  const token = getAuthToken();
+  if (!token) {
+    createError.value = '登录已过期，请重新登录';
+    return;
+  }
+  creating.value = true;
+  createError.value = '';
+  try {
+    const res = await createTree(
+      {
+        surname_char: form.value.surname.trim(),
+        founder_name: form.value.founder_name.trim(),
+        founder_gender: form.value.gender,
+        display_title: form.value.display_title.trim(),
+        origin: form.value.origin.trim(),
+      },
+      token,
+    );
+    uni.showToast({ title: res.message, icon: 'none' });
+    showCreate.value = false;
+    form.value = { surname: '', founder_name: '', gender: 'M', display_title: '', origin: '' };
+    clearMetaCache();
+    await loadHalls();
+    openTreeHome(res.tree_id);
+  } catch (e: any) {
+    createError.value = e.message || '创建失败';
+  } finally {
+    creating.value = false;
+  }
+}
 
 // ---- 家族等级 ----
 const rankMap = ref<Record<string, TreeRankInfo>>({});
@@ -263,86 +255,78 @@ function rankTheme(treeId: string): string {
 }
 
 function goToHall(card: DigitalHallCard) {
-  uni.navigateTo({ url: `/pages/hall/index?tree_id=${card.tree_id}` });
+  openTreeHome(card.tree_id);
 }
 
 function goToPage(path: string) {
   uni.navigateTo({ url: path });
 }
-
-function goAuth() {
-  uni.navigateTo({ url: '/pages/login/index' });
-}
-
-function goWallet() {
-  uni.navigateTo({ url: '/pages/wallet/index' });
-}
-
-function goAdmin() {
-  uni.navigateTo({ url: '/pages/admin/index' });
-}
 </script>
 
 <style scoped>
-.container { padding: 20px; }
+.container { padding: 20px; padding-bottom: 90px; }
 .header { text-align: center; margin-bottom: 30px; }
-.header-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-.wallet-badge { padding: 6px 14px; background: #E8F5E9; border-radius: 16px; }
-.wallet-text { font-size: 13px; color: #2E7D32; }
-.admin-badge { padding: 6px 14px; background: #FFEBEE; border-radius: 16px; margin-left: 8px; }
-.admin-text { font-size: 13px; color: #C62828; }
-.auth-badge { padding: 6px 14px; background: #FFF3E0; border-radius: 16px; }
-.auth-text { font-size: 13px; color: #8B4513; }
 .title { font-size: 24px; font-weight: bold; display: block; }
 .subtitle { font-size: 14px; color: #666; margin-top: 8px; display: block; }
 .hall-list { display: flex; flex-direction: column; gap: 12px; }
 .hall-list :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .empty { text-align: center; padding: 40px; color: #999; }
-.master-desc { font-size: 12px; color: #8B4513; margin-left: 6px; }
 .rank-tag { margin-left: 6px; }
 .note-line { display: flex; align-items: center; }
 .note-text { flex: 1; }
-.hall-title { font-size: 16px; margin-top: 4px; display: block; }
-.hall-origin { font-size: 13px; color: #888; margin-top: 6px; display: block; }
-.hall-desc { font-size: 14px; color: #555; margin-top: 4px; display: block; }
-.empty { text-align: center; padding: 60px 0; color: #999; }
 .footer { text-align: center; margin-top: 30px; }
 .link { color: #8B4513; font-size: 14px; }
 
-/* 双模式切换 */
-.mode-tabs { margin-bottom: 12px; }
+/* 浮动切换按钮（右侧固定，位于 tabbar 上方） */
+.floating-switch {
+  position: fixed;
+  right: 14px;
+  bottom: 110px;
+  z-index: 950;
+  width: 58px; height: 58px;
+  border-radius: 50%;
+  background: #8B4513;
+  box-shadow: 0 4px 14px rgba(139, 69, 19, 0.4);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+}
+.floating-icon { font-size: 20px; line-height: 1; }
+.floating-text { font-size: 10px; color: #fff; margin-top: 2px; }
 
-/* 总谱目录树 */
-.master-view { background: #fff; border-radius: 12px; padding: 8px 0; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
-.master-root {
-  display: flex; align-items: center; padding: 14px 16px;
-  background: linear-gradient(135deg, #3E2723, #6D4C41);
-  border-radius: 12px; margin: 8px; color: #fff;
+/* 新建家族树入口 + 表单弹层 */
+.create-entry {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 14px; padding: 14px 16px;
+  background: #FBF6EF; border: 1px dashed #C8A88A; border-radius: 12px;
 }
-.root-icon { font-size: 22px; margin-right: 10px; }
-.root-info { flex: 1; }
-.root-title { font-size: 16px; font-weight: bold; display: block; }
-.root-sub { font-size: 11px; color: #D7CCC8; display: block; margin-top: 2px; }
-.root-arrow { font-size: 20px; color: #D7CCC8; }
-.tree-branch { border-bottom: 1px solid #f5f0ea; }
-.tree-branch:last-child { border-bottom: none; }
-.branch-header {
-  display: flex; align-items: center; padding: 12px 16px; cursor: pointer;
+.create-icon { font-size: 18px; color: #8B4513; font-weight: bold; }
+.create-text { flex: 1; font-size: 15px; color: #3E2723; font-weight: bold; }
+.create-hint { font-size: 12px; color: #999; }
+
+.ct-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.55); z-index: 960;
+  display: flex; align-items: center; justify-content: center;
 }
-.branch-arrow {
-  font-size: 12px; color: #8B4513; margin-right: 8px;
-  transition: transform 0.2s; display: inline-block;
+.ct-modal {
+  width: 92%; max-width: 460px; max-height: 86vh;
+  background: #fff; border-radius: 16px;
+  display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.3);
 }
-.branch-arrow.open { transform: rotate(90deg); }
-.branch-name { flex: 1; font-size: 14px; color: #3E2723; font-weight: 500; }
-.branch-count { font-size: 12px; color: #999; }
-.branch-nodes { padding: 0 16px 8px 34px; }
-.branch-node {
-  display: flex; align-items: center; padding: 7px 0;
-  border-bottom: 1px dashed #f0ebe4;
+.ct-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 14px 8px; border-bottom: 1px solid #F0E8DE;
 }
-.branch-node:last-child { border-bottom: none; }
-.node-dot { color: #8B4513; margin-right: 8px; font-size: 12px; }
-.node-name { font-size: 13px; color: #555; }
-.node-id { font-size: 11px; color: #B5A594; margin-left: 8px; }
+.ct-title { font-size: 16px; font-weight: bold; color: #3E2723; }
+.ct-close { width: 30px; height: 30px; line-height: 30px; text-align: center; font-size: 16px; color: #999; }
+.ct-body { padding: 12px 14px 16px; overflow-y: auto; }
+.ct-label { display: block; font-size: 12px; color: #8B4513; margin: 10px 0 4px; }
+.ct-fee {
+  margin: 14px 0 10px; padding: 10px 12px;
+  background: #FBF8F4; border-radius: 10px;
+}
+.ct-fee-text { display: block; font-size: 13px; color: #3E2723; }
+.ct-fee-sub { display: block; font-size: 11px; color: #999; margin-top: 4px; line-height: 1.5; }
+.ct-error { display: block; text-align: center; color: #C62828; font-size: 13px; margin-bottom: 8px; }
 </style>

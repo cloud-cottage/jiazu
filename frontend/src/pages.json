@@ -9,7 +9,7 @@
     {
       "path": "pages/family/index",
       "style": {
-        "navigationBarTitleText": "中华世本"
+        "navigationBarTitleText": "我的家谱"
       }
     },
     {
@@ -69,13 +69,7 @@
     {
       "path": "pages/media/index",
       "style": {
-        "navigationBarTitleText": "文献浏览"
-      }
-    },
-    {
-      "path": "pages/search/index",
-      "style": {
-        "navigationBarTitleText": "搜索"
+        "navigationBarTitleText": "文献地址"
       }
     }
   ],

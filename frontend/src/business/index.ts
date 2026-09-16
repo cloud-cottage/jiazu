@@ -1,7 +1,10 @@
 export { charToPrefix, makeTreeId, parseTreeId, isValidTreeId } from './tree-id';
-export { buildTreeUrl, buildCrossTreePersonUrl, validateExternalRefs } from './cross-tree';
-export { fetchPerson, fetchPersonForEdit, savePerson, API_BASE, fetchPersonList, fetchFamilyList, searchPeople, fetchTreeMeta, fetchTreeMetaRemote, updateTreeMeta, splitTree, fetchWallet, rechargeWallet, transferToTree, fetchTreeBalance, setTreeCreateFee, fetchMasterTree, fetchTreeStats, fetchTreeRank, clearMetaCache, sendSmsCode, registerByPhone, loginByPhone, fetchMe } from './api';
+export { buildTreeUrl, treePathAlias, openTreeHome, buildCrossTreePersonUrl, validateExternalRefs, resolveTreeIdByHost } from './cross-tree';
+export { fetchPerson, fetchPersonForEdit, savePerson, API_BASE, fetchPersonList, fetchFamilyList, searchPeople, fetchTreeMeta, fetchTreeMetaRemote, updateTreeMeta, splitTree, createTree, fetchWallet, rechargeWallet, transferToTree, fetchTreeBalance, setTreeCreateFee, fetchMasterTree, fetchTreeStats, fetchTreeRank, clearMetaCache, sendSmsCode, registerByPhone, loginByPhone, fetchMe, submitJoinRequest, fetchJoinRequests, approveJoinRequest, rejectJoinRequest, fetchMyAnchor, requestLeave, fetchLeaveRequests, approveLeave, removeBranchLink, promoteTree, addParentNode, addChildNode, appendChainNode, addSpouseNode, reparentNode, deleteNode, marriageRequest, fetchMarriageRequests, decideMarriageRequest, marryEnd, founderRequest, fetchFounderRequests, decideFounderRequest, attachFounder, detachFounder, resetFounder, FOUNDER_LOCK_MESSAGE, treeKindLabel, fetchClans, fetchClanInfo, submitClanRequest, fetchClanRequests, decideClanRequest } from './api';
+export type { TreeKind, ClanSummary, ClanInfo, ClanMirrorNode, ClanOwnNode, ClanBranch, ClanRequestItem, FounderAttachment, FounderRequestItem, NodeDeleteMode, NodeDeleteResult } from './api';
 export { isLiving, sanitizePerson } from './privacy';
 export { buildPedigreeForest, flattenForest } from './pedigree';
+export { personIdDisplay, dateDisplay, titleLabel, nameWithTitles, attrMapOf, TITLE_ATTR_KEYS, TITLE_DISPLAY_ORDER } from './format';
+export { ICON, genderIconSrc } from './icons';
 export type { TreePersonNode } from './pedigree';
 export type { TreeMeta, TreeEntry, PersonSummary, PersonDetail, PersonProfile, FamilyRef, EventRef, MediaRef, CitationRef, NoteRef, CustomAttribute, SearchParams, SearchResult, DigitalHallCard } from './types';

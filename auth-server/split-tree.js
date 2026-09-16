@@ -145,12 +145,6 @@ export async function splitTree(opts) {
     masterTreeId,
   } = opts;
 
-  // ---- 0. 扣建树费（从发起人余额） ----
-  if (!initiatorPhone) throw new Error('缺少发起人信息，无法扣除建树费用');
-  const feeYuan = wallet.getTreeCreateFeeYuan();
-  wallet.deductTreeCreateFee(initiatorPhone);
-  console.log(`[split-tree] 已从 ${initiatorPhone} 扣除建树费 ¥${feeYuan}`);
-
   const api = `${grampsBase}/api`;
 
   async function grampsFetch(token, urlPath) {
@@ -193,13 +187,25 @@ export async function splitTree(opts) {
   const surnameRaw =
     personRaw.primary_name?.surname_list?.[0]?.surname || '';
   // 姓氏可能含英文（MyHeritage 导出 "Ji 季"），取第一个汉字
-  const surnameChar = extractHanChar(surnameRaw) || '?';
+  let surnameChar = extractHanChar(surnameRaw) || '';
+  // 姓氏为空时兜底：取始祖名中第一个汉字（如「二婶」→ 二）
+  if (!surnameChar) {
+    const firstName = personRaw.primary_name?.first_name || '';
+    const nameRaw = `${firstName}${surnameRaw}`.trim();
+    surnameChar = extractHanChar(nameRaw) || '季'; // 最后兜底用默认姓
+  }
 
   // 生成新 tree-id
   const meta = readTreeMeta();
   const seq = nextSequence(meta, surnameChar);
   const newTreeId = makeTreeId(surnameChar, seq);
   if (!newTreeId) throw new Error(`无法为姓氏「${surnameChar}」生成 tree-id`);
+
+  // ---- 1.5 前置校验全部通过，此时才扣除建树费（失败不扣款） ----
+  if (!initiatorPhone) throw new Error('缺少发起人信息，无法扣除建树费用');
+  const feeYuan = wallet.getTreeCreateFeeYuan();
+  wallet.deductTreeCreateFee(initiatorPhone);
+  console.log(`[split-tree] 已从 ${initiatorPhone} 扣除建树费 ¥${feeYuan}`);
 
   // ---- 2. admin 创建新 tree ----
   const createRes = await grampsPost(adminToken, '/trees/', { name: newTreeId });
@@ -210,20 +216,44 @@ export async function splitTree(opts) {
   const ownerName = `owner_${newTreeId}`;
   const ownerPassword = cryptoRandom(16);
   try {
-    runGrampsCli([
-      'user',
-      'add',
-      ownerName,
-      ownerPassword,
-      '--fullname',
-      `${surnameChar}氏新支系管理员`,
-      '--email',
-      `${ownerName}@jiazutong.cn`,
-      '--role',
-      '4',
-      '--tree',
-      newTreeUuid,
-    ]);
+    try {
+      runGrampsCli([
+        'user',
+        'add',
+        ownerName,
+        ownerPassword,
+        '--fullname',
+        `${surnameChar}氏新支系管理员`,
+        '--email',
+        `${ownerName}@jiazutong.cn`,
+        '--role',
+        '4',
+        '--tree',
+        newTreeUuid,
+      ]);
+    } catch (e) {
+      // 历史残留用户（同名账号来自已删除的旧树）→ 先删除再重试一次
+      if (/User already exists|UNIQUE constraint/.test(e.message)) {
+        console.warn(`[split-tree] 用户 ${ownerName} 已存在（历史残留），删除后重试`);
+        try { runGrampsCli(['user', 'delete', ownerName]); } catch { /* 不存在也继续 */ }
+        runGrampsCli([
+          'user',
+          'add',
+          ownerName,
+          ownerPassword,
+          '--fullname',
+          `${surnameChar}氏新支系管理员`,
+          '--email',
+          `${ownerName}@jiazutong.cn`,
+          '--role',
+          '4',
+          '--tree',
+          newTreeUuid,
+        ]);
+      } else {
+        throw e;
+      }
+    }
     // 保存新 tree 的管理凭据（data/gramps-owners.json）
     saveOwnerCredential(newTreeId, ownerName, ownerPassword);
   } catch (e) {
@@ -255,9 +285,34 @@ export async function splitTree(opts) {
     const importData = await importRes.json().catch(() => null);
     if (importData?.error) throw new Error(`导入失败: ${importData.error.message}`);
 
-    // ---- 6. 删除原树中该子树 ----
+    // ---- 6. 原树保留分迁占位节点（可循链接跳转新树） ----
+    // 流程：创建占位 person（带 external_tree 链接属性）→ 若始祖有父家族，
+    //       把父家族 child_ref 中始祖替换为占位节点（世系图视觉不断线）→ 再删除子树
     const deletedHandles = collectSubtreeHandles(exportContent);
-    await deleteSubtree(ownerToken, api, deletedHandles);
+    const parentFamilyHandle = (personRaw.parent_family_list || [])[0] || '';
+    const placeholderHandle = await createBranchPlaceholder({
+      ownerToken,
+      api,
+      ancestorHandle,
+      ancestorName,
+      surnameChar,
+      newTreeId,
+      newTreeUuid,
+      post: grampsPost,
+    });
+    if (parentFamilyHandle) {
+      try {
+        await replaceChildInFamily(ownerToken, api, parentFamilyHandle, ancestorHandle, placeholderHandle);
+      } catch (e) {
+        console.warn(`[split-tree] 父家族挂接占位节点失败（占位节点仍存在）: ${e.message}`);
+      }
+    }
+    // 删除子树（父家族保留，已挂占位节点；其于家族全删）
+    const familiesToDelete = deletedHandles.families.filter((h) => h !== parentFamilyHandle);
+    await deleteSubtree(ownerToken, api, {
+      people: deletedHandles.people,
+      families: familiesToDelete,
+    });
 
     // ---- 7. 更新 tree-meta.json ----
     const meta2 = readTreeMeta();
@@ -273,20 +328,10 @@ export async function splitTree(opts) {
     };
     writeTreeMeta(meta2);
 
-    // ---- 7. 总谱联动：在中华世本创建始祖节点（chief_editor 凭据） ----
-    const masterLink = await linkAncestorToMaster({
-      grampsBase,
-      chiefUser,
-      chiefPass,
-      masterTreeId,
-      newTreeId,
-      newTreeUuid,
-      ancestorName,
-      surnameChar,
-    }).catch((e) => {
-      console.warn(`[split-tree] 总谱联动失败（不影响建树）: ${e.message}`);
-      return null;
-    });
+    // ---- 7. 小分支不入中华世本总谱 ----
+    // 规则：zhonghua 仅存「无主先祖 + 各家族树始祖」。普通拆分（分迁）不自动登记，
+    // 如需入谱走【晋宗】操作（节点以上并入 zhonghua + 指定挂接位置）。
+    const masterLink = null;
 
     return {
       ok: true,
@@ -296,9 +341,7 @@ export async function splitTree(opts) {
       movedPeople: deletedHandles.people.length,
       movedFamilies: deletedHandles.families.length,
       masterNode: masterLink,
-      message: `已创建新家族树 ${newTreeId}，原树中移除 ${deletedHandles.people.length} 人${
-        masterLink ? `，已在中华世本登记始祖「${ancestorName}」` : ''
-      }`,
+      message: `已创建新家族树 ${newTreeId}，原树中移除 ${deletedHandles.people.length} 人并保留分迁链接`,
     };
   } catch (e) {
     // 回滚：删除新 tree（数据没导入成功的场景）
@@ -414,6 +457,65 @@ function collectSubtreeHandles(xmlBuf) {
   while ((m = personRe.exec(xml))) people.push(m[1]);
   while ((m = familyRe.exec(xml))) families.push(m[1]);
   return { people, families };
+}
+
+/**
+ * 在原树创建「分迁占位节点」：一条仅带 external_tree 链接属性的 person 记录
+ * 前端通过 external_link_type='branch' 识别为分支占位，点击跳转新家族树
+ */
+async function createBranchPlaceholder({
+  ownerToken,
+  api,
+  ancestorName,
+  surnameChar,
+  newTreeId,
+  newTreeUuid,
+  post,
+}) {
+  const displayName = `${ancestorName || `${surnameChar || '未知'}氏`}（已分迁）`;
+  const body = {
+    primary_name: {
+      first_name: displayName,
+      surname_list: [{ surname: surnameChar || '' }],
+    },
+    attribute_list: [
+      { type: 'external_tree', value: newTreeId },
+      { type: 'external_tree_uuid', value: newTreeUuid },
+      {
+        type: 'external_relation_note',
+        value: `原树分迁占位 — 点击跳转新家族树 ${newTreeId}（始祖：${ancestorName || '未知'}）`,
+      },
+      { type: 'external_link_type', value: 'branch' },
+    ],
+  };
+  const res = await post(ownerToken, '/people/', body);
+  const created = await res.json();
+  const handle = Array.isArray(created) ? created[0]?.handle : created?.handle;
+  if (!handle) throw new Error('创建分迁占位节点失败');
+  console.log(`[split-tree] 原树占位节点已创建: ${displayName} (${handle})`);
+  return handle;
+}
+
+/** 更新父家族：把 child_ref_list 中 oldChild 替换为 newChild（世系图不断线） */
+async function replaceChildInFamily(ownerToken, api, familyHandle, oldChildHandle, newChildHandle) {
+  const getRes = await fetch(`${api}/families/${familyHandle}`, {
+    headers: { Authorization: `Bearer ${ownerToken}` },
+  });
+  if (!getRes.ok) throw new Error(`读取父家族失败: ${getRes.status}`);
+  const fam = await getRes.json();
+  const refs = (fam.child_ref_list || []).map((c) =>
+    c.ref === oldChildHandle ? { ...c, ref: newChildHandle } : c,
+  );
+  if (!refs.some((c) => c.ref === newChildHandle)) refs.push({ ref: newChildHandle });
+  const putRes = await fetch(`${api}/families/${familyHandle}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${ownerToken}`,
+    },
+    body: JSON.stringify({ ...fam, child_ref_list: refs }),
+  });
+  if (!putRes.ok) throw new Error(`更新父家族失败: ${putRes.status} — ${(await putRes.text()).slice(0, 200)}`);
 }
 
 /** 删除子树对象（people + families）— POST /objects/delete-by-handle/ JSON body */
