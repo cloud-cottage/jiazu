@@ -7,13 +7,13 @@
       "tree_id": "gu_39038_01",
       "kind": "family",
       "founder_handle": "103f95b87b5a464242933ee319d5",
-      "founder_gramps_id": "I0070",
+      "founder_gramps_id": "I000143",
       "founder_name": "顾清学",
       "genealogy_name": "",
       "archive_url": "",
       "hall_name": "",
-      "origin": "黑龙江省安达市",
-      "description": "祖辈于民国年间居于黑龙江省绥化地区安达市"
+      "origin": "黑龙江安达",
+      "description": "民国年间始居于黑龙江省绥化地区安达市。"
     },
     "ji_23395_01": {
       "tree_id": "ji_23395_01",
@@ -22,11 +22,11 @@
       "display_title": "季氏费县白露家族",
       "hall_name": "暂无",
       "origin": "山东临沂费县新庄季家白露",
-      "description": "祖籍山东省临沂市费县新庄镇季家白露村，解放后一支迁至黑龙江省鸡西市梨树镇河西村。",
+      "description": "祖籍山东省临沂市费县新庄镇季家白露村。一支于 1960 年代初迁至黑龙江省鸡西市梨树镇河西村。",
       "enable_custom_domain": true,
       "kind": "family",
       "founder_handle": "10400594c54f5203f61bf4fa4b20",
-      "founder_gramps_id": "I0058",
+      "founder_gramps_id": "I000209",
       "founder_name": "季花",
       "genealogy_name": "季氏费县白露家谱",
       "archive_url": ""
@@ -34,7 +34,12 @@
     "liu_21016_01": {
       "display_title": "刘氏家族",
       "tree_id": "liu_21016_01",
-      "kind": "family"
+      "kind": "family",
+      "genealogy_name": "",
+      "archive_url": "",
+      "hall_name": "",
+      "origin": "山东",
+      "description": "上世纪自山东省迁入黑龙江省安达市"
     },
     "qin_31206_01": {
       "display_title": "秦氏鸡西家族",
@@ -44,7 +49,7 @@
       "archive_url": "",
       "hall_name": "",
       "origin": "山东沂水",
-      "description": "于解放前自山东沂水迁入黑龙江鸡西梨树"
+      "description": "解放前自山东省临沂市沂水县迁入黑龙江省鸡西市梨树区"
     },
     "shen_27784_01": {
       "display_title": "沈氏临沂家族",
@@ -54,7 +59,7 @@
       "archive_url": "",
       "hall_name": "",
       "origin": "山东临沂",
-      "description": "祖辈于文革前自山东省临沂市迁入黑龙江省鸡西市梨树区"
+      "description": "解放前后自山东省临沂市迁入黑龙江省鸡西市梨树区。"
     },
     "zhonghua": {
       "tree_id": "zhonghua",
@@ -77,16 +82,18 @@
       "path_alias": "/z/ji_23395",
       "surname": "季",
       "surname_char": "季",
-      "display_title": "季氏宗谱",
-      "genealogy_name": "季氏宗谱",
+      "display_title": "季氏祖谱",
+      "genealogy_name": "季氏祖谱",
       "archive_url": "",
       "hall_name": "季氏宗祠",
-      "origin": "",
-      "description": "新建宗谱，始祖：季行父（中华世本）",
+      "origin": "山东临沂",
+      "description": "始祖季行父。",
       "master_tree_id": "zhonghua",
       "master_handle": "103ff661b13b19b0f44c89cbe2f7",
       "master_name": "季行父",
-      "founder_handle": "",
+      "founder_handle": "3c95530f8bd4f84dc0b87edc",
+      "founder_gramps_id": "I000163",
+      "founder_name": "季花",
       "enable_custom_domain": false,
       "created_at": "2026-09-15T12:34:41.727Z",
       "created_by": "16601061656"
@@ -97,18 +104,40 @@
       "path_alias": "/z/gu_39038",
       "surname": "顾",
       "surname_char": "顾",
-      "display_title": "顾氏宗谱",
-      "genealogy_name": "顾氏宗谱",
+      "display_title": "顾氏祖谱",
+      "genealogy_name": "顾氏祖谱",
       "archive_url": "",
       "hall_name": "顾氏宗祠",
-      "origin": "",
-      "description": "新建宗谱，始祖：姒期视（中华世本）",
+      "origin": "浙江绍兴",
+      "description": "顾氏先秦开基会稽（今浙江绍兴），世称「南顾」。",
       "master_tree_id": "zhonghua",
       "master_handle": "a824b97dab17c3f590b4e3fc",
       "master_name": "姒期视",
-      "founder_handle": "",
+      "founder_handle": "5ae4c6e505c90d290f71f66b",
+      "founder_gramps_id": "I000139",
+      "founder_name": "顾清学",
       "enable_custom_domain": false,
       "created_at": "2026-09-15T13:11:22.930Z",
+      "created_by": "16601061656"
+    },
+    "qin_31206": {
+      "tree_id": "qin_31206",
+      "kind": "clan",
+      "path_alias": "/z/qin_31206",
+      "surname": "秦",
+      "surname_char": "秦",
+      "display_title": "秦氏祖谱",
+      "genealogy_name": "秦氏祖谱",
+      "archive_url": "",
+      "hall_name": "秦氏宗祠",
+      "origin": "山东临沂",
+      "description": "",
+      "master_tree_id": "zhonghua",
+      "master_handle": "3382fa53ef677c058a5ec559",
+      "master_name": "姬搢",
+      "founder_handle": "",
+      "enable_custom_domain": false,
+      "created_at": "2026-09-16T05:56:24.838Z",
       "created_by": "16601061656"
     }
   }
