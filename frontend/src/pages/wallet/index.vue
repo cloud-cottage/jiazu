@@ -5,7 +5,7 @@
       <text class="balance-label">我的余额</text>
       <text class="balance-value">¥{{ wallet?.user_balance_yuan || '0.00' }}</text>
       <text class="balance-hint">余额仅用于购买官方竹简</text>
-      <text class="balance-hint">新建家族树消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽</text>
+      <text class="balance-hint">新建家族树消耗 {{ TREE_CREATE_FEE_SEEDS }}颗石榴籽</text>
     </view>
 
     <view v-if="!isAuthenticated()" class="not-logged">
@@ -76,8 +76,9 @@ import { isAuthenticated, getAuthToken } from '@/business/auth';
 import type { WalletOverview } from '@/business/api';
 
 /**
- * 建树费籽数（颗完整石榴籽）。
- * 规格依据：`docs/economy.spec.md` §9 前端落点表（钱包行）——「建树费文案由人民币金额改为「9 颗完整石榴籽」」；
+ * 建树费籽数（石榴籽）。
+ * 展示口径（用户拍板）：一律写「9颗石榴籽」——不带空格、不带「完整」二字，与 8.4 定稿确认弹窗逐字一致。
+ * 规格依据：`docs/economy.spec.md` §9 前端落点表（钱包行）建树费由人民币金额改为按石榴籽计；
  * 单价真源：`cloudfunctions/compat-api/lib/economy-fee.js` 的 `FEE.tree_create_seeds: 9`
  * （前端无可读接口，故以命名常量承载，勿在模板里散写数字）。
  */

@@ -1046,7 +1046,7 @@ export async function createTree(
   surname_char: string;
   display_title: string;
   message: string;
-  /** 扣费回执（建树 = 9 颗完整石榴籽，docs/economy.spec.md §5-5 / §5-8） */
+  /** 扣费回执（建树 = 9颗石榴籽，docs/economy.spec.md §5-5 / §5-8） */
   fee?: FeeInfo;
 }> {
   // 建树发生在树存在之前，X-Tree-Id 留空（服务端该路由不依赖它）

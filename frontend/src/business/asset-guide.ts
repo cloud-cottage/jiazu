@@ -7,6 +7,8 @@
  *   中文文案只作后端未带 code 时的兜底备份路径）；
  * - 文案直出后端 `error`（不改写、不隐藏），来源清单优先取后端 `how_to_get`；
  * - 引导统一落到「我的资产」页（`pages/assets/index`）。
+ *
+ * 籽域数量口径（用户拍板）：数字与量词连写「9颗石榴籽」（与 8.4 定稿弹窗逐字一致）；竹片域沿用「N 片竹片」。
  */
 import { ApiStatusError } from './api';
 import type { FeeInfo } from './api';
@@ -24,11 +26,17 @@ function unitWords(unit: string | undefined): { name: string; quantifier: string
   return unit === 'seeds' ? { name: '石榴籽', quantifier: '颗' } : { name: '竹片', quantifier: '片' };
 }
 
-/** 扣费回执文案：「本次消耗 N 片竹片，余 M 片」（fee 缺省返回空串，调用方据此决定是否追加） */
+/**
+ * 扣费回执文案（fee 缺省返回空串，调用方据此决定是否追加）：
+ * 籽域「本次消耗 9颗石榴籽，余 0 颗」（数字与量词连写，用户拍板口径，与 8.4 定稿弹窗一致）；
+ * 竹片域「本次消耗 N 片竹片，余 M 片」（保持既有空格写法）。
+ */
 export function feeText(fee?: FeeInfo | null): string {
   if (!fee || !fee.pieces) return '';
   const { name, quantifier } = unitWords(fee.unit);
-  return `本次消耗 ${fee.pieces} ${quantifier}${name}，余 ${fee.balance_after} ${quantifier}`;
+  return fee.unit === 'seeds'
+    ? `本次消耗 ${fee.pieces}${quantifier}${name}，余 ${fee.balance_after} ${quantifier}`
+    : `本次消耗 ${fee.pieces} ${quantifier}${name}，余 ${fee.balance_after} ${quantifier}`;
 }
 
 /**

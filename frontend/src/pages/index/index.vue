@@ -98,7 +98,7 @@
       <view v-if="canCreateTree" class="create-entry" @click="openCreateTree">
         <text class="create-icon">＋</text>
         <text class="create-text">新建家族树</text>
-        <text class="create-hint">消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽</text>
+        <text class="create-hint">消耗 {{ TREE_CREATE_FEE_SEEDS }}颗石榴籽</text>
       </view>
     </view>
 
@@ -158,7 +158,7 @@
             @update:value="(v: any) => (form.origin = v)"
           />
           <view class="ct-fee">
-            <text class="ct-fee-text">建树消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽（可用籽数见「我的资产」）</text>
+            <text class="ct-fee-text">建树消耗 {{ TREE_CREATE_FEE_SEEDS }}颗石榴籽（可用籽数见「我的资产」）</text>
             <text class="ct-fee-sub">tree_id 自动生成（姓氏拼音_码点_序号），创建后可立即新增人物</text>
           </view>
           <text v-if="createError" class="ct-error">{{ createError }}</text>
@@ -198,8 +198,9 @@ const TREE_CREATE_CONFIRM = {
 } as const;
 
 /**
- * 建树费籽数（颗完整石榴籽）。
- * 规格依据：`docs/economy.spec.md` §5-5「建树扣 9 颗石榴籽」+ §9 前端落点表；
+ * 建树费籽数（石榴籽）。
+ * 展示口径（用户拍板）：一律写「9颗石榴籽」——不带空格、不带「完整」二字，与 8.4 定稿确认弹窗逐字一致。
+ * 规格依据：`docs/economy.spec.md` §5-5（建树改扣石榴籽）+ §9 前端落点表；
  * 单价真源：`cloudfunctions/compat-api/lib/economy-fee.js` 的 `FEE.tree_create_seeds: 9`
  * （前端无可读接口，故以命名常量承载，勿在模板里散写数字）。
  * 展示口径：建树费**不再用 ¥ 展示**（人民币余额只用于购买官方竹简）。
@@ -395,7 +396,7 @@ async function doCreateTree() {
       },
       token,
     );
-    // 扣费回执（建树 = 9 颗完整石榴籽）追加在成功提示里；后端未返回 fee 时不追加，避免自造数字
+    // 扣费回执（建树 = 9颗石榴籽）追加在成功提示里；后端未返回 fee 时不追加，避免自造数字
     uni.showToast({
       title: res.fee ? `${res.message}（${feeText(res.fee)}）` : res.message,
       icon: 'none',
