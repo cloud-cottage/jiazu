@@ -13,6 +13,17 @@ export type { MarketListing, MarketListingStatus, MarketOfficial, MarketListings
 export { fetchMessages, postMessagesRead, postAdminAssetsGrant, fetchAdminAssetsLogs, fetchAdminAssetsUser, deleteAccount, jadeListOf, jadeCountOf } from './api';
 export type { MessageItem, MessageType, MessagesResult, MessagesReadResult, OpsLog, OpsLogFilters, GrantPayload, GrantSummary, GrantResult, AdminAssetSnapshot, DeleteAccountResult } from './api';
 export { isLiving, sanitizePerson } from './privacy';
+export {
+  JADE_SYNTH_SEEDS,
+  JADE_PERMANENT_THRESHOLD_DAYS,
+  SEED_VALID_DAYS,
+  SYNTH_CONFIRM_TITLE,
+  SYNTH_CONFIRM_BODY,
+  MOUNT_CONFIRM_TITLE,
+  MOUNT_CONFIRM_BODY,
+  DECOMPOSE_CONFIRM_TITLE,
+  DECOMPOSE_CONFIRM_BODY,
+} from './jade-ops';
 export { buildPedigreeForest, flattenForest } from './pedigree';
 export { personIdDisplay, dateDisplay, titleLabel, nameWithTitles, attrMapOf, TITLE_ATTR_KEYS, TITLE_DISPLAY_ORDER } from './format';
 export { ICON, genderIconSrc } from './icons';

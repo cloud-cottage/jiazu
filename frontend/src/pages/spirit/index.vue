@@ -54,7 +54,8 @@
             <text class="link" @click="goLogin">去登录</text>
           </view>
           <view v-else-if="unmountedJades.length === 0" class="empty">
-            <text>暂无可镶嵌的石榴籽玉（999 颗石榴籽可合成 1 枚）</text>
+            <text v-if="jades.length">您持有的石榴籽玉均已镶嵌，每棵家族树仅可镶嵌 1 枚</text>
+            <text v-else>需先合成石榴籽玉（{{ JADE_SYNTH_SEEDS }} 颗石榴籽可合成 1 枚）</text>
             <text class="link" @click="goMyAssets">去我的资产</text>
           </view>
           <view v-for="j in unmountedJades" :key="j.id" class="row-item">
@@ -128,7 +129,7 @@
       <!-- ④ 玉操作区：合成（8.2 定稿确认）/ 分解（免费 + 二次确认） -->
       <view class="section">
         <text class="section-title">石榴籽玉</text>
-        <text class="section-hint">999 颗石榴籽合成 1 枚玉；分解免费，返还 999 颗石榴籽（统一 365 天有效期）。</text>
+        <text class="section-hint">{{ JADE_SYNTH_SEEDS }} 颗石榴籽合成 1 枚玉；分解免费，返还 {{ JADE_SYNTH_SEEDS }} 颗石榴籽（统一 {{ SEED_VALID_DAYS }} 天有效期）。</text>
 
         <t-button
           theme="primary"
@@ -205,6 +206,16 @@ import {
 } from '@/business/api';
 import type { AssetsSummary, Jade, SpiritInfo, SpiritLogItem, SpiritPlan, SpiritPlanItem } from '@/business/api';
 import { isAssetInsufficientError, showAssetInsufficientGuide } from '@/business/asset-guide';
+import {
+  DECOMPOSE_CONFIRM_BODY,
+  DECOMPOSE_CONFIRM_TITLE,
+  JADE_SYNTH_SEEDS,
+  MOUNT_CONFIRM_BODY,
+  MOUNT_CONFIRM_TITLE,
+  SEED_VALID_DAYS,
+  SYNTH_CONFIRM_BODY,
+  SYNTH_CONFIRM_TITLE,
+} from '@/business/jade-ops';
 import { isAuthenticated } from '@/business/auth';
 
 // ---- 定稿文案（真源 docs/economy-ops.spec.md §6.1；§6.3 运行时填值；逐字引用，不得改写） ----
@@ -220,25 +231,7 @@ function chargeConfirmBody(seeds: number, days: number): string {
   ].join('\n');
 }
 
-/** 8.2 石榴籽玉合成确认：标题行（逐字） */
-const SYNTH_CONFIRM_TITLE = '⚠️ 合成提示';
-/** 8.2 正文（无运行时填值，整段照抄，含 999 / 360 / 365 字面） */
-const SYNTH_CONFIRM_BODY = [
-  '本次将消耗999颗石榴籽。',
-  '若全部999颗石榴籽剩余有效期均≥360天，合成石榴籽玉为永久有效；',
-  '若存在有效期不足360天的石榴籽，石榴籽玉有效期将取本次所用石榴籽中最早到期的剩余时长。',
-  '石榴籽玉可免费分解，分解后返还999颗石榴籽，分解所得石榴籽统一拥有365天有效期。',
-  '请确认是否继续合成？',
-].join('\n');
-
-/** 8.3 石榴籽玉镶嵌不可逆确认：标题行（逐字） */
-const MOUNT_CONFIRM_TITLE = '⚠️ 不可逆操作确认';
-/** 8.3 正文（无运行时填值，整段照抄，含【时流子域】字面） */
-const MOUNT_CONFIRM_BODY = [
-  '您即将把石榴籽玉镶嵌至家族树凹槽。镶嵌后该石榴籽玉将永久销毁，不可取回、不可分解。',
-  '镶嵌成功将解锁本家族树【时流子域】，您可以通过灌注玉露灵泽维持灵气持续生效。',
-  '是否确认镶嵌？',
-].join('\n');
+// 8.2 / 8.3 定稿文案与 999 / 360 / 365 常量统一来自唯一副本 @/business/jade-ops（见文件头 import）。
 
 // ---- 渲染常量 ----
 
@@ -529,8 +522,11 @@ async function doMount(jadeId: string) {
     uni.showToast({ title: '镶嵌成功，时流子域已解锁', icon: 'none' });
     await refreshAll();
   } catch (e: any) {
+    // 失败直出后端原文（400「中华世本无时流子域凹槽」/ 409「该家族树凹槽已镶嵌石榴籽玉」/
+    // 409「该石榴籽玉已镶嵌，不可重复使用」/ 404「未找到该石榴籽玉」），并刷新两侧真源状态
     error.value = e?.message || '镶嵌失败';
     uni.showToast({ title: error.value, icon: 'none' });
+    await refreshAll();
   } finally {
     mountingId.value = '';
   }
@@ -560,9 +556,17 @@ async function doSynthesize() {
   error.value = '';
   try {
     const res = await postSynthesizeJade();
-    const tail = res?.permanent ? '（永久有效）' : '';
-    uni.showToast({ title: `合成成功${tail}`, icon: 'none' });
+    const tail = res?.permanent
+      ? '（永久有效）'
+      : res?.expires_at
+        ? `（有效期至 ${formatDate(res.expires_at)}）`
+        : '';
     await loadAssets();
+    uni.showToast({
+      title: `合成成功${tail}，消耗 ${res?.seeds_deducted || JADE_SYNTH_SEEDS} 颗，余 ${seedsTotal.value} 颗石榴籽`,
+      icon: 'none',
+      duration: 4000,
+    });
   } catch (e: any) {
     if (isSeedsInsufficient(e)) {
       showAssetInsufficientGuide(e);
@@ -579,8 +583,8 @@ function confirmDecompose(jadeId: string) {
   if (!jadeId || decomposingId.value) return;
   // 分解免费：仅需二次确认（不走 8.2 合成文案）
   uni.showModal({
-    title: '分解石榴籽玉',
-    content: '本次分解免费，不收取任何费用。\n分解后将返还 999 颗石榴籽，产出的石榴籽统一为 365 天有效期。\n是否确认分解？',
+    title: DECOMPOSE_CONFIRM_TITLE,
+    content: DECOMPOSE_CONFIRM_BODY,
     confirmText: '确认分解',
     cancelText: '取消',
     success: (res) => {
@@ -594,7 +598,10 @@ async function doDecompose(jadeId: string) {
   error.value = '';
   try {
     const res = await postDecomposeJade(jadeId);
-    uni.showToast({ title: `已分解，返还 ${res?.seeds_returned || 999} 颗石榴籽`, icon: 'none' });
+    uni.showToast({
+      title: `已分解，返还 ${res?.seeds_returned || JADE_SYNTH_SEEDS} 颗石榴籽，余 ${seedsTotal.value} 颗`,
+      icon: 'none',
+    });
     await loadAssets();
   } catch (e: any) {
     error.value = e?.message || '分解失败';
