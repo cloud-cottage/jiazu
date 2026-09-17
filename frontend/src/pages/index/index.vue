@@ -8,13 +8,17 @@
     <!-- 双视图：家族列表 / 中华世本（浮动按钮切换，无 t-tabs） -->
     <!-- 视图1：普通家族树列表（不含 zhonghua） -->
     <view v-if="!showMaster" class="hall-list">
-      <t-cell-group :bordered="false">
+      <!-- 加载态（与卡片同形，避免先闪「暂无」空态、避免布局跳动） -->
+      <view v-if="loading" class="loading">
+        <t-loading theme="spinner" text="加载中…" />
+      </view>
+
+      <t-cell-group v-else-if="normalHalls.length > 0" :bordered="false">
         <t-cell
           v-for="card in normalHalls"
           :key="card.tree_id"
           :title="card.title"
           :description="`发源地：${card.origin || '待完善'}`"
-          :note="card.description"
           :border="true"
           arrow
           @click="goToHall(card)"
@@ -30,7 +34,7 @@
         </t-cell>
       </t-cell-group>
 
-      <view v-if="normalHalls.length === 0" class="empty">
+      <view v-else class="empty">
         <text>暂无已上线的家族数字馆</text>
       </view>
 
@@ -117,14 +121,30 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchTreeMetaRemote, buildTreeUrl, fetchTreeRank, openTreeHome, clearMetaCache, fetchWallet, createTree } from '@/business';
+import { fetchTreeMetaRemote, buildTreeUrl, fetchTreeRank, openTreeHome, clearMetaCache, fetchWallet, createTree, feeText, isAssetInsufficientError, showAssetInsufficientGuide } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
 import type { TreeRankInfo } from '@/business/api';
 import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
 
+/**
+ * 建树确认弹窗文案（docs/economy-ops.spec.md §6.1 第 8.4 条 · 定稿文案，
+ * **逐字使用，不得改写 / 增删标点**；原文 `/` 为换行：首行为弹窗标题，其余为正文）。
+ */
+const TREE_CREATE_CONFIRM = {
+  title: '⚠️ 创建家族树确认',
+  content:
+    '本次操作将消耗9颗石榴籽，创建全新家族谱系大树。\n' +
+    '消耗时将优先扣除您账户内即将最先到期的石榴籽；若后续删除家族树，本次消耗的石榴籽不予退回。\n' +
+    '确认创建家族树？',
+  confirmText: '确认创建',
+  cancelText: '取消',
+} as const;
+
 const halls = ref<DigitalHallCard[]>([]);
 const meta = ref<TreeMeta | null>(null);
+/** 列表加载态（纯视觉：首屏不再先闪「暂无…」空态） */
+const loading = ref(true);
 
 // ---- 双视图切换（浮动按钮） ----
 const showMaster = ref(false);
@@ -138,18 +158,23 @@ function toggleView() {
 
 /** 加载家族列表 + 等级徽章（建树后可重建调用） */
 async function loadHalls() {
-  // 用远程数据源（tree-meta），保证拆分/建树/编辑后首页立即同步
-  meta.value = await fetchTreeMetaRemote();
-  halls.value = Object.entries(meta.value.trees).map(([_, entry]) => ({
-    tree_id: entry.tree_id,
-    title: entry.display_title,
-    surname: entry.surname_char,
-    origin: entry.origin,
-    description: entry.description,
-    isMaster: !!entry.is_master,
-    url: buildTreeUrl(entry.tree_id, meta.value!) || `/tree/${entry.tree_id}`,
-  }));
-  loadRanks();
+  loading.value = true;
+  try {
+    // 用远程数据源（tree-meta），保证拆分/建树/编辑后首页立即同步
+    meta.value = await fetchTreeMetaRemote();
+    halls.value = Object.entries(meta.value.trees).map(([_, entry]) => ({
+      tree_id: entry.tree_id,
+      title: entry.display_title,
+      surname: entry.surname_char,
+      origin: entry.origin,
+      description: entry.description,
+      isMaster: !!entry.is_master,
+      url: buildTreeUrl(entry.tree_id, meta.value!) || `/tree/${entry.tree_id}`,
+    }));
+    loadRanks();
+  } finally {
+    loading.value = false;
+  }
 }
 
 onMounted(async () => {
@@ -197,9 +222,23 @@ async function doCreateTree() {
     createError.value = '登录已过期，请重新登录';
     return;
   }
-  creating.value = true;
+  if (creating.value) return;
+  creating.value = true; // 兼作确认弹窗期间的防重复提交
   createError.value = '';
   try {
+    // 建树确认弹窗（8.4 定稿文案）：取消则不发起请求
+    const confirmed = await new Promise<boolean>((resolve) => {
+      uni.showModal({
+        title: TREE_CREATE_CONFIRM.title,
+        content: TREE_CREATE_CONFIRM.content,
+        confirmText: TREE_CREATE_CONFIRM.confirmText,
+        cancelText: TREE_CREATE_CONFIRM.cancelText,
+        success: (res) => resolve(!!res.confirm),
+        fail: () => resolve(false),
+      });
+    });
+    if (!confirmed) return;
+
     const res = await createTree(
       {
         surname_char: form.value.surname.trim(),
@@ -210,13 +249,23 @@ async function doCreateTree() {
       },
       token,
     );
-    uni.showToast({ title: res.message, icon: 'none' });
+    // 扣费回执（建树 = 9 颗完整石榴籽）追加在成功提示里；后端未返回 fee 时不追加，避免自造数字
+    uni.showToast({
+      title: res.fee ? `${res.message}（${feeText(res.fee)}）` : res.message,
+      icon: 'none',
+    });
     showCreate.value = false;
     form.value = { surname: '', founder_name: '', gender: 'M', display_title: '', origin: '' };
     clearMetaCache();
     await loadHalls();
     openTreeHome(res.tree_id);
   } catch (e: any) {
+    // 石榴籽不足（409 ASSET_INSUFFICIENT）：后端 error 文案不隐藏 + 「如何获得」清单 + 引导「我的资产」
+    if (isAssetInsufficientError(e)) {
+      createError.value = e?.message || '石榴籽不足';
+      showAssetInsufficientGuide(e, { title: '石榴籽不足' });
+      return;
+    }
     createError.value = e.message || '创建失败';
   } finally {
     creating.value = false;
@@ -264,40 +313,141 @@ function goToPage(path: string) {
 </script>
 
 <style scoped>
+/* ---- 页面骨架（暖棕主题：主色 #8B4513 / 深棕字 #3E2723 / 暖米底 #FFFDF8 / 辅助 #A1887F·#795548） ---- */
 .container { padding: 20px; padding-bottom: 90px; }
-.header { text-align: center; margin-bottom: 30px; }
-.title { font-size: 24px; font-weight: bold; display: block; }
-.subtitle { font-size: 14px; color: #666; margin-top: 8px; display: block; }
-.hall-list { display: flex; flex-direction: column; gap: 12px; }
-.hall-list :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
-.empty { text-align: center; padding: 40px; color: #999; }
-.rank-tag { margin-left: 6px; }
-.note-line { display: flex; align-items: center; }
-.note-text { flex: 1; }
-.footer { text-align: center; margin-top: 30px; }
-.link { color: #8B4513; font-size: 14px; }
 
-/* 浮动切换按钮（右侧固定，位于 tabbar 上方） */
+/* 页头：名称（主）22/700 深棕 → 副标题（次）13 辅助棕，拉开字号与字重层级 */
+.header { text-align: center; margin-bottom: 22px; }
+.title {
+  font-size: 22px; font-weight: 700; color: #3E2723;
+  letter-spacing: 1px; line-height: 1.35; display: block;
+}
+.subtitle {
+  font-size: 13px; color: #A1887F;
+  line-height: 1.5; margin-top: 8px; display: block;
+}
+
+/* ---- 家族馆卡片列表 ---- */
+.hall-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* 卡片容器：暖米底 + 暖棕描边 + 14 圆角 + 极轻投影（与「新建家族树」入口同族） */
+.hall-list :deep(.t-cell-group) {
+  background: #FFFDF8;
+  border: 1px solid #E0D5C8;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(62, 39, 35, 0.05);
+}
+
+/* 卡片内节奏：名称 → 发源地 → 简介 纵向堆叠（不再左右分栏与简介抢宽，
+   卡片高度只由内容行数决定，节奏稳定） */
+.hall-list :deep(.t-cell) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  padding: 13px 16px 14px;
+  background: transparent;
+  --td-cell-hover-color: #FBF3E9;
+  --td-cell-border-color: #F0E8DE;
+  --td-cell-border-left-space: 16px;
+  --td-cell-border-right-space: 16px;
+  --td-cell-right-icon-color: #B5A594;
+  --td-cell-right-icon-font-size: 20px;
+}
+/* 末张卡片不再多一条分割线（圆角内不露线） */
+.hall-list :deep(.t-cell:last-child)::after { display: none; }
+
+/* 右侧箭头：改为垂直居中定位于卡片右缘，为标题让出整行宽度 */
+.hall-list :deep(.t-cell__title) { margin-right: 0; padding-right: 24px; }
+.hall-list :deep(.t-cell__right) {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+}
+
+/* 名称（一级信息）：17/700 深棕，单行截断 */
+.hall-list :deep(.t-cell__title-text) {
+  display: block; width: 100%;
+  font-size: 17px; font-weight: 700; color: #3E2723; line-height: 1.35;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+/* 发源地（二/三级信息）：12 辅助棕，单行截断 */
+.hall-list :deep(.t-cell__description) { font-size: 12px; color: #A1887F; line-height: 1.5; }
+.hall-list :deep(.t-cell__description-text) {
+  margin-top: 2px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+/* 简介（正文）：13/1.6 辅助深棕，最多两行截断（长简介不再撑高卡片）；
+   右侧留出 24px 箭头位，等级标签不再与右侧箭头相压 */
+.hall-list :deep(.t-cell__note) {
+  display: block; margin-top: 4px; padding-right: 24px; box-sizing: border-box;
+  font-size: 13px; color: #795548;
+}
+.note-line { display: flex; align-items: flex-start; gap: 8px; }
+.note-text {
+  flex: 1 1 auto; min-width: 0;
+  font-size: 13px; line-height: 1.6; color: #795548;
+  word-break: break-word;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+/* 等级标签：与简介同排、右对齐成列；家乘级等中性等级收敛为暖中性灰（语义色不变） */
+.hall-list :deep(.rank-tag) {
+  --td-tag-default-color: #795548;
+  --td-tag-default-font-color: #795548;
+  --td-tag-default-light-color: #F3EAE0;
+  flex: 0 0 auto; margin-left: 0; margin-top: 1px;
+  padding: 0 6px; height: 18px; line-height: 18px; font-size: 11px;
+}
+
+/* 加载态（与卡片同形同宽，避免首屏空态闪烁与布局跳动） */
+.loading {
+  background: #FFFDF8; border: 1px solid #E0D5C8; border-radius: 14px;
+  padding: 28px 0 30px; text-align: center;
+}
+/* 空态：暖色虚线卡片（与「新建家族树」入口同款） */
+.empty {
+  background: #FFFDF8; border: 1px dashed #C8A88A; border-radius: 14px;
+  padding: 34px 16px; text-align: center;
+  font-size: 13px; color: #A1887F; line-height: 1.6;
+}
+
+.footer { text-align: center; margin-top: 26px; }
+/* 页脚链接：小圆角胶囊，扩大可点区（原为 20px 高的裸文字） */
+.link {
+  display: inline-block; padding: 9px 18px;
+  font-size: 13px; color: #8B4513;
+  background: #FFFDF8; border: 1px solid #E0D5C8; border-radius: 999px;
+}
+
+/* 浮动切换按钮（右侧，固定在 tabbar 上方） */
 .floating-switch {
   position: fixed;
   right: 14px;
-  bottom: 110px;
+  bottom: 108px;
   z-index: 950;
   width: 58px; height: 58px;
   border-radius: 50%;
   background: #8B4513;
-  box-shadow: 0 4px 14px rgba(139, 69, 19, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  box-shadow: 0 6px 16px rgba(62, 39, 35, 0.28), 0 1px 3px rgba(62, 39, 35, 0.18);
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
 }
-.floating-icon { font-size: 20px; line-height: 1; }
-.floating-text { font-size: 10px; color: #fff; margin-top: 2px; }
+/* 按压反馈（视觉，无新增交互逻辑） */
+.floating-switch:active {
+  transform: scale(0.94);
+  box-shadow: 0 3px 9px rgba(62, 39, 35, 0.24);
+}
+.floating-icon { font-size: 21px; line-height: 1; }
+.floating-text {
+  font-size: 10px; color: #fff; margin-top: 3px;
+  line-height: 1.2; letter-spacing: 0.3px; white-space: nowrap;
+}
 
 /* 新建家族树入口 + 表单弹层 */
 .create-entry {
   display: flex; align-items: center; gap: 8px;
   margin-top: 14px; padding: 14px 16px;
-  background: #FBF6EF; border: 1px dashed #C8A88A; border-radius: 12px;
+  background: #FBF6EF; border: 1px dashed #C8A88A; border-radius: 14px;
 }
 .create-icon { font-size: 18px; color: #8B4513; font-weight: bold; }
 .create-text { flex: 1; font-size: 15px; color: #3E2723; font-weight: bold; }

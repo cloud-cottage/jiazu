@@ -12,7 +12,7 @@
       </view>
     </view>
 
-    <!-- 左侧功能按钮（与普通家族树 / 宗谱首页对齐）：血脉图示 / 版式文档（占位）/ 世本消息（管理权限） -->
+    <!-- 左侧功能按钮（与普通家族树 / 祖谱首页对齐）：血脉图示 / 版式文档（占位）/ 世本消息（管理权限） -->
     <view class="view-toggle">
       <view class="view-btn" :class="{ active: view === 'pedigree' }" @click="view = 'pedigree'">
         <text class="view-text">血脉图示</text>
@@ -81,7 +81,7 @@ import FamilyMessages from '@/components/family-messages/family-messages.vue';
 // 视图口径：只保留纵向树图（tree-pedigree，default-layout="vertical"）；
 // 旧「📜 时间轴」模式已下线（叙述型列表与树图信息重复，且无法表达多支并列）。
 
-// ---- 页面功能按钮（与普通家族树 / 宗谱首页对齐） ----
+// ---- 页面功能按钮（与普通家族树 / 祖谱首页对齐） ----
 /** 血脉图示（默认）/ 版式文档（占位）/ 世本消息（管理权限） */
 const view = ref<'pedigree' | 'doc' | 'msg'>('pedigree');
 /** 世本消息入口可见性：chief_editor 全局；tree_steward 仅其锚点树为总谱时可见（口径与家族树首页一致） */
@@ -291,7 +291,7 @@ onMounted(() => {
 .center { text-align: center; padding: 24px 0; color: #A1887F; font-size: 12px; }
 .center.error { color: #C62828; }
 
-/* 左侧功能按钮（与普通家族树 / 宗谱首页同款：固定悬浮正方按钮） */
+/* 左侧功能按钮（与普通家族树 / 祖谱首页同款：固定悬浮正方按钮） */
 .view-toggle {
   position: fixed; left: 10px; top: 50%; transform: translateY(-50%);
   display: flex; flex-direction: column; gap: 10px; z-index: 950;

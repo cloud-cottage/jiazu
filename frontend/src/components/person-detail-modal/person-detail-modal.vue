@@ -39,7 +39,7 @@ import PersonArchive from '@/components/person-archive/person-archive.vue';
 /**
  * 人物档案弹窗宿主（唯一档案弹窗层）
  * - 在图谱/时间轴/搜索结果等浏览场景点击人物时打开，档案内容即完整详情页，可内联编辑（不再叠编辑弹窗）
- * - treeManage=true：档案内启用「谱系管理」操作区（加父/加子/晋宗/拆分），供树图宿主使用
+ * - treeManage=true：档案内启用「谱系管理」操作区（加父/加子/拆分），供树图宿主使用
  * - 同树人物（父母/配偶/子女）→ 弹窗内直接换人；跨树 → 关闭弹窗再跳转
  * - 右上 ✕ / 底部「关闭」均可关闭
  */
@@ -48,7 +48,7 @@ const props = withDefaults(defineProps<{ treeManage?: boolean }>(), {
 });
 
 const emit = defineEmits<{
-  /** 树结构被管理操作修改（加父/加子/晋宗/拆分等），宿主需刷新树图 */
+  /** 树结构被管理操作修改（加父/加子/拆分等），宿主需刷新树图 */
   (e: 'tree-changed'): void;
 }>();
 

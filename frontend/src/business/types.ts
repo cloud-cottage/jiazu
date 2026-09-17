@@ -18,7 +18,7 @@ export interface TreeEntry {
   surname_char: string;
   /** 家族名称（如「季氏费县白露村家族」） */
   display_title: string;
-  /** 谱名：家谱/族谱/宗谱的名称（如「季氏家谱」） */
+  /** 谱名：家谱/族谱/祖谱的名称（如「季氏家谱」） */
   genealogy_name?: string;
   /** 文献地址：线上网盘等史料归档 uri（管理员维护） */
   archive_url?: string;
@@ -30,23 +30,23 @@ export interface TreeEntry {
   /** 是否中华世本总谱 */
   is_master?: boolean;
   /**
-   * 层级（docs/clan-tree.spec.md §2）：master=中华世本 / clan=宗谱 / family=普通家族树；
+   * 层级（docs/clan-tree.spec.md §2）：master=中华世本 / clan=祖谱 / family=普通家族树；
    * 缺省按 family 兼容旧数据
    */
   kind?: 'master' | 'clan' | 'family';
-  /** 宗谱姓氏（单个汉字，如「季」；旧字段 surname_char 亦可用） */
+  /** 祖谱姓氏（单个汉字，如「季」；旧字段 surname_char 亦可用） */
   surname?: string;
-  /** 宗谱：所镜像的世本 tree_id（'zhonghua'） */
+  /** 祖谱：所镜像的世本 tree_id（'zhonghua'） */
   master_tree_id?: string;
-  /** 宗谱：始祖指向的世本节点 handle（link_type='founder' 的镜像） */
+  /** 祖谱：始祖指向的世本节点 handle（link_type='founder' 的镜像） */
   master_handle?: string;
-  /** 宗谱：始祖在世本中的姓名（展示用） */
+  /** 祖谱：始祖在世本中的姓名（展示用） */
   master_name?: string;
-  /** 宗谱自有支系下端点 handle（各普通树认祖的落点） */
+  /** 祖谱自有支系下端点 handle（各普通树认祖的落点） */
   founder_handle?: string;
-  /** 普通家族树：所属宗谱 tree_id */
+  /** 普通家族树：所属祖谱 tree_id */
   clan_tree_id?: string;
-  /** 普通家族树：始祖指向的宗谱节点 handle */
+  /** 普通家族树：始祖指向的祖谱节点 handle */
   clan_handle?: string;
   /** 始祖人物 gramps_id：世系图以始祖为唯一根构建（始祖节点即真实人物，可编辑） */
   founder_gramps_id?: string;
@@ -174,4 +174,60 @@ export interface DigitalHallCard {
   url: string;
   person_count?: number;
   cover_url?: string;
+}
+
+// ---- 立支 / 汇宗（结构操作；docs/branch-clan-ops.spec.md §8 接口契约） ----
+
+/**
+ * 【立支】出参（`POST /admin/establish-branch`，规格 §8-1）。
+ *
+ * `fee` 形状**逐字照 §8-1**：`{ unit: 'seed', amount, balance_after }`
+ * —— 与总册 `FeeInfo`（`{ unit:'bamboos'|'seeds', pieces, balance, balance_after }`）**不同形**，
+ * 该差异已在规格 §13-18 登记。
+ */
+export interface EstablishBranchResult {
+  ok: boolean;
+  /** 原树 tree_id（始祖改为 N，树本身保留） */
+  original_tree_id: string;
+  /** 新建家族树 tree_id（唯一节点 = N 的始祖镜像） */
+  new_tree_id: string;
+  /** 上移链节点数（N 的父 → … → 本树始祖，不含被丢弃的始祖镜像） */
+  moved_ancestors: number;
+  /** 随迁家族数 */
+  moved_families: number;
+  /** **N 的真身**标识（新树侧始祖镜像另铸 handle / gramps_id，不在本字段内） */
+  founder: { handle: string; gramps_id: string; name: string };
+  /** 立支扣费回执（默认 9999 颗石榴籽；从发起人个人资产 FIFO 整单扣） */
+  fee: { unit: 'seed'; amount: number; balance_after: number };
+}
+
+/** 【汇宗】灵气折损明细（`ConvergeClanResult.spirit`，规格 §6-2-7 / §8-2） */
+export interface ConvergeSpiritTransfer {
+  /** 本次生效的折损比例（`jiazu_wallets.config.converge_spirit_ratio`，默认 0.5） */
+  ratio: number;
+  /** 源树灵气剩余天数（无记录 / 已过 → 0） */
+  source_days_left: number;
+  /** 折损后并入目标树的天数（`ceil(source_days_left × ratio)`） */
+  transferred_days: number;
+  /** 并入后目标树灵气到期时刻（未并入时 = 目标树原值 / null） */
+  target_spirit_expires_at: string | null;
+  /** 未并入时的原因（目标树未镶嵌玉 / 源树未镶嵌玉）；非空**不是错误** */
+  skipped_reason?: string;
+}
+
+/**
+ * 【汇宗】出参（`POST /admin/converge-clan`，规格 §8-2）。
+ * 源树基础信息与树数据已被删除（**原树不再存在**）；源树已镶嵌玉随树作废，不返还、不可重镶。
+ */
+export interface ConvergeClanResult {
+  ok: boolean;
+  source_tree_id: string;
+  target_tree_id: string;
+  /** 解析后的目标节点 X 的 handle */
+  target_handle: string;
+  /** 迁移的真实节点数（镜像节点不计入） */
+  moved_people: number;
+  /** 迁移的家族记录数 */
+  moved_families: number;
+  spirit: ConvergeSpiritTransfer;
 }

@@ -2,14 +2,22 @@
  * 展示层格式化工具。
  *
  * 编号前缀约定：Gramps 记录类型前缀 I=Individual（个人）/ F=Family（家庭）。
- * 人(I)与家庭(F)是两套独立编号段，同树内 I500013 与 F500013 可能并存，且多树
- * 之间人编号也可能同号 → 存储/引用层必须保留前缀；仅在 UI 给人看时剥离。
+ * **全站唯一编号**（docs/id-system.spec.md）：新节点人编号 I + 6 位（I000052），
+ * 中华世本保留既有 4 位原号（I0052）；两类都按「剥离 I 前缀」展示（000052 / 0052），
+ * 便于人工引用与跨树定位。存储/引用层必须保留前缀（编号全站唯一靠前缀 + 数字区分人/家族）。
  */
 export function personIdDisplay(id?: string | null): string {
   if (!id) return '';
   // 仅当「I + 纯数字」时剥离首字母；其它形态（异常/无前缀/含字母）原样展示
   return /^I\d+$/.test(id) ? id.slice(1) : id;
 }
+
+/**
+ * 「编号」输入框的统一提示（docs/id-system.spec.md §5）：
+ * 全局编号（如 000052）或 handle —— 全局编号全站唯一定位，**无需再选目标家族树**。
+ */
+export const PERSON_REF_HINT = '全局编号（如 000052）或 handle';
+export const PERSON_REF_PLACEHOLDER = '全局编号（如 000052）或 handle';
 
 /**
  * 生卒日期展示统一格式化（档案/列表共用，避免各处手写转换不一致）。

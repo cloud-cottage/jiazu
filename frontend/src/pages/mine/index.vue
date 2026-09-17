@@ -95,6 +95,30 @@
     <view class="menu-card">
       <t-cell-group :bordered="false">
         <t-cell
+          :title="messagesCellTitle"
+          description="资产到期 / 家族灵气通知"
+          arrow
+          @click="goMessages"
+        />
+        <t-cell
+          title="🧺 我的资产"
+          description="碎片 / 石榴籽 / 竹片 · 每日签到"
+          arrow
+          @click="go('/pages/assets/index')"
+        />
+        <t-cell
+          title="🏪 竹简市集"
+          description="官方发售 · 挂单买卖 · 石榴籽标价"
+          arrow
+          @click="go('/pages/market/index')"
+        />
+        <t-cell
+          title="🕰 时流子域"
+          description="家族专属空间 · 灵气状态 / 蓄能"
+          arrow
+          @click="goSpirit"
+        />
+        <t-cell
           title="💰 我的钱包"
           description="余额 / 充值 / 转账"
           arrow
@@ -116,6 +140,19 @@
       </t-cell-group>
     </view>
 
+    <!-- 账号注销（docs/economy-ops.spec.md §7）：清空四类资产、不可恢复；存在未成交挂单 → 后端 409 拒绝 -->
+    <view v-if="isAuthenticated()" class="menu-card danger-card">
+      <t-cell-group :bordered="false">
+        <t-cell
+          title="🚪 注销账号"
+          description="清空碎片 / 石榴籽 / 竹片 / 玉 · 不可恢复"
+          arrow
+          @click="openDeleteAccount"
+        />
+      </t-cell-group>
+      <view v-if="deleteError" class="danger-error">{{ deleteError }}</view>
+    </view>
+
     <view class="footer">
       <text class="version">家族历史数字馆 v0.3 · 手机号验证码登录</text>
     </view>
@@ -125,7 +162,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { isAuthenticated, authState, clearAuth, getAuthToken } from '@/business/auth';
-import { fetchMyAnchor, requestLeave, fetchTreeMetaRemote } from '@/business';
+import { fetchMyAnchor, requestLeave, fetchTreeMetaRemote, fetchMessages, deleteAccount, ApiStatusError } from '@/business';
 
 const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
 const anchorPersonName = ref('');
@@ -135,6 +172,12 @@ const showLeaveModal = ref(false);
 const leaveReason = ref('');
 const leaveError = ref('');
 const leaving = ref(false);
+
+// 站内信未读角标（GET /messages 的 unread；0 时不显示）
+const unreadCount = ref(0);
+// 账号注销（docs/economy-ops.spec.md §7）
+const deleting = ref(false);
+const deleteError = ref('');
 
 const ROLE_LABELS: Record<string, string> = {
   guest: '游客',
@@ -148,6 +191,11 @@ const canManage = computed(() => {
   if (!isAuthenticated()) return false;
   return authState.role === 'tree_steward' || authState.role === 'chief_editor';
 });
+
+/** 消息中心入口标题：未读为 0 时不显示角标（docs/economy.spec.md 「前端落点与入口」消息行） */
+const messagesCellTitle = computed(() =>
+  unreadCount.value ? `📮 消息中心（${unreadCount.value} 条未读）` : '📮 消息中心',
+);
 
 function roleName(role: string): string {
   return ROLE_LABELS[role] || role;
@@ -242,6 +290,17 @@ function go(path: string) {
   uni.navigateTo({ url: path });
 }
 
+/** 时流子域：按本人锚点树进入本家族子域；无锚点树 → toast 提示并回到数字馆（不报错） */
+function goSpirit() {
+  const treeId = anchor.value?.tree_id;
+  if (!treeId) {
+    uni.showToast({ title: '请先加入家族树', icon: 'none' });
+    goHall();
+    return;
+  }
+  uni.navigateTo({ url: `/pages/spirit/index?tree_id=${treeId}` });
+}
+
 function doLogout() {
   uni.showModal({
     title: '退出登录',
@@ -256,8 +315,74 @@ function doLogout() {
   });
 }
 
+/** 未读角标（GET /messages）：失败不阻塞页面，仅不显示角标 */
+async function loadUnread() {
+  if (!isAuthenticated()) return;
+  try {
+    const res = await fetchMessages();
+    unreadCount.value = res?.unread || 0;
+  } catch {
+    unreadCount.value = 0;
+  }
+}
+
+/** 消息中心（本批消息列表落在资产页「消息提醒」区） */
+function goMessages() {
+  go('/pages/assets/index');
+}
+
+/** 注销入口：先二次确认（明示不可恢复与挂单前置），确认后才调接口 */
+function openDeleteAccount() {
+  if (deleting.value) return;
+  deleteError.value = '';
+  uni.showModal({
+    title: '注销账号',
+    content:
+      '注销后本账号的碎片、石榴籽、竹片、石榴籽玉将全部清空，且不可恢复；历史审计与流水保留。若账号存在未成交的市集挂单，需先自行撤销，否则注销会被拒绝。是否确认注销？',
+    confirmText: '确认注销',
+    cancelText: '取消',
+    success: (res) => {
+      if (res.confirm) confirmDeleteAccount();
+    },
+  });
+}
+
+/** 注销：409（存在未成交挂单）直出后端原文并引导去市集页撤单；成功则登出回首页 */
+async function confirmDeleteAccount() {
+  deleting.value = true;
+  deleteError.value = '';
+  try {
+    await deleteAccount();
+    clearAuth();
+    uni.showToast({ title: '账号已注销', icon: 'success' });
+    setTimeout(() => uni.reLaunch({ url: '/pages/index/index' }), 600);
+  } catch (e: any) {
+    const status = e instanceof ApiStatusError ? e.status : 0;
+    const message = e?.message || '注销失败';
+    deleteError.value = message;
+    if (status === 409) {
+      uni.showModal({
+        title: '暂时无法注销',
+        content: message,
+        confirmText: '去撤单',
+        cancelText: '知道了',
+        success: (res) => {
+          if (res.confirm) uni.navigateTo({ url: '/pages/market/index' });
+        },
+      });
+    } else {
+      uni.showModal({ title: '注销失败', content: message, showCancel: false });
+    }
+  } finally {
+    deleting.value = false;
+  }
+}
+
 onMounted(() => {
-  if (isAuthenticated()) loadAnchor();
+  if (isAuthenticated()) {
+    loadAnchor();
+    loadUnread();
+  }
 });
 </script>
 
@@ -310,6 +435,8 @@ onMounted(() => {
 .modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 
 .menu-card :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
+.danger-card { margin-top: 16px; }
+.danger-error { padding: 10px 16px; font-size: 12px; color: #C62828; line-height: 1.5; }
 .footer { text-align: center; margin-top: 30px; }
 .version { font-size: 12px; color: #B5A594; }
 </style>

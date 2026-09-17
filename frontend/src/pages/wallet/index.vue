@@ -13,6 +13,15 @@
     </view>
 
     <template v-else>
+      <!-- 竹简市集入口（官方竹简 ¥9.90/束 · 每日 21:00 限量） -->
+      <view class="section entry" @click="goMarket">
+        <view class="entry-left">
+          <text class="entry-title">🏪 竹简市集</text>
+          <text class="entry-desc">官方竹简 ¥9.90/束 · 每日 21:00 限量</text>
+        </view>
+        <text class="entry-arrow">›</text>
+      </view>
+
       <!-- 操作区 -->
       <view class="section">
         <text class="section-title">充值</text>
@@ -174,6 +183,11 @@ function formatTime(iso: string): string {
 function goLogin() {
   uni.navigateTo({ url: '/pages/login/index' });
 }
+
+/** 竹简市集（官方竹简购买 / 挂单买卖；pages.json 已注册 pages/market/index） */
+function goMarket() {
+  uni.navigateTo({ url: '/pages/market/index' });
+}
 </script>
 
 <style scoped>
@@ -199,6 +213,11 @@ function goLogin() {
 .row .input { flex: 1; }
 .transfer-form { display: flex; flex-direction: column; gap: 12px; }
 .dev-tip { font-size: 11px; color: #B5A594; margin-top: 8px; display: block; }
+.entry { display: flex; align-items: center; justify-content: space-between; }
+.entry-left { flex: 1; }
+.entry-title { font-size: 15px; font-weight: bold; color: #3E2723; display: block; }
+.entry-desc { font-size: 12px; color: #B5A594; display: block; margin-top: 4px; }
+.entry-arrow { font-size: 20px; color: #B5A594; }
 .transfer-result { margin-top: 10px; color: #2E7D32; font-size: 13px; }
 .empty { text-align: center; color: #999; padding: 20px; font-size: 13px; }
 .tx-item {

@@ -132,7 +132,7 @@ const props = withDefaults(
 // 完整档案弹窗（点节点/支始祖直达；档案内内联编辑 + 谱系管理，唯一弹窗层）
 const archiveModal = ref<InstanceType<typeof PersonDetailModal> | null>(null);
 
-/** 档案内谱系管理操作完成（加父加子/晋宗/拆分）：刷新树图（PersonArchive 已自行刷新档案） */
+/** 档案内谱系管理操作完成（加父加子/拆分）：刷新树图（PersonArchive 已自行刷新档案） */
 function onTreeChanged() {
   loadData();
 }
@@ -178,7 +178,7 @@ function isExternalMarker(n: TreePersonNode): boolean {
 /**
  * 孤立占位：本树内**无任何家族关系**（无父母、无配偶、无子女）且无下代。
  * 仅这类跨树登记节点按「外树登记」隐藏（docs/marriage.spec.md §7-3 / docs/founder-attach.spec.md §6）：
- * 带家族关系的真人或镜像（如宗谱顶端世本镜像段）**不得**整支隐藏。
+ * 带家族关系的真人或镜像（如祖谱顶端世本镜像段）**不得**整支隐藏。
  */
 function isIsolatedPlaceholder(n: TreePersonNode): boolean {
   if (relatedHandles.value.has(n.handle)) return false;

@@ -56,6 +56,15 @@
           class="edit-btn"
           @click="detachFounderHere"
         >⛓ 解除挂载</t-button>
+        <!-- 汇宗（docs/branch-clan-ops.spec.md §6-2 / §9-1）：始祖为宗谱节点镜像时整体并入他树（仅总编） -->
+        <t-button
+          v-if="canConvergeClan"
+          size="small"
+          variant="outline"
+          theme="danger"
+          class="edit-btn"
+          @click="openConvergeClan"
+        >⛩ 汇宗（并入他树）</t-button>
         <!-- 重置始祖：清空本树始祖登记 → 本树回到「无始祖」态（可在任意节点用「⛩ 认祖」重新指定） -->
         <t-button
           v-if="canFounderReset"
@@ -92,7 +101,13 @@
             title="卒"
             :note="deathText"
           />
-          <t-cell title="编号" :note="personIdDisplay(person.gramps_id)" />
+          <!-- 编号（全站唯一，终身不变）：点整行复制，便于人工引用/跨树定位 -->
+          <view @click="copyPersonId">
+            <t-cell
+              title="编号（全站唯一）"
+              :note="`${personIdDisplay(person.gramps_id) || '—'} · 点此复制`"
+            />
+          </view>
           <!-- 称号：封号 → 谥号 → 号（有录入才显示；与姓名顺序一致） -->
           <t-cell v-if="titleMap['封号']" title="封号" :note="titleMap['封号']" />
           <t-cell v-if="titleMap['谥号']" title="谥号" :note="titleMap['谥号']" />
@@ -187,10 +202,10 @@
         </view>
         <text v-if="!attachedTrees.length" class="founder-hint">该节点暂未挂载任何下层树的始祖。</text>
         <text v-if="canAttachFounder" class="founder-hint">
-          普通家族树须先认祖到本姓宗谱（不得直挂世本），因此世本侧可直接挂载的只有宗谱。
+          普通家族树须先认祖到本姓祖谱（不得直挂世本），因此世本侧可直接挂载的只有祖谱。
         </text>
         <view v-if="canAttachFounder" class="marriage-actions">
-          <t-button size="small" variant="outline" theme="primary" @click="openAttachFounder">⛩ 挂载宗谱</t-button>
+          <t-button size="small" variant="outline" theme="primary" @click="openAttachFounder">⛩ 挂载祖谱</t-button>
         </view>
       </view>
 
@@ -249,12 +264,12 @@
           被其它家族树引用的节点一律拒绝删除，请先到对应家族树解除关系。
         </text>
         <text v-if="isClanTree" class="danger-hint clan-danger-hint">
-          ⚠️ 本树为宗谱：删支系节点风险较高——宗谱自有支系常是下级普通家族树的认祖落点，
+          ⚠️ 本树为祖谱：删支系节点风险较高——祖谱自有支系常是下级普通家族树的认祖落点，
           删除后这些树会失去锚点。该操作仅总编（chief_editor）可见/可执行。
         </text>
       </view>
 
-      <!-- 谱系管理操作区（树图/总谱时间轴宿主开启；加父加子/续编/晋宗/拆分内联在档案内） -->
+      <!-- 谱系管理操作区（树图/总谱时间轴宿主开启；加父加子/续编/拆分/立支内联在档案内） -->
       <PersonManagePanel
         v-if="treeManage && person"
         :tree-id="treeId"
@@ -265,6 +280,9 @@
         :person-surname="person.surname"
         :person-gender="person.gender"
         :child-surname-default="childSurnameDefault"
+        :tree-kind="treeKind"
+        :is-founder="isFounderNode"
+        :is-mirror="isExternalMirror || founderMirror"
         @tree-changed="onManageTreeChanged"
       />
     </view>
@@ -315,31 +333,19 @@
           @update:value="(v: any) => editForm.hao = v"
           />
 
-          <!-- 改挂父节点（管理员）：填节点编号或 handle 即可把本节点改到该节点家族下（槽位按新父节点性别） -->
-          <text class="field-label">父节点编号 / handle（改挂上级，选填）</text>
-          <t-input :value="editForm.parent_id" placeholder="节点编号（如 0052）或 handle；留空 = 不改" class="field"
+          <!-- 改挂父节点（管理员）：填全局编号或 handle → 本节点改挂到该节点家族下（槽位按新父节点性别）；
+               编号属于别的家族树时 = 跨树迁移（自动识别所属树，无需再选目标树；编号终身不变） -->
+          <text class="field-label">父节点编号（{{ PERSON_REF_HINT }}，选填）</text>
+          <t-input :value="editForm.parent_id" :placeholder="`${PERSON_REF_PLACEHOLDER}；留空 = 不改`" class="field"
           @update:value="(v: any) => editForm.parent_id = v"
           />
           <text class="field-hint">{{ parentsHint }}</text>
-
-          <!-- 跨家族树迁移：节点编号/handle 属于所选家族树 → 本节点及其全部后代整体迁入该树 -->
-          <text class="field-label">目标家族树（跨树迁移，选填）</text>
-          <view v-if="migrateTrees.length" class="tree-options">
-            <view
-              v-for="t in migrateTrees"
-              :key="t.tree_id"
-              class="tree-opt"
-              :class="{ selected: editForm.target_tree_id === t.tree_id }"
-              @click="selectMigrateTree(t.tree_id)"
-            >
-              <text class="tree-opt-name">{{ t.label }}</text>
-            </view>
-          </view>
-          <text v-else class="field-hint">暂无可迁入的其它家族树</text>
           <text class="field-hint">
-            选填：上面的输入框可填「节点编号（如 0052）或 handle」——若该节点属于所选家族树，
-            则本节点及其全部后代整体迁入该树（编号按目标树重新分配，跨树关联节点将被拒绝）。
-            留空 = 只在本树查找父节点。
+            改父扣费：同树改父消耗 1 片竹片；跨树整体迁移本次迁移共 9 片（与携带后代人数无关）。提交前会再确认一次，确认后才会扣费。
+          </text>
+          <text class="field-hint">
+            选填：填全局编号一键定位（无需选择家族树）——该节点与本树同树则改挂父节点；
+            属于别的家族树则本节点及其全部后代整体迁入该树（**编号终身不变**，跨树关联节点将被拒绝）。
           </text>
 
           <!-- 生卒：出生时间可填年份或完整日期；是否健在选择；已故时可选填离世时间 -->
@@ -492,10 +498,11 @@
           <text class="del-mode-hint">{{ m.hint }}</text>
         </view>
 
-        <!-- dry_run 结果：人数 / 家族数 / 后端文案（范围说明与「不可恢复」均取后端 message，避免前后端各说一套） -->
+        <!-- dry_run 结果：人数 / 家族数 / 后端文案（范围说明与「不可恢复」均取后端 message，避免前后端各说一套）；
+             扣费按 3 片 / 节点明示，预演本身不扣费（docs/economy-fee.spec.md §3-1 #4–#6） -->
         <view v-if="deletePreview" class="del-stat">
-          <text class="del-stat-line">本次将删除 {{ deletePreview.people_count }} 人</text>
-          <text class="del-stat-line">涉及家族记录 {{ deletePreview.families_count }} 个</text>
+          <text class="del-stat-line">本次将删除 {{ deletePreview.people_count }} 人，消耗 {{ deleteFeePieces }} 片竹片</text>
+          <text class="del-stat-line">涉及家族记录 {{ deletePreview.families_count }} 个（以上为预演，本次不扣费）</text>
           <text class="del-stat-line del-stat-msg">{{ deletePreviewText }}</text>
         </view>
 
@@ -512,14 +519,58 @@
       </view>
     </view>
 
-    <!-- 认祖选择器（方式 A）：先选目标上层树（宗谱 / 中华世本），再在该树内搜索真身节点 -->
+    <!-- 汇宗弹窗（docs/branch-clan-ops.spec.md §6-2 / §9-1 / §9-2；仅总编）：
+         输入目标节点全局编号/handle → 现算迁移范围与灵气折损 → 二次强确认（H1）→ 带 confirm_people 提交 -->
+    <view v-if="showConverge" class="modal-mask" @click.self="closeConverge">
+      <view class="modal">
+        <text class="modal-title">⛩ 汇宗（并入他树）</text>
+        <text class="modal-sub">把本家族树整体并入另一棵普通家族树中的普通节点之下：源树的家族树登记与树数据将被删除。</text>
+        <text class="del-warn">注意：此操作不可恢复</text>
+
+        <text class="field-label">目标节点全局编号 / handle</text>
+        <t-input
+          :value="convergeTargetId"
+          placeholder="如 000052 或 handle"
+          class="search-input"
+          @update:value="(v: any) => onConvergeTargetChange(v)"
+        />
+        <text class="field-hint">不做「选目标树」选择器：编号 / handle 由后台解析所属家族树（docs/id-system.spec.md §5）。</text>
+
+        <view v-if="convergeLoading" class="join-tip">读取迁移范围...</view>
+        <!-- 迁移范围：当前已加载的树数据现算（口径随行注明）+ 灵气折损预读 -->
+        <view v-else-if="convergeRangeReady" class="del-stat">
+          <text class="del-stat-line">本次将迁移 {{ convergePeopleCount }} 人、{{ convergeFamiliesCount }} 个家族</text>
+          <text class="del-stat-line">口径：当前已加载 {{ convergeLoadedPeople }} 人 / {{ convergeLoadedFamilies }} 个家族（本次打开弹窗时从本树读取；镜像节点不计入迁移人数）</text>
+          <text class="del-stat-line del-stat-msg">{{ convergeSpiritLine }}</text>
+        </view>
+
+        <!-- 二次强确认：H1 定稿文案（§9-2，逐字；不可逆） -->
+        <view v-if="convergeConfirmReady" class="del-stat">
+          <text v-for="(line, i) in convergeConfirmLines" :key="i" class="del-stat-line">{{ line }}</text>
+        </view>
+
+        <view v-if="convergeError" class="edit-error">{{ convergeError }}</view>
+        <view class="modal-actions">
+          <t-button
+            theme="danger"
+            block
+            :loading="convergeLoading || converging"
+            :disabled="!convergeTargetId.trim()"
+            @click="startConvergeClan"
+          >{{ convergeConfirmReady ? '确认汇宗' : '下一步：查看汇宗范围' }}</t-button>
+          <t-button variant="text" block @click="closeConverge">取消</t-button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 认祖选择器（方式 A）：先选目标上层树（祖谱 / 中华世本），再在该树内搜索真身节点 -->
     <view v-if="showFounderPicker" class="modal-mask" @click.self="showFounderPicker = false">
       <view class="modal">
         <text class="modal-title">⛩ 认祖（挂到{{ founderTargetKindLabel }}）</text>
         <text class="modal-sub">{{ founderPickerHint }}</text>
 
         <text class="field-label">选择认祖目标</text>
-        <view v-if="founderTargetsLoading" class="join-tip">加载可选宗谱...</view>
+        <view v-if="founderTargetsLoading" class="join-tip">加载可选祖谱...</view>
         <view v-else class="tree-options">
           <view
             v-for="t in founderTargets"
@@ -583,18 +634,18 @@
       </view>
     </view>
 
-    <!-- 直接挂载选择器（方式 B，仅总编辑）：在真身节点上从宗谱清单里选择要挂载的下层树 -->
+    <!-- 直接挂载选择器（方式 B，仅总编辑）：在真身节点上从祖谱清单里选择要挂载的下层树 -->
     <view v-if="showAttachPicker" class="modal-mask" @click.self="showAttachPicker = false">
       <view class="modal">
-        <text class="modal-title">⛩ 挂载宗谱</text>
+        <text class="modal-title">⛩ 挂载祖谱</text>
         <text class="modal-sub">
-          在真身节点「{{ person?.name }}」上选择要挂载的宗谱（无需申请，立即生效；该宗谱顶端随即出现世本镜像段）。
+          在真身节点「{{ person?.name }}」上选择要挂载的祖谱（无需申请，立即生效；该祖谱顶端随即出现世本镜像段）。
         </text>
 
-        <text class="field-label">选择要挂载的宗谱</text>
-        <view v-if="attachLoading" class="join-tip">加载宗谱清单...</view>
+        <text class="field-label">选择要挂载的祖谱</text>
+        <view v-if="attachLoading" class="join-tip">加载祖谱清单...</view>
         <view v-else-if="!attachCandidates.length" class="join-tip">
-          暂无宗谱可挂载：请由本姓现有家族树先申请建立宗谱。
+          暂无祖谱可挂载：请由本姓现有家族树先申请建立祖谱。
         </view>
         <view v-else class="tree-options">
           <view
@@ -660,11 +711,19 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel } from '@/business';
+import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { PersonDetail, PersonSummary } from '@/business/types';
-import type { ClanSummary, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
-import { personIdDisplay, dateDisplay, titleLabel, attrMapOf, treeDisplayLabel } from '@/business/format';
+import type { ClanSummary, FeeInfo, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
+import {
+  personIdDisplay,
+  dateDisplay,
+  titleLabel,
+  attrMapOf,
+  treeDisplayLabel,
+  PERSON_REF_HINT,
+  PERSON_REF_PLACEHOLDER,
+} from '@/business/format';
 import { genderIconSrc } from '@/business/icons';
 import PersonManagePanel from '@/components/person-manage-panel/person-manage-panel.vue';
 
@@ -679,7 +738,7 @@ const props = withDefaults(defineProps<{
   treeId: string;
   handle: string;
   mode?: 'page' | 'modal';
-  /** 是否为树图宿主（启用底部「谱系管理」操作区：加父/加子/晋宗/拆分等） */
+  /** 是否为树图宿主（启用底部「谱系管理」操作区：加父/加子/拆分等） */
   treeManage?: boolean;
 }>(), {
   mode: 'page',
@@ -689,7 +748,7 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   (e: 'open-person', payload: { treeId: string; handle: string }): void;
   (e: 'open-tree', payload: string): void;
-  /** 树结构被管理操作修改（加父/加子/晋宗/拆分等），宿主需刷新树图 */
+  /** 树结构被管理操作修改（加父/加子/拆分等），宿主需刷新树图 */
   (e: 'tree-changed'): void;
 }>();
 
@@ -699,6 +758,21 @@ const handle = computed(() => props.handle);
 
 const person = ref<PersonDetail | null>(null);
 const loadError = ref('');
+
+// ---- 扣费闸门文案（docs/economy-fee.spec.md §7 / §8；单价真源在后端 FEE 常量） ----
+
+/** 删除节点单价：3 片 / 节点（subtree = 3 × 人数，promote = 3；docs/economy.spec.md §5-8） */
+const DELETE_FEE_PER_PERSON = 3;
+
+/**
+ * 改父确认文案：同树改父 1 片 / 节点；跨树整体迁移 9 片 / 次（**与携带后代人数无关**）。
+ * 编号已升级为全站唯一（docs/id-system.spec.md §5），前端无法只凭编号判断所属树 →
+ * 两种价目一并明示，实际扣费以后端响应的 `fee` 为准。
+ */
+const REPARENT_FEE_CONFIRM =
+  '同树改挂父节点：消耗 1 片竹片。\n' +
+  '若该编号属于其它家族树：本次为跨树整体迁移，本次迁移共 9 片（与携带后代人数无关），本节点及其全部后代整体迁入该树。\n' +
+  '是否继续？';
 
 const showEdit = ref(false);
 const saving = ref(false);
@@ -746,7 +820,7 @@ const canFounderDetach = computed(() => isFounderNode.value && founderMirror.val
  */
 const canFounderReset = computed(() => isFounderNode.value && !founderMirror.value && canEdit.value);
 
-/** 真身侧：本节点被哪些家族树 / 宗谱认作始祖（读侧推导，无反指针） */
+/** 真身侧：本节点被哪些家族树 / 祖谱认作始祖（读侧推导，无反指针） */
 const attachedTrees = ref<any[]>([]);
 const canAttachFounder = computed(() => isMasterTree.value && authState.role === 'chief_editor');
 function attachedTreeLabel(att: any) { return `${treeKindLabel(att.kind)}「${att.tree_title || att.tree_id}」的始祖节点`; }
@@ -755,7 +829,7 @@ async function loadAttachedTrees() {
   if (!isMasterTree.value || !handle.value) return;
   try {
     const res: any = await fetchFounderRequests(props.treeId, getAuthToken(), handle.value);
-    // 后端字段为 attachments（读侧推导的挂载树清单：宗谱 / 普通家族树）
+    // 后端字段为 attachments（读侧推导的挂载树清单：祖谱 / 普通家族树）
     attachedTrees.value = res.attachments || res.attached_trees || [];
   } catch { attachedTrees.value = []; }
 }
@@ -765,15 +839,15 @@ loadFounderMeta();
 // ---- 认祖目标选择器（docs/founder-attach.spec.md 方式 A / docs/clan-tree.spec.md §5）----
 /**
  * 本树层级（tree-meta.kind；旧数据缺省 family）：
- * - clan（宗谱）→ 认祖目标只能是中华世本
- * - family（普通树）→ 认祖目标只能是宗谱（硬口径 2：不得直挂世本）
+ * - clan（祖谱）→ 认祖目标只能是中华世本
+ * - family（普通树）→ 认祖目标只能是祖谱（硬口径 2：不得直挂世本）
  */
 const treeKind = computed(() => (founderMeta.value?.kind as string) || 'family');
-const founderTargetKindLabel = computed(() => (treeKind.value === 'clan' ? '中华世本' : '宗谱'));
+const founderTargetKindLabel = computed(() => (treeKind.value === 'clan' ? '中华世本' : '祖谱'));
 const founderPickerHint = computed(() =>
   treeKind.value === 'clan'
-    ? '宗谱只能认祖到中华世本（总谱）：先选目标，再在世本中搜索始祖节点，提交后待总编审批。'
-    : '普通家族树须先认祖到本姓宗谱（不得直挂世本）：选择宗谱 → 搜索宗谱中的始祖节点 → 提交，待该宗谱总编审批。',
+    ? '祖谱只能认祖到中华世本（总谱）：先选目标，再在世本中搜索始祖节点，提交后待总编审批。'
+    : '普通家族树须先认祖到本姓祖谱（不得直挂世本）：选择祖谱 → 搜索祖谱中的始祖节点 → 提交，待该祖谱总编审批。',
 );
 
 interface FounderTargetOption { tree_id: string; label: string }
@@ -791,7 +865,7 @@ const selectedFounderTarget = ref<PersonSummary | null>(null);
 const founderSubmitting = ref(false);
 const founderPickerError = ref('');
 
-/** 认祖入口（选择器）：宗谱 → 列中华世本；普通树 → 列可选宗谱（GET /admin/clans） */
+/** 认祖入口（选择器）：祖谱 → 列中华世本；普通树 → 列可选祖谱（GET /admin/clans） */
 async function openFounderAttach() {
   founderPickerError.value = '';
   founderQuery.value = '';
@@ -816,8 +890,8 @@ async function openFounderAttach() {
       }));
       if (!clans.length) {
         founderPickerError.value = surname
-          ? `本姓（${surname}氏）尚无宗谱：请先申请建立宗谱，再将本树始祖认祖到该宗谱。`
-          : '暂无宗谱可认祖：请先申请建立本姓宗谱。';
+          ? `本姓（${surname}氏）尚无祖谱：请先申请建立祖谱，再将本树始祖认祖到该祖谱。`
+          : '暂无祖谱可认祖：请先申请建立本姓祖谱。';
       }
     }
   } catch (e: any) {
@@ -898,7 +972,7 @@ const attachTargetId = ref('');
 const attachSubmitting = ref(false);
 const attachError = ref('');
 
-/** 挂载入口（选择器）：普通树不得直挂世本 → 候选仅为宗谱清单 */
+/** 挂载入口（选择器）：普通树不得直挂世本 → 候选仅为祖谱清单 */
 async function openAttachFounder() {
   attachError.value = '';
   attachTargetId.value = '';
@@ -908,7 +982,7 @@ async function openAttachFounder() {
     attachCandidates.value = (await fetchClans()).filter((c) => c.tree_id !== props.treeId);
   } catch (e: any) {
     attachCandidates.value = [];
-    attachError.value = e?.message || '加载宗谱清单失败';
+    attachError.value = e?.message || '加载祖谱清单失败';
   } finally {
     attachLoading.value = false;
   }
@@ -930,7 +1004,7 @@ async function doAttachFounder() {
       token,
     );
     showAttachPicker.value = false;
-    uni.showToast({ title: '已挂载，该宗谱进入只读镜像', icon: 'success' });
+    uni.showToast({ title: '已挂载，该祖谱进入只读镜像', icon: 'success' });
     await loadAttachedTrees();
     emit('tree-changed');
   } catch (e: any) {
@@ -993,12 +1067,217 @@ function resetFounderHere() {
   });
 }
 
+// ===== 汇宗（本树整体并入他树；docs/branch-clan-ops.spec.md §6-2 / §9-1 / §9-2 / §8-2）=====
+
+/**
+ * 汇宗入口可见性（§9-1 显示条件）：**仅 chief_editor**（与上方「⛩ 认祖 / 挂载祖谱」的
+ * `canAttachFounder` 同一写法：直取 `authState.role`），且本节点为始祖位、其始祖是宗谱节点镜像。
+ * 另按 §6-2-2 校验口径限定**源树为普通家族树**（总谱 / 祖谱一律 400，不显示注定失败的入口）。
+ */
+const canConvergeClan = computed(
+  () =>
+    authState.role === 'chief_editor' &&
+    isFounderNode.value &&
+    founderMirror.value &&
+    treeKind.value === 'family',
+);
+
+/**
+ * 汇宗折损比例（**仅供提交前预估展示**；真源 = 后端 `jiazu_wallets.config.converge_spirit_ratio`，
+ * 默认 0.5 = 50%，§5-4；实际折损天数以响应 `spirit` 为准）。
+ */
+const CONVERGE_SPIRIT_RATIO = 0.5;
+
+/** 源树展示名（§9-2 H1/H2 的「【源树名】」；tree-meta 读取失败时回落 tree_id） */
+const convergeSourceTitle = computed(() => founderMeta.value?.display_title || treeId.value);
+
+const showConverge = ref(false);
+const convergeTargetId = ref('');
+const convergeLoading = ref(false);
+const converging = ref(false);
+const convergeError = ref('');
+/** 迁移范围是否已现算（false = 需先点「下一步：查看汇宗范围」） */
+const convergeRangeReady = ref(false);
+/** 二次强确认（H1）是否已展示 */
+const convergeConfirmReady = ref(false);
+/** 源树当前已加载的节点数 / 家族数（口径：本次读取到的已加载数据，见弹窗内说明） */
+const convergeLoadedPeople = ref(0);
+const convergeLoadedFamilies = ref(0);
+/** 将迁移人数（提交时作为 `confirm_people`；镜像节点不计入，§6-2-5） */
+const convergePeopleCount = ref(0);
+/** 将迁移家族数 */
+const convergeFamiliesCount = ref(0);
+/** 灵气折损预读（GET /spirit?tree_id=<源树>，guest 可读）：days_left × 比例上取整；取不到 → null */
+const convergeSpiritPreview = ref<{ daysLeft: number; ratioPercent: number; transferredDays: number } | null>(null);
+
+/** 折损提示行（取不到灵气状态时退化为「灵气折损按后台比例并入」，不臆造天数） */
+const convergeSpiritLine = computed(() => {
+  const p = convergeSpiritPreview.value;
+  if (!p) return '灵气折损按后台比例并入目标树';
+  return `源树灵气剩余 ${p.daysLeft} 天，按 ${p.ratioPercent}% 折损后为 ${p.transferredDays} 天（并入目标树，实际以响应回执为准）`;
+});
+
+/**
+ * H1 汇宗不可逆确认（§9-2 定稿文案，**逐字使用**；` / ` = 换行）。
+ * 口径：目标节点姓名 / 目标树名在**提交前无法解析**（`target_person_id` 由后端 `resolveNode` 识别所属树）
+ * → 该处填用户输入的编号 / handle；【目标树灵气到期时间】同理未知，按规格原样保留其条件分支说明。
+ */
+const convergeConfirmLines = computed<string[]>(() => {
+  const srcName = convergeSourceTitle.value;
+  const target = convergeTargetId.value.trim() || '（未填）';
+  const p = convergeSpiritPreview.value;
+  const spiritSentence = p
+    ? `源树灵气剩余${p.daysLeft}天，按${p.ratioPercent}%折损后为${p.transferredDays}天，将累加到目标树的灵气到期时间（目标树未镶嵌石榴籽玉时改为：目标树尚未镶嵌石榴籽玉，源树灵气不并入）`
+    : '灵气折损按后台比例并入目标树';
+  return [
+    '⚠️ 不可逆操作确认',
+    `本次【汇宗】将把家族树「${srcName}」整体并入「${target}」之下：源树全部人物与家族迁移到目标节点下（编号不变），源树的家族树登记与树数据将被删除，原树不再存在，且不可恢复。`,
+    `${spiritSentence}；源树已镶嵌的石榴籽玉随树作废，不返还、不可重镶。`,
+    `本次操作不消耗竹片与石榴籽。本次将迁移${convergePeopleCount.value}人、${convergeFamiliesCount.value}个家族。`,
+    '是否确认汇宗？',
+  ];
+});
+
+function openConvergeClan() {
+  showConverge.value = true;
+  convergeTargetId.value = '';
+  convergeError.value = '';
+  convergeRangeReady.value = false;
+  convergeConfirmReady.value = false;
+  convergePeopleCount.value = 0;
+  convergeFamiliesCount.value = 0;
+  convergeLoadedPeople.value = 0;
+  convergeLoadedFamilies.value = 0;
+  convergeSpiritPreview.value = null;
+}
+
+function closeConverge() {
+  showConverge.value = false;
+  convergeConfirmReady.value = false;
+  convergeError.value = '';
+}
+
+/** 目标改变 → 上次的范围与强确认作废（须重新「下一步」），取消不发请求 */
+function onConvergeTargetChange(v: string) {
+  convergeTargetId.value = v;
+  convergeRangeReady.value = false;
+  convergeConfirmReady.value = false;
+  convergeError.value = '';
+}
+
+/**
+ * 现算迁移范围：**只取当前已加载的树数据**（源树 nodes / families 读接口）+ 灵气折损预读。
+ * 口径：人数 = 已加载节点中 `external_mirror !== 'true'` 的真实节点数（镜像节点不随迁，§6-2-5）；
+ * 家族数 = 已加载的家族记录数。若范围与实际不一致，后端 409「范围已变化」→ 重新确认。
+ */
+async function loadConvergeRange() {
+  convergeLoading.value = true;
+  convergeError.value = '';
+  try {
+    const [people, families] = await Promise.all([
+      fetchPersonList(treeId.value, 0, 0),
+      fetchFamilyList(treeId.value),
+    ]);
+    const loaded = people.data || [];
+    const real = loaded.filter((p) => p.external_mirror !== 'true');
+    convergeLoadedPeople.value = loaded.length;
+    convergeLoadedFamilies.value = families.length;
+    convergePeopleCount.value = real.length;
+    convergeFamiliesCount.value = families.length;
+    convergeRangeReady.value = true;
+  } catch (e: any) {
+    convergeRangeReady.value = false;
+    convergeError.value = e?.message || '读取迁移范围失败';
+  } finally {
+    convergeLoading.value = false;
+  }
+  // 灵气折损预读（guest 可读；失败只提示「按后台比例并入」，不臆造天数）
+  try {
+    const spirit = await fetchSpirit(treeId.value);
+    const daysLeft = Math.max(0, Number(spirit.days_left) || 0);
+    convergeSpiritPreview.value = {
+      daysLeft,
+      ratioPercent: Math.round(CONVERGE_SPIRIT_RATIO * 100),
+      transferredDays: Math.ceil(daysLeft * CONVERGE_SPIRIT_RATIO),
+    };
+  } catch {
+    convergeSpiritPreview.value = null;
+  }
+}
+
+/**
+ * 两段式汇宗（与既有删除节点同思路）：
+ * ① 未取范围 → 先现算「将迁移人数 / 家族数 / 折损天数」；
+ * ② 已展示 H1 强确认 → 带 `confirm_people` 提交（范围在两步之间变化 → 后端 409 `DELETE_SCOPE_CHANGED`，
+ *    文案由后端下发（H3 定稿），前端保持在弹窗内并重新拉取范围）；
+ * ③ 成功（200）→ H2 结果 + 新归属（目标树 id + 目标节点 handle）+ 「前往目标家族树」。
+ * 取消一律**不发请求**（§9-1）。
+ */
+async function startConvergeClan() {
+  const target = convergeTargetId.value.trim();
+  if (!target) {
+    convergeError.value = '请输入目标节点的全局编号或 handle';
+    return;
+  }
+  const token = getAuthToken();
+  if (!token) {
+    convergeError.value = '登录已过期，请重新登录';
+    return;
+  }
+  if (!convergeConfirmReady.value) {
+    await loadConvergeRange();
+    if (!convergeRangeReady.value) return;
+    convergeConfirmReady.value = true;
+    return;
+  }
+
+  converging.value = true;
+  convergeError.value = '';
+  try {
+    const res = await postConvergeClan(treeId.value, target, convergePeopleCount.value);
+    showConverge.value = false;
+    // H2 汇宗成功（定稿文案逐字）+ 目标树未镶嵌玉时的 skipped_reason 提示 + 新归属
+    const skipped = res.spirit?.skipped_reason ? `\n${res.spirit.skipped_reason}` : '';
+    const newHome = `新归属：目标家族树「${res.target_tree_id}」· 目标节点 ${res.target_handle}`;
+    const h2 = `汇宗完成：已把「${convergeSourceTitle.value}」并入「${target}」之下，迁移${res.moved_people}人、${res.moved_families}个家族；灵气并入${res.spirit?.transferred_days ?? 0}天`;
+    uni.showToast({ title: `${h2}（${newHome}）`, icon: 'none', duration: 4000 });
+    uni.showModal({
+      title: '汇宗完成',
+      content: `${h2}${skipped}\n${newHome}`,
+      confirmText: '前往目标家族树',
+      cancelText: '留在本页',
+      success: (r: any) => {
+        if (r.confirm) uni.navigateTo({ url: `/pages/hall/index?tree_id=${res.target_tree_id}` });
+      },
+    });
+    // 源树已不存在（§3-9）：档案显示汇宗结果，宿主刷新树图
+    person.value = null;
+    loadError.value = `本家族树已【汇宗】并入目标家族树「${res.target_tree_id}」（原树不再存在）`;
+    emit('tree-changed');
+  } catch (e: any) {
+    // H3 汇宗范围变化（409 DELETE_SCOPE_CHANGED，文案由后端下发）：留在弹窗内重新确认
+    if (e?.code === 'DELETE_SCOPE_CHANGED' || /范围已变化/.test(e?.message || '')) {
+      convergeError.value = e?.message || '汇宗范围已变化，请重新确认';
+      convergeConfirmReady.value = false;
+      await loadConvergeRange();
+      return;
+    }
+    const msg = e?.message || '汇宗失败';
+    convergeError.value = msg;
+    if (/引用|关联|家族树|始祖|镜像|权限/.test(msg)) {
+      uni.showModal({ title: '汇宗被拒绝', content: msg, showCancel: false });
+    }
+  } finally {
+    converging.value = false;
+  }
+}
+
 const isMasterTree = computed(() => props.treeId === 'zhonghua');
 
 // ===== 删除节点（危险区；总谱 / 始祖 / 镜像不可删；跨树引用一律拒绝，不级联改对方树）=====
 /** 外树镜像节点（嫁娶/认祖生成的「对方在本树的代表」）→ 删除须到真身所在树 */
 const isExternalMirror = computed(() => attrMapOf(person.value?.attributes)['external_mirror'] === 'true');
-/** 宗谱（tree-meta.kind='clan'）：自有支系常是多棵普通家族树的认祖落点，删除风险高 */
+/** 祖谱（tree-meta.kind='clan'）：自有支系常是多棵普通家族树的认祖落点，删除风险高 */
 const isClanTree = computed(() => treeKind.value === 'clan');
 const canDeleteNode = computed(
   () =>
@@ -1007,7 +1286,7 @@ const canDeleteNode = computed(
     !isFounderNode.value &&
     !founderMirror.value &&
     !isExternalMirror.value &&
-    // 宗谱：删支系节点风险较高（下级树的认祖落点）→ 仅总编可见；普通家族树维持 canEdit 口径
+    // 祖谱：删支系节点风险较高（下级树的认祖落点）→ 仅总编可见；普通家族树维持 canEdit 口径
     (!isClanTree.value || authState.role === 'chief_editor'),
 );
 
@@ -1041,6 +1320,18 @@ const deleting = ref(false);
  * 前端不再自行拼同义文案（此前两处口径不一致，0 人上提时前端与后端各说一套）。
  */
 const deletePreviewText = computed(() => deletePreview.value?.message || '');
+
+/** 待删人数的扣费片数：后端 dry_run 的 `fee.pieces` 为真源；缺失时按单价自算（3 片 / 节点） */
+const deleteFeePieces = computed(
+  () => deletePreview.value?.fee?.pieces ?? (deletePreview.value?.people_count ?? 0) * DELETE_FEE_PER_PERSON,
+);
+
+/** 正式提交将扣的费（弹窗内明示；dry_run 本身免费）：fee 缺失时不显示余量，避免自造余额 */
+const deleteFeeText = computed(() => {
+  const p = deletePreview.value;
+  if (!p) return '';
+  return p.fee ? feeText(p.fee) : `本次消耗 ${deleteFeePieces.value} 片竹片`;
+});
 
 function openDelete() {
   deleteError.value = '';
@@ -1077,8 +1368,10 @@ async function startDelete() {
       return;
     }
     const preview = deletePreview.value;
-    // 强确认文案直接用后端 dry_run message（同一真源），前端不再拼同义文案
-    const content = preview.message || '将永久删除该节点及其相关记录，不可恢复。';
+    // 强确认文案 = 后端 dry_run message（同一真源）+ 本次扣费行（docs/economy-fee.spec.md §7）
+    const confirmLines = [preview.message || '将永久删除该节点及其相关记录，不可恢复。'];
+    if (deleteFeeText.value) confirmLines.push(deleteFeeText.value);
+    const content = confirmLines.join('\n');
     const confirmed = await new Promise<boolean>((resolve) => {
       uni.showModal({
         title: '⚠️ 删除不可恢复',
@@ -1096,7 +1389,13 @@ async function startDelete() {
     });
     showDelete.value = false;
     // 成功提示直接用后端 message（与 promoteChildrenUp 实际行为一致；前端不再自行拼 0 人上提的文案）
-    uni.showToast({ title: res.message || '已删除', icon: 'none', duration: 3200 });
+    // 扣费回执（3 片 / 节点）追加在提示里；后端未返回 fee 时不追加，避免自造数字
+    const okMsg = res.message || '已删除';
+    uni.showToast({
+      title: res.fee ? `${okMsg}（${feeText(res.fee)}）` : okMsg,
+      icon: 'none',
+      duration: 3200,
+    });
     // 本人已被删除 → 档案显示删除结果（宿主刷新树图）
     person.value = null;
     loadError.value = `节点「${res.person_name}」已删除（共 ${res.people_count} 人）`;
@@ -1104,6 +1403,12 @@ async function startDelete() {
   } catch (e: any) {
     const msg = e?.message || '删除失败';
     deleteError.value = msg;
+    // 竹片不足（409 ASSET_INSUFFICIENT）：文案不隐藏 + 「如何获得竹片」清单 + 引导「我的资产」；
+    // 删除弹窗保持打开（可充值后在弹窗内重试），不静默失败
+    if (isAssetInsufficientError(e)) {
+      showAssetInsufficientGuide(e, { extra: deleteFeeText.value, title: '竹片不足' });
+      return;
+    }
     // 跨树引用 / 结构校验失败等：后端已拒绝（两棵树都不写）→ 弹窗说明，保留在弹窗内可改模式重试
     if (/引用|关联|家族树|始祖|镜像|权限|范围已变化/.test(msg)) {
       uni.showModal({ title: '删除被拒绝', content: msg, showCancel: false });
@@ -1113,33 +1418,19 @@ async function startDelete() {
   }
 }
 
-// ===== 跨家族树迁移（改父的目标树选择器）=====
+// ===== 编号复制（档案页「编号」行）=====
 
-/** 可选目标家族树（非总谱、非本树；含宗谱） */
-const migrateTrees = ref<Array<{ tree_id: string; label: string }>>([]);
-
-async function loadMigrateTrees() {
-  try {
-    const meta = await fetchTreeMetaRemote();
-    migrateTrees.value = Object.values(meta.trees)
-      .filter((t) => !t.is_master && t.tree_id !== treeId.value)
-      .map((t) => ({
-        tree_id: t.tree_id,
-        label: treeDisplayLabel(t.display_title || t.tree_id, t.surname_char || t.surname),
-      }));
-  } catch {
-    migrateTrees.value = [];
+/** 复制本节点全局编号（去掉 I 前缀展示值，粘贴即可用于各「编号」输入框） */
+function copyPersonId() {
+  const text = personIdDisplay(person.value?.gramps_id || '');
+  if (!text) {
+    uni.showToast({ title: '暂无编号', icon: 'none' });
+    return;
   }
-}
-
-/** 点选目标树（再点一次 = 取消选择，回到「仅本树查找」） */
-function selectMigrateTree(tid: string) {
-  editForm.value.target_tree_id = editForm.value.target_tree_id === tid ? '' : tid;
-}
-
-/** 目标树展示名（迁移成功提示用） */
-function migrateTreeLabel(tid: string): string {
-  return migrateTrees.value.find((t) => t.tree_id === tid)?.label || tid;
+  uni.setClipboardData({
+    data: text,
+    success: () => uni.showToast({ title: `已复制编号 ${text}`, icon: 'success' }),
+  });
 }
 
 const editForm = ref({
@@ -1152,10 +1443,9 @@ const editForm = ref({
   hao: '',
   feng: '',
   shi: '',
-  /** 改挂父节点：填编号（I0101 / 0101）；留空 = 不改 */
+  /** 改挂父节点：填全局编号（如 000052）/ handle；留空 = 不改。
+   *  编号属于别的家族树 → 自动跨树迁移（后端按全局编号识别所属树，无需选目标树） */
   parent_id: '',
-  /** 跨家族树迁移目标（选填）：编号属于该树 → 本节点及全部后代整体迁入 */
-  target_tree_id: '',
   events: [] as Array<{ type: string; date: string; place: string }>,
 });
 
@@ -1485,12 +1775,9 @@ async function openEdit() {
       feng: attrByKey['封号'] || '',
       shi: attrByKey['谥号'] || '',
       parent_id: '',
-      target_tree_id: '',
       events,
     };
     showEdit.value = true;
-    // 跨树迁移目标（选填）：列非总谱的其它家族树
-    loadMigrateTrees();
   } catch (e: any) {
     uni.showToast({ title: e.message || '加载编辑数据失败', icon: 'none' });
   }
@@ -1510,17 +1797,17 @@ function cancelEdit() {
   showEdit.value = false;
 }
 
-/** 树管理操作完成（加父/加子/晋宗/拆分）：刷新当前档案 + 上抛宿主刷新树图 */
+/** 树管理操作完成（加父/加子/拆分）：刷新当前档案 + 上抛宿主刷新树图 */
 async function onManageTreeChanged() {
-  // 管理操作可能改变当前人物自身（晋宗/拆分后节点可能移出本树）→ 先刷新档案
+  // 管理操作可能改变当前人物自身（拆分后节点可能移出本树）→ 先刷新档案
   try {
     const fresh = await fetchPerson(treeId.value, handle.value);
     person.value = fresh;
     loadError.value = '';
   } catch (e: any) {
-    // 节点被移出本树（晋宗/拆分成功）→ 档案显示不可见提示
+    // 节点被移出本树（拆分成功）→ 档案显示不可见提示
     const msg = /404/.test(e?.message || '')
-      ? '该节点已移出本家族树（晋宗/拆分完成）'
+      ? '该节点已移出本家族树（拆分完成）'
       : (e?.message || '刷新档案失败');
     person.value = null;
     loadError.value = msg;
@@ -1570,47 +1857,81 @@ async function doSave() {
       if (titleValues[k]) keptAttrs.push({ type: k, value: titleValues[k] });
     }
     raw.attribute_list = keptAttrs;
-    await savePerson(treeId.value, handle.value, raw, token);
+    // 扣费闸门：人物内容修改 1 片 / 节点（docs/economy-fee.spec.md §3-1 #1）→ 响应带 fee
+    const saveRes = await savePerson(treeId.value, handle.value, raw, token);
+    const saveFee: FeeInfo | undefined = saveRes?.fee;
 
     // 改挂父节点（含跨家族树迁移）：填了编号且与当前父母不同 → 调专用接口（留空 = 不改）
     let reparentErr = '';
+    /** 改父失败时的原始错误（用于识别 409 资产不足） */
+    let reparentErrObj: unknown = null;
     let reparentMsg = '';
+    let reparentFee: FeeInfo | undefined;
     /** 跨树迁移成功后的目标树展示名（非空 = 本节点已离本树） */
     let migratedTo = '';
     const newParentId = (editForm.value.parent_id || '').trim();
-    const targetTreeId = (editForm.value.target_tree_id || '').trim();
     if (newParentId) {
       const norm = (v: string) => String(v).toUpperCase().replace(/^I(?=\d)/, '');
       const cur = [parentsFamily.value?.father?.gramps_id, parentsFamily.value?.mother?.gramps_id]
         .filter(Boolean)
         .map((v) => norm(String(v)));
-      // 跨树迁移时编号属于目标家族树 → 不做本树父编号去重判断
-      if (targetTreeId || !cur.includes(norm(newParentId))) {
-        try {
-          const r = await reparentNode(treeId.value, handle.value, newParentId, token, targetTreeId);
-          if (r.cross_tree) {
-            migratedTo = migrateTreeLabel(r.target_tree_id || targetTreeId);
-            reparentMsg = `已迁移到 ${migratedTo}（编号已重新分配，共 ${r.moved_people ?? 0} 人）`;
-          } else {
-            reparentMsg = r.chain_shift
-              ? `已改父 ${r.parent_name}（世数 ${r.chain_shift.delta > 0 ? '+' : ''}${r.chain_shift.delta}，含下代 ${r.chain_shift.affected} 个节点）`
-              : `已改父 ${r.parent_name}`;
+      // 本树父编号去重（跨树编号不可能出现在本树父母里 → 命中即跨树迁移）
+      if (!cur.includes(norm(newParentId))) {
+        // 提交前明示费用（同树 1 片 / 跨树整体迁移 9 片·与后代人数无关）；取消则不发起改父请求
+        const reparentConfirmed = await new Promise<boolean>((resolve) => {
+          uni.showModal({
+            title: '改挂父节点确认',
+            content: REPARENT_FEE_CONFIRM,
+            confirmText: '继续改父',
+            cancelText: '取消改父',
+            success: (res) => resolve(!!res.confirm),
+            fail: () => resolve(false),
+          });
+        });
+        if (reparentConfirmed) {
+          try {
+            // 不再传目标家族树：后端按全局编号自动识别所属树（docs/id-system.spec.md §5）
+            const r = await reparentNode(treeId.value, handle.value, newParentId, token);
+            reparentFee = r.fee;
+            if (r.cross_tree) {
+              migratedTo = r.target_tree_id || '';
+              reparentMsg = `已迁移到 ${migratedTo}（编号终身不变，共 ${r.moved_people ?? 0} 人）`;
+            } else {
+              reparentMsg = r.chain_shift
+                ? `已改父 ${r.parent_name}（世数 ${r.chain_shift.delta > 0 ? '+' : ''}${r.chain_shift.delta}，含下代 ${r.chain_shift.affected} 个节点）`
+                : `已改父 ${r.parent_name}`;
+            }
+          } catch (e: any) {
+            reparentErr = e?.message || '改父失败';
+            reparentErrObj = e;
           }
-        } catch (e: any) {
-          reparentErr = e?.message || '改父失败';
         }
       }
     }
+    // 扣费回执（内容修改 + 改父各一次）拼进成功提示
+    const feeParts = [feeText(saveFee), feeText(reparentFee)].filter(Boolean);
+    const feeSuffix = feeParts.length ? `（${feeParts.join('；')}）` : '';
     if (reparentErr) {
-      uni.showToast({ title: `已保存，但改父失败：${reparentErr}`, icon: 'none', duration: 3200 });
+      // 内容已保存但改父被拒：竹片不足按「不隐藏文案 + 引导资产页」处理，其余原样提示
+      if (isAssetInsufficientError(reparentErrObj)) {
+        if (feeText(saveFee)) {
+          uni.showToast({ title: `已保存（${feeText(saveFee)}），改父未生效`, icon: 'none', duration: 3200 });
+        }
+        showAssetInsufficientGuide(reparentErrObj, {
+          extra: feeText(saveFee),
+          title: '竹片不足（改父未生效）',
+        });
+      } else {
+        uni.showToast({ title: `已保存${feeSuffix}，但改父失败：${reparentErr}`, icon: 'none', duration: 3200 });
+      }
     } else {
-      uni.showToast({ title: reparentMsg || '保存成功', icon: 'success', duration: migratedTo ? 3200 : 2000 });
+      uni.showToast({ title: `${reparentMsg || '已保存'}${feeSuffix}`, icon: 'success', duration: migratedTo ? 3200 : 2000 });
     }
     showEdit.value = false;
     if (migratedTo) {
       // 跨树迁移成功：节点及其全部后代已离开本树 → 档案显示迁移结果，宿主刷新树图
       person.value = null;
-      loadError.value = `该节点已迁移到「${migratedTo}」（编号已重新分配）`;
+      loadError.value = `该节点已迁移到「${migratedTo}」（编号不变）`;
       emit('tree-changed');
       return;
     }
@@ -1618,6 +1939,13 @@ async function doSave() {
     const fresh = await fetchPerson(treeId.value, handle.value);
     person.value = fresh;
   } catch (e: any) {
+    // 竹片不足（409 ASSET_INSUFFICIENT）：后端 error 文案不隐藏 + 「如何获得竹片」清单 + 引导「我的资产」；
+    // 编辑表单保持打开（可充值后重试），不静默失败
+    if (isAssetInsufficientError(e)) {
+      editError.value = e?.message || '资产不足';
+      showAssetInsufficientGuide(e, { title: '竹片不足' });
+      return;
+    }
     editError.value = e.message || '保存失败';
   } finally {
     saving.value = false;
@@ -1775,7 +2103,7 @@ async function doEndMarriage() {
 <style scoped>
 .danger-zone { border-top: 1px dashed #E0C9B0; padding-top: 10px; }
 .danger-hint { font-size: 12px; color: #A1887F; display: block; margin: 8px 2px 0; line-height: 1.5; }
-/* 宗谱删除风险提示（仅总编可见该危险区时同屏显示） */
+/* 祖谱删除风险提示（仅总编可见该危险区时同屏显示） */
 .clan-danger-hint { color: #C62828; }
 .del-mode {
   border: 1px solid #E0D6CC;

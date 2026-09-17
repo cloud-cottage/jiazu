@@ -18,6 +18,8 @@ import type {
   SearchResult,
   TreeMeta,
   FamilyRef,
+  EstablishBranchResult,
+  ConvergeClanResult,
 } from './types';
 
 // API 基础路径
@@ -562,13 +564,15 @@ export async function fetchPersonForEdit(
  * 保存人物（PUT 完整对象，需登录）
  * 注：Gramps-Web 的 ETag 是响应 hash（非对象 hash），If-Match 永远不匹配，
  * 故不使用乐观锁，直接 PUT。
+ * 扣费闸门（docs/economy-fee.spec.md §3-1 #1）：1 片 / 节点 → 响应带 `fee`；
+ * 不足 → 409 `{ code:'ASSET_INSUFFICIENT', need, current, how_to_get }`（抛 ApiStatusError）。
  */
 export async function savePerson(
   treeId: string,
   handle: string,
   person: any,
   token: string,
-): Promise<void> {
+): Promise<{ fee?: FeeInfo }> {
   const res = await fetch(`${API_BASE}/people/${handle}`, {
     method: 'PUT',
     headers: {
@@ -580,8 +584,9 @@ export async function savePerson(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `保存失败 (${res.status})`);
+    throw new ApiStatusError(err?.error?.message || err?.error || `保存失败 (${res.status})`, res.status, err);
   }
+  return res.json().catch(() => ({}));
 }
 
 // ---- 家族树等级 ----
@@ -878,38 +883,6 @@ export async function removeBranchLink(
   return res.json();
 }
 
-/** 晋宗：把节点以上祖先并入中华世本（指定挂接点，仅 chief_editor） */
-export interface PromoteResult {
-  ok: boolean;
-  treeId: string;
-  nodeHandle: string;
-  nodeName: string;
-  movedPeople: number;
-  movedFamilies: number;
-  attach: { handle: string; name: string; gen: number };
-  chainGens: string;
-  masterNode: { handle: string; name: string };
-  message: string;
-}
-export async function promoteTree(
-  token: string,
-  data: { tree_id: string; node_handle: string; attach_handle: string },
-): Promise<PromoteResult> {
-  const res = await fetch(`${API_BASE}/admin/promote`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error || `晋宗失败 (${res.status})`);
-  }
-  return res.json();
-}
-
 // ---- 节点增补（管理员）：添加父节点 / 子节点 ----
 
 /** 带登录态的写请求（X-Tree-Id + Bearer） */
@@ -931,7 +904,8 @@ async function authedFetch(
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error?.message || err?.error || `请求失败 (${res.status})`);
+    // 带状态码 + 扣费码（409 ASSET_INSUFFICIENT / DELETE_SCOPE_CHANGED 等由调用方按码分支）
+    throw new ApiStatusError(err?.error?.message || err?.error || `请求失败 (${res.status})`, res.status, err);
   }
   return res.json();
 }
@@ -1095,6 +1069,8 @@ export async function createTree(
   surname_char: string;
   display_title: string;
   message: string;
+  /** 扣费回执（建树 = 9 颗完整石榴籽，docs/economy.spec.md §5-5 / §5-8） */
+  fee?: FeeInfo;
 }> {
   // 建树发生在树存在之前，X-Tree-Id 留空（服务端该路由不依赖它）
   return authedFetch('', '/admin/create-tree', 'POST', token, input);
@@ -1217,6 +1193,8 @@ export async function reparentNode(
   new_gramps_id?: string;
   meta_stats_refreshed?: boolean;
   message?: string;
+  /** 扣费回执：同树改父 1 片 / 跨树迁移 9 片（与携带后代人数无关，docs/economy.spec.md §5-8） */
+  fee?: FeeInfo;
 }> {
   return authedFetch(treeId, '/admin/reparent', 'POST', token, {
     tree_id: treeId,
@@ -1255,6 +1233,11 @@ export interface NodeDeleteResult {
   deleted_people?: string[];
   removed_families?: string[];
   detail_removed?: number;
+  /**
+   * 扣费回执（dry_run 也返回，供前端拼确认文案）：
+   * `pieces` = 待删人数 × 3（promote = 3）；`dry_run` 本身免费（docs/economy-fee.spec.md §3-1 #4–#6）。
+   */
+  fee?: FeeInfo;
   message: string;
 }
 
@@ -1288,23 +1271,23 @@ export async function deleteNode(
 /** 始祖镜像/占位节点的只读提示（后端 403 同一文案） */
 export const FOUNDER_LOCK_MESSAGE = '始祖节点信息需在中华世本（总谱）中修改';
 
-/** 层级标签（树/宗谱/世本），与后端 founder-attach.js kindLabel 一致 */
+/** 层级标签（树/祖谱/世本），与后端 founder-attach.js kindLabel 一致 */
 export function treeKindLabel(kind: string | undefined): string {
   if (kind === 'master') return '中华世本';
-  if (kind === 'clan') return '宗谱';
+  if (kind === 'clan') return '祖谱';
   return '家族树';
 }
 
-/** 认祖目标（上层树 / 真身节点）选择项：宗谱清单条目（GET /admin/clans） */
+/** 认祖目标（上层树 / 真身节点）选择项：祖谱清单条目（GET /admin/clans） */
 export interface ClanSummary {
   tree_id: string;
   tree_title: string;
-  /** 宗谱姓氏（汉字） */
+  /** 祖谱姓氏（汉字） */
   surname: string;
   master_tree_id: string;
   master_handle: string;
   master_name: string;
-  /** 宗谱自有支系下端点（普通树认祖落点） */
+  /** 祖谱自有支系下端点（普通树认祖落点） */
   founder_handle: string;
   /** 是否已认祖世本（false = 顶端镜像段为空） */
   attached_to_master: boolean;
@@ -1318,7 +1301,7 @@ export interface ClanSummary {
 /** 真身节点上的挂载树条目（读侧推导，读侧无反指针） */
 export interface FounderAttachment {
   tree_id: string;
-  /** 挂载树的层级：clan=宗谱 / family=普通家族树 */
+  /** 挂载树的层级：clan=祖谱 / family=普通家族树 */
   kind?: string;
   tree_title: string;
   surname_char: string;
@@ -1339,7 +1322,7 @@ export interface FounderRequestItem {
   master_tree_id: string;
   master_handle: string;
   master_name: string;
-  /** 目标层级：master=世本 / clan=宗谱 */
+  /** 目标层级：master=世本 / clan=祖谱 */
   target_kind?: string;
   status: 'pending' | 'approved' | 'rejected';
   requested_by: string;
@@ -1351,8 +1334,8 @@ export interface FounderRequestItem {
 }
 
 /** 认祖申请（方式 A）：挂载树始祖 → 选上层树真身节点 → 提交，待上层树总编审批
- *  - 普通家族树：target_tree_id 必须是宗谱（kind='clan'，禁止直挂世本）
- *  - 宗谱：target_tree_id 为中华世本（缺省自动取 zhonghua）
+ *  - 普通家族树：target_tree_id 必须是祖谱（kind='clan'，禁止直挂世本）
+ *  - 祖谱：target_tree_id 为中华世本（缺省自动取 zhonghua）
  */
 export async function founderRequest(
   treeId: string,
@@ -1383,7 +1366,7 @@ export async function fetchFounderRequests(
   can_approve_all: boolean;
   my_tree: string;
   attachments: FounderAttachment[];
-  /** 宗谱清单（仅 chief_editor 有值；认祖目标选择器用） */
+  /** 祖谱清单（仅 chief_editor 有值；认祖目标选择器用） */
   clans: ClanSummary[];
 }> {
   const qs = masterHandle ? `?master_handle=${encodeURIComponent(masterHandle)}` : '';
@@ -1406,7 +1389,7 @@ export async function decideFounderRequest(
 }
 
 /** 直接挂载（方式 B）：上层树总编辑在真身节点上选**下层树**挂载，无需申请
- *  - 普通家族树 → 只能挂到宗谱；宗谱 → 只能挂到中华世本（target_tree_id = 上层树）
+ *  - 普通家族树 → 只能挂到祖谱；祖谱 → 只能挂到中华世本（target_tree_id = 上层树）
  */
 export async function attachFounder(
   treeId: string,
@@ -1464,17 +1447,78 @@ export async function resetFounder(
   return authedFetch(treeId, '/admin/reset-founder', 'POST', token, { tree_id: treeId, ...input });
 }
 
-// ---- 宗谱（Clan Tree，docs/clan-tree.spec.md） ----
+// ---- 立支 / 汇宗（结构操作；docs/branch-clan-ops.spec.md §8 接口契约） ----
+//      两条路由注册在 index.js 树编辑闸门（缺乏 X-Tree-Id）**之前**：树上下文取 body 的 tree_id，
+//      **不依赖** X-Tree-Id（§13-14）→ 本封装不发送该 header。
+
+/**
+ * 结构操作写请求（POST /admin/*，Bearer 必填）。
+ * 错误处理沿用本文件既有写法：非 2xx → 抽后端 `error` 原文抛 `ApiStatusError`
+ * （`ASSET_INSUFFICIENT` 的 need / current / unit / how_to_get 随错误体带到 UI，§7 错误体约束）。
+ */
+async function structurePost<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const token = getAuthToken();
+  if (!token) throw new ApiStatusError('请先登录后再进行编辑操作', 401);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error || `请求失败 (${res.status})`, res.status, err);
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * 【立支】（`POST /admin/establish-branch`，§6-1 / §8-1）：把本树普通节点 N 立为新家族树的始祖。
+ * - 入参：`{ tree_id, person_handle }`（`person_handle` 支持全局编号 / handle，后端 `resolveNode` 解析）
+ * - 出参：`EstablishBranchResult`（含 N 真身 `founder` 与 `fee`：默认 9999 颗石榴籽）
+ * - 失败：401 未登录 / 403 非本树 tree_steward·chief_editor / 400 结构校验与跨树引用体检 /
+ *   404 树或节点不存在 / 409 `ASSET_INSUFFICIENT`（**整单拒绝，绝不部分扣**）
+ */
+export async function postEstablishBranch(
+  treeId: string,
+  personHandle: string,
+): Promise<EstablishBranchResult> {
+  return structurePost<EstablishBranchResult>('/admin/establish-branch', {
+    tree_id: treeId,
+    person_handle: personHandle,
+  });
+}
+
+/**
+ * 【汇宗】（`POST /admin/converge-clan`，§6-2 / §8-2；**仅 chief_editor**）：
+ * 把本树（源树）整体并入目标节点 X 之下，源树条目与树数据删除（原树不再存在）。
+ * - 入参：`{ tree_id, target_person_id, confirm_people }`
+ *   （`target_person_id` = 全局编号 / handle；`confirm_people` = 二次强确认里展示的将迁移人数）
+ * - 出参：`ConvergeClanResult`（含 `spirit` 折损明细；目标树未镶嵌玉 → `skipped_reason`，**不是错误**）
+ * - 失败：403 非总编 / 409 `DELETE_SCOPE_CHANGED`「汇宗范围已变化…请重新确认」（不写不扣）/ 409 跨树引用红线
+ */
+export async function postConvergeClan(
+  treeId: string,
+  targetPersonId: string,
+  confirmPeople: number,
+): Promise<ConvergeClanResult> {
+  return structurePost<ConvergeClanResult>('/admin/converge-clan', {
+    tree_id: treeId,
+    target_person_id: targetPersonId,
+    confirm_people: confirmPeople,
+  });
+}
+
+// ---- 祖谱（Clan Tree，docs/clan-tree.spec.md） ----
 
 export type TreeKind = 'master' | 'clan' | 'family';
 
-/** 宗谱顶端镜像段节点（世本世系链镜像，本层只读） */
+/** 祖谱顶端镜像段节点（世本世系链镜像，本层只读） */
 export interface ClanMirrorNode {
   handle: string;
   gramps_id: string;
   name: string;
   gender: string;
-  /** founder=宗谱始祖 / chain=链路节点 */
+  /** founder=祖谱始祖 / chain=链路节点 */
   link_type: string;
   gen: number | null;
   relation_note: string;
@@ -1483,7 +1527,7 @@ export interface ClanMirrorNode {
   upper_handle: string;
 }
 
-/** 宗谱自有世代节点（真实数据，可编辑/续编） */
+/** 祖谱自有世代节点（真实数据，可编辑/续编） */
 export interface ClanOwnNode {
   handle: string;
   gramps_id: string;
@@ -1493,7 +1537,7 @@ export interface ClanOwnNode {
   death_date: string;
 }
 
-/** 支系入口：认本宗谱为祖的普通家族树 */
+/** 支系入口：认本祖谱为祖的普通家族树 */
 export interface ClanBranch {
   tree_id: string;
   kind: string;
@@ -1507,7 +1551,7 @@ export interface ClanBranch {
   relation_note: string;
 }
 
-/** 宗谱页面数据（三段版式数据源） */
+/** 祖谱页面数据（三段版式数据源） */
 export interface ClanInfo {
   ok: boolean;
   tree_id: string;
@@ -1516,12 +1560,12 @@ export interface ClanInfo {
   title: string;
   genealogy_name: string;
   surname: string;
-  /** 宗谱自有支系下端点 handle */
+  /** 祖谱自有支系下端点 handle */
   founder_handle: string;
   master_tree_id: string;
   master_handle: string;
   master_name: string;
-  /** 是否已认祖世本（false 时 notice = 「该宗谱未认祖世本」） */
+  /** 是否已认祖世本（false 时 notice = 「该祖谱未认祖世本」） */
   attached_to_master: boolean;
   notice: string;
   mirrors: ClanMirrorNode[];
@@ -1550,7 +1594,7 @@ export interface ClanRequestItem {
   created_at: string;
 }
 
-/** 读宗谱接口（无登录态要求）：解析后端 error 文案 */
+/** 读祖谱接口（无登录态要求）：解析后端 error 文案 */
 async function clanGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) {
@@ -1560,14 +1604,14 @@ async function clanGet<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** 宗谱清单（GET /admin/clans；可按姓过滤，认祖目标选择器用） */
+/** 祖谱清单（GET /admin/clans；可按姓过滤，认祖目标选择器用） */
 export async function fetchClans(surname = ''): Promise<ClanSummary[]> {
   const qs = surname ? `?surname=${encodeURIComponent(surname)}` : '';
   const res = await clanGet<{ ok: boolean; list: ClanSummary[] }>(`/admin/clans${qs}`);
   return res.list || [];
 }
 
-/** 宗谱页面数据：顶端镜像链 / 自有世代 / 支系入口列表（GET /admin/clan-info） */
+/** 祖谱页面数据：顶端镜像链 / 自有世代 / 支系入口列表（GET /admin/clan-info） */
 export async function fetchClanInfo(treeId: string): Promise<ClanInfo> {
   return clanGet<ClanInfo>(`/admin/clan-info?tree_id=${encodeURIComponent(treeId)}`);
 }
@@ -1600,7 +1644,7 @@ export async function fetchClanRequests(
   return res.json();
 }
 
-/** 建谱审批（POST /admin/decide-clan，仅 chief_editor）：通过 → 建宗谱树；驳回 → 只写理由 */
+/** 建谱审批（POST /admin/decide-clan，仅 chief_editor）：通过 → 建祖谱树；驳回 → 只写理由 */
 export async function decideClanRequest(
   requestId: string,
   approve: boolean,
@@ -1716,4 +1760,759 @@ export async function fetchTreeStats(treeId: string): Promise<{
   } catch {
     return { person_count: 0, family_count: 0, media_count: 0, event_count: 0 };
   }
+}
+
+// ---- 四级资产：碎片 / 石榴籽 / 竹片 / 石榴籽玉（docs/economy.spec.md §3 / §6-1 / §6-2） ----
+
+/**
+ * 带 HTTP 状态码的接口错误：409「今日已签到」等分支按状态码判定，
+ * 由调用方决定 toast 还是错误提示（不弹系统错误框）。
+ * `code` / `need` / `current` / `howToGet` 为扣费闸门附加字段（docs/economy-fee.spec.md §6）：
+ * 资产不足一律按 `err.code === 'ASSET_INSUFFICIENT'` 判定，中文文案只作兜底备份路径。
+ */
+export class ApiStatusError extends Error {
+  readonly status: number;
+  /** 业务错误码（如 ASSET_INSUFFICIENT / DELETE_SCOPE_CHANGED）；后端未带时为空串 */
+  readonly code: string;
+  /** 资产不足时的需求量（竹片论片 / 石榴籽论颗） */
+  readonly need?: number;
+  /** 资产不足时的当前可用量 */
+  readonly current?: number;
+  /** 计价单位（后端 `unit`：'seeds' / 'bamboos' / 立支的 'seed'）；后端未带时 undefined */
+  readonly unit?: string;
+  /** 「如何获得」四条清单（后端 how_to_get；缺失时调用方退回 asset-guide 的本地常量） */
+  readonly howToGet?: string[];
+
+  constructor(
+    message: string,
+    status: number,
+    body?: { code?: string; need?: number; current?: number; unit?: string; how_to_get?: string[] },
+  ) {
+    super(message);
+    this.name = 'ApiStatusError';
+    this.status = status;
+    this.code = body?.code || '';
+    this.need = body?.need;
+    this.current = body?.current;
+    this.unit = body?.unit;
+    this.howToGet = body?.how_to_get;
+  }
+}
+
+/** 写路由扣费回执（响应新增字段 `fee`；docs/economy.spec.md §5-8 / §6-2） */
+export interface FeeInfo {
+  /** 计价单位：竹片（片）/ 石榴籽（颗） */
+  unit: 'bamboos' | 'seeds';
+  /** 本次消耗量 */
+  pieces: number;
+  /** 扣费前可用量 */
+  balance: number;
+  /** 扣费后可用量 */
+  balance_after: number;
+}
+
+/** 资产接口请求（Bearer 必填；错误体 { error } 文案原样上抛） */
+async function assetRequest<T>(path: string, method: 'GET' | 'POST' = 'GET'): Promise<T> {
+  const token = getAuthToken();
+  if (!token) throw new ApiStatusError('未登录或登录已过期', 401);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error || `请求失败 (${res.status})`, res.status, err);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** 石榴籽批次（有效期 365 天；qty 以颗计） */
+export interface SeedLot {
+  id: string;
+  qty: number;
+  expires_at: string;
+  source: string;
+  created_at: string;
+}
+
+/** 竹片批次（有效期 365 天；qty 以片计，1 束 = 100 片） */
+export interface BambooLot {
+  id: string;
+  qty: number;
+  expires_at: string;
+  source: string;
+  created_at: string;
+}
+
+/** 石榴籽玉（expires_at = null 即永久；mounted_tree_id 存在即已镶嵌，镶嵌不可逆） */
+export interface Jade {
+  id: string;
+  expires_at: string | null;
+  created_at: string;
+  source: string;
+  mounted_tree_id?: string;
+  /** 服务端 summarize 派生字段：expires_at === null（永久玉） */
+  permanent?: boolean;
+}
+
+/** 流水资产变动量（正 = 入账，负 = 出账） */
+export interface AssetDelta {
+  fragments?: number;
+  seeds?: number;
+  bamboos?: number;
+  jades?: number;
+}
+
+/** 资产流水（type 取值见 docs/economy.spec.md §4-6） */
+export interface AssetTx {
+  id: string;
+  ts: string;
+  type: string;
+  delta: AssetDelta;
+  fee_seeds?: number;
+  ref?: { tree_id?: string; listing_id?: string; trade_id?: string; person_handle?: string };
+  desc: string;
+  operator?: string;
+}
+
+/** 即将过期批次项 */
+export interface ExpiringAsset {
+  asset: 'seed' | 'bamboo';
+  lot_id: string;
+  qty: number;
+  expires_at: string;
+  days_left: number;
+}
+
+/** 资产总览（GET /assets/summary） */
+export interface AssetsSummary {
+  /** 碎片：0-9，满 10 自动合成 1 颗石榴籽 */
+  fragments: number;
+  /** 碎片上限（服务端常量 FRAGMENT_CAP，当前为 9） */
+  fragment_cap: number;
+  /** 完整石榴籽总颗数 */
+  seeds_total: number;
+  /** 石榴籽批次数（seed_lots 的条数） */
+  seed_lot_count: number;
+  /** 竹片总片数 */
+  bamboos_total_pieces: number;
+  /** 竹片总片数折算的束数（1 束 = 100 片，向下取整） */
+  bamboo_bundles: number;
+  /** 竹片批次数（bamboo_lots 的条数） */
+  bamboo_lot_count: number;
+  /** 石榴籽玉总枚数（jades 的条数） */
+  jades_total: number;
+  jades: Jade[];
+  seed_lots: SeedLot[];
+  bamboo_lots: BambooLot[];
+  expiring: ExpiringAsset[];
+  /** 最近流水（服务端截断为最近 N 条，故不可用于推导签到日） */
+  txs: AssetTx[];
+  /** 最近一次签到的北京时间自然日 YYYY-MM-DD；从未签到为空串 */
+  signin_date: string;
+}
+
+/** 签到结果（POST /assets/signin） */
+export interface SigninResult {
+  ok: boolean;
+  fragments: number;
+  /** 本次签到触发的自动合成颗数（0 = 未合成） */
+  synthesized: number;
+  seed_lot?: SeedLot | null;
+  signin_date: string;
+}
+
+/** 资产总览（本人四类资产 + 最近流水；服务端先 sweep 惰性结算过期批次） */
+export async function fetchAssetsSummary(): Promise<AssetsSummary> {
+  return assetRequest<AssetsSummary>('/assets/summary');
+}
+
+/** 即将过期批次（days 默认 30 天；服务端同样先 sweep） */
+export async function fetchAssetsExpiring(days = 30): Promise<ExpiringAsset[]> {
+  const res = await assetRequest<{ items?: ExpiringAsset[] }>(`/assets/expiring?days=${days}`);
+  return res.items || [];
+}
+
+/** 每日签到（每自然日 1 碎片；同自然日重复 → 409「今日已签到」） */
+export async function postSignin(): Promise<SigninResult> {
+  return assetRequest<SigninResult>('/assets/signin', 'POST');
+}
+
+// ---- 时流子域（家族专属空间：玉的合成 / 分解 / 镶嵌 + 玉露灵泽蓄能）
+//      docs/spirit-domain.spec.md §5 / §6 / §7；路由清单见 docs/economy.spec.md（写接口清单）
+
+/** 灵气四态（docs/spirit-domain.spec.md §4-1；无记录 = 未镶嵌，不在四态内 → 'none'） */
+export type SpiritStatus = 'none' | 'inactive' | 'active' | 'buffer' | 'expired';
+
+/** 蓄能五档位枚举（docs/spirit-domain.spec.md §6-2） */
+export type SpiritPlan = 'daily' | 'monthly' | 'quarterly' | 'half_year' | 'yearly';
+
+/**
+ * 蓄能档位条目（GET /spirit 出参 `plans`，**数值单一真源**，前端不得硬编码）。
+ * 字段兼容后端两种赠送写法：`gift_bundles`（束）或 `gift_bamboos`（片，1 束 = 100 片）。
+ */
+export interface SpiritPlanItem {
+  plan: SpiritPlan;
+  /** 档位中文名（后端下发；缺失时前端按 plan 兜底显示） */
+  label?: string;
+  /** 单次扣费籽数（= 档位实价，最终扣费标准） */
+  seeds: number;
+  /** 本次延长天数 */
+  days: number;
+  /** 常态赠送束数 */
+  gift_bundles?: number;
+  /** 赠送竹片数（片） */
+  gift_bamboos?: number;
+  /** 营销展示折扣口径（不参与计算） */
+  discount?: number;
+}
+
+/** 灌注流水条目（jiazu_spirit.trees[tree_id].logs[] = SpiritLog；追加写、不可改） */
+export interface SpiritLogItem {
+  id: string;
+  ts: string;
+  /** 灌注者手机号 */
+  phone: string;
+  plan: SpiritPlan;
+  seeds: number;
+  days: number;
+  /** 本次赠送竹片数（片；0 = 无赠送） */
+  gift_bamboos: number;
+  spirit_expires_at_after: string;
+}
+
+/** 已镶玉（凹槽占用真源；expires_at = null 表示永久玉） */
+export interface SpiritJade {
+  jade_id: string;
+  mounted_at: string;
+  expires_at: string | null;
+}
+
+/** 时流子域状态（GET /spirit?tree_id=<tree_id>） */
+export interface SpiritInfo {
+  tree_id: string;
+  /** 树的层级：master / clan / family */
+  kind?: string;
+  /** 是否已镶嵌玉（false = 未开启时流子域，status 为 'none'） */
+  mounted: boolean;
+  status: SpiritStatus;
+  spirit_expires_at: string | null;
+  buffer_until: string | null;
+  /** 出参计算字段：spirit_expires_at + 30 天（active 态提示用；不落库） */
+  buffer_until_preview: string | null;
+  /** 灵气剩余天数（≤0 按 0） */
+  days_left: number;
+  /** 缓冲期剩余天数 */
+  buffer_days_left: number;
+  jade: SpiritJade | null;
+  /** 灌注流水（倒序最近 100 条；非成员/guest 为 []） */
+  logs: SpiritLogItem[];
+  logs_total: number;
+  logs_visible: boolean;
+  /** 流水不可见时的提示文案（后端下发；缺失时前端按登录态兜底） */
+  logs_notice: string;
+  /**
+   * 状态文案两列结构（docs/spirit-domain.spec.md §4-6：主文案 / 副文案）。
+   * 取值一律走 `stateTextPrimary` / `stateTextSecondary` 归一化——**不得当字符串直接渲染**
+   * （对象出参直接渲染会显示 `[object Object]`）。
+   */
+  state_text: SpiritStateTextLike;
+  /** 当前访问者是否可灌注（已登录 → true） */
+  can_charge: boolean;
+  activity?: { gift_enabled_plans?: string[] };
+  /** 档位表（数值**单一真源**，前端不得硬编码；缺失/为空时按加载失败态处理） */
+  plans?: SpiritPlanItem[];
+  /** 家族树展示名（后端可能下发；缺失时前端回落 tree_id） */
+  tree_title?: string;
+}
+
+/** 状态文案主/副两列（GET /spirit 出参 `state_text` 的形状，docs/spirit-domain.spec.md §4-6） */
+export interface SpiritStateText {
+  primary: string;
+  secondary: string;
+}
+
+/** `state_text` 宽容类型：对象（现行出参）/ 字符串（过渡期旧数据）/ 缺失 */
+export type SpiritStateTextLike = SpiritStateText | string | null | undefined;
+
+/** 状态**主**文案归一化：对象取 `primary`、字符串原样返、缺失返空串 */
+export function stateTextPrimary(s: SpiritStateTextLike): string {
+  if (!s) return '';
+  return typeof s === 'string' ? s : s.primary || '';
+}
+
+/** 状态**副**文案归一化：对象取 `secondary`；字符串（只有一段文案）与缺失一律返空串 */
+export function stateTextSecondary(s: SpiritStateTextLike): string {
+  if (!s || typeof s === 'string') return '';
+  return s.secondary || '';
+}
+
+/** 灌注结果（POST /spirit/charge） */
+export interface SpiritChargeResult {
+  ok: boolean;
+  tree_id: string;
+  plan: SpiritPlan;
+  seeds_deducted: number;
+  days: number;
+  spirit_expires_at: string;
+  spirit_expires_at_before: string | null;
+  status: SpiritStatus;
+  gift_bamboos: number;
+  gift_bundles: number;
+  seeds_balance_after: number;
+  message?: string;
+}
+
+/** 镶嵌结果（POST /spirit/mount-jade） */
+export interface MountJadeResult {
+  ok: boolean;
+  tree_id: string;
+  jade_id: string;
+  mounted_at: string;
+  jade_expires_at: string | null;
+  status: SpiritStatus;
+  spirit_expires_at: string | null;
+}
+
+/** 合成结果（POST /assets/synthesize-jade） */
+export interface JadeSynthesizeResult {
+  ok: boolean;
+  jade_id: string;
+  seeds_deducted: number;
+  expires_at: string | null;
+  permanent: boolean;
+  seeds_used: Array<{ lot_id: string; qty: number; expires_at: string }>;
+}
+
+/** 分解结果（POST /assets/decompose-jade） */
+export interface JadeDecomposeResult {
+  ok: boolean;
+  jade_id: string;
+  seeds_returned: number;
+  seed_expires_at: string;
+  seed_lot_id: string;
+}
+
+/** 时流子域请求（POST）：Bearer 必填（401 复用既有文案）；错误体 { error } 原样上抛 */
+async function spiritPost<T>(
+  path: string,
+  treeId: string,
+  body: Record<string, unknown>,
+  token = '',
+): Promise<T> {
+  const tk = token || getAuthToken();
+  if (!tk) throw new ApiStatusError('请先登录后再进行编辑操作', 401);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Tree-Id': treeId,
+      Authorization: 'Bearer ' + tk,
+    },
+    body: JSON.stringify({ tree_id: treeId, ...body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error || `请求失败 (${res.status})`, res.status, err);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** 资产域写请求（POST /assets/*）：账号级，不带树参数；Bearer 必填 */
+async function assetPostJson<T>(path: string, body: Record<string, unknown> = {}): Promise<T> {
+  const token = getAuthToken();
+  if (!token) throw new ApiStatusError('请先登录后再进行编辑操作', 401);
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error || `请求失败 (${res.status})`, res.status, err);
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
+ * 读取时流子域状态（GET /spirit?tree_id=；**guest 亦可读摘要**，带登录态才有流水）。
+ * 错误：400 缺少 tree_id / 404 家族树不存在（文案后端下发）。
+ */
+export async function fetchSpirit(treeId: string): Promise<SpiritInfo> {
+  const token = getAuthToken();
+  const res = await fetch(`${API_BASE}/spirit?tree_id=${encodeURIComponent(treeId)}`, {
+    headers: {
+      'X-Tree-Id': treeId,
+      ...(token ? { Authorization: 'Bearer ' + token } : {}),
+    },
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error || `请求失败 (${res.status})`, res.status, err);
+  }
+  return res.json() as Promise<SpiritInfo>;
+}
+
+/** 玉露灵泽蓄能（POST /spirit/charge）：任何已登录用户；籽不足 → 409 整单拒绝（文案含可用数） */
+export async function postSpiritCharge(
+  treeId: string,
+  plan: SpiritPlan,
+  token = '',
+): Promise<SpiritChargeResult> {
+  return spiritPost<SpiritChargeResult>('/spirit/charge', treeId, { plan }, token);
+}
+
+/** 镶嵌石榴籽玉（POST /spirit/mount-jade）：任何已登录用户；**不可逆**，凹槽永久占用 */
+export async function postMountJade(
+  treeId: string,
+  jadeId: string,
+  token = '',
+): Promise<MountJadeResult> {
+  return spiritPost<MountJadeResult>('/spirit/mount-jade', treeId, { jade_id: jadeId }, token);
+}
+
+/** 合成石榴籽玉（POST /assets/synthesize-jade）：固定消耗 999 颗；不足 → 409 整单拒绝不部分扣 */
+export async function postSynthesizeJade(): Promise<JadeSynthesizeResult> {
+  return assetPostJson<JadeSynthesizeResult>('/assets/synthesize-jade');
+}
+
+/** 分解石榴籽玉（POST /assets/decompose-jade）：**免费**，返还 999 颗籽（统一 365 天）；已镶嵌玉 → 409 */
+export async function postDecomposeJade(jadeId: string): Promise<JadeDecomposeResult> {
+  return assetPostJson<JadeDecomposeResult>('/assets/decompose-jade', { jade_id: jadeId });
+}
+
+// ---- 竹简市集 + 官方竹简限量发售
+//      docs/economy-market.spec.md（§8 接口清单 / §9.3 封装）；路由与鉴权口径见 docs/economy.spec.md §6、§8
+//      GET /market/listings = guest 可读；其余为账号级（Bearer 必填，不带树参数）
+
+/** 挂单状态：`open` 可买可撤｜`sold` 已成交｜`cancelled` 已撤单｜`expired` 到期下架（K9） */
+export type MarketListingStatus = 'open' | 'sold' | 'cancelled' | 'expired';
+
+/**
+ * 市集挂单（`jiazu_market.listings[]`）。
+ * **与家族树无关（K7）**：不含任何家族树字段，挂单/买入均不校验家族树归属。
+ */
+export interface MarketListing {
+  id: string;
+  seller_phone: string;
+  /** 束数（≥ 1 的整数） */
+  bundles: number;
+  /** 片数 = `bundles × 100`（1 束 = 100 片） */
+  pieces: number;
+  /** 标价（籽，整单总价；自由报价，平台不设最低/最高价） */
+  price_seeds: number;
+  status: MarketListingStatus;
+  created_at: string;
+  /** 挂单时限 = `created_at` + 7 天（`LISTING_TTL_DAYS`） */
+  expires_at: string;
+  sold_at?: string;
+  buyer_phone?: string;
+  /** 服务端派生的剩余时限（天，向上取整）；缺省时前端按 `expires_at` 现算 */
+  days_left?: number;
+}
+
+/** 官方发售区数据（GET /market/listings 出参 `official`） */
+export interface MarketOfficial {
+  /** 官方售价（分）：990 = ¥9.90 / 束 */
+  price_fen: number;
+  /** 每日配额（束，初值 50，后台可配） */
+  daily_stock: number;
+  /** 今日剩余库存（束） */
+  stock_left_today: number;
+  /** 发售时点（'21:00'，CST） */
+  release_at: string;
+  /** 当日库存是否已惰性释放 */
+  released: boolean;
+}
+
+/** 市集列表（GET /market/listings；默认只含 `status='open'` 挂单） */
+export interface MarketListingsResult {
+  listings: MarketListing[];
+  official: MarketOfficial;
+}
+
+/** 我的资产概览（GET /market/my 出参 `assets`） */
+export interface MarketMyAssets {
+  /** 石榴籽可用量（颗） */
+  seeds_available: number;
+  /** 竹片可用量（片；已扣除 `status='open'` 挂单占用） */
+  bamboo_available_pieces: number;
+  /** 挂单锁定量（片） */
+  bamboo_locked_pieces: number;
+  /** 竹片批次明细（形态随后端出参；前端不依赖其内部字段） */
+  lots?: BambooLot[];
+}
+
+/** 我的挂单 + 资产概览（GET /market/my；默认不含 `expired` 挂单） */
+export interface MarketMyResult {
+  listings: MarketListing[];
+  assets: MarketMyAssets;
+}
+
+/** 挂单结果（POST /market/list） */
+export interface MarketListResult {
+  ok: boolean;
+  listing_id: string;
+  pieces: number;
+  expires_at: string;
+}
+
+/** 成交结果（POST /market/buy；`fee_seeds = floor(price_seeds / 100)`，0 即免收） */
+export interface MarketBuyResult {
+  ok: boolean;
+  trade_id: string;
+  pieces: number;
+  price_seeds: number;
+  fee_seeds: number;
+}
+
+/** 官方购买结果（POST /market/official-buy） */
+export interface OfficialBuyResult {
+  ok: boolean;
+  pieces: number;
+  /** ¥ 钱包余额（分） */
+  balance_cents: number;
+  stock_left_today: number;
+}
+
+/** 市集挂单列表（**guest 可读**；`status` 缺省 `'open'`，`expired` 默认不出参，K9） */
+export async function fetchMarketListings(status = 'open'): Promise<MarketListingsResult> {
+  const token = getAuthToken();
+  const res = await fetch(`${API_BASE}/market/listings?status=${encodeURIComponent(status)}`, {
+    headers: token ? { Authorization: 'Bearer ' + token } : {},
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error || `请求失败 (${res.status})`, res.status, err);
+  }
+  return res.json() as Promise<MarketListingsResult>;
+}
+
+/** 我的挂单 + 资产概览（需登录；默认不展示 `expired` 挂单） */
+export async function fetchMyListings(): Promise<MarketMyResult> {
+  return assetRequest<MarketMyResult>('/market/my');
+}
+
+/** 挂单（POST /market/list）：`{ bundles, price_seeds }`；**入参无家族树字段（K7）** */
+export async function postMarketList(bundles: number, priceSeeds: number): Promise<MarketListResult> {
+  return assetPostJson<MarketListResult>('/market/list', { bundles, price_seeds: priceSeeds });
+}
+
+/** 撤单（POST /market/cancel）：仅 `open` 可撤；`expired` → 409「挂单已过期」 */
+export async function postMarketCancel(listingId: string): Promise<{ ok: boolean }> {
+  return assetPostJson<{ ok: boolean }>('/market/cancel', { listing_id: listingId });
+}
+
+/** 全量成交（POST /market/buy）：不支持部分成交；籽不足 409；买自己的挂单 400 */
+export async function postMarketBuy(listingId: string): Promise<MarketBuyResult> {
+  return assetPostJson<MarketBuyResult>('/market/buy', { listing_id: listingId });
+}
+
+/** 官方竹简购买（POST /market/official-buy）：¥9.90/束；21:00 前 / 售罄 / 余额不足 → 409 文案 */
+export async function postOfficialBuy(bundles = 1): Promise<OfficialBuyResult> {
+  return assetPostJson<OfficialBuyResult>('/market/official-buy', { bundles });
+}
+
+// ---- 站内信 / 消息中心（docs/economy-ops.spec.md §4；docs/economy.spec.md §6-1 / §6-2）
+//      账号级路由（不带树参数），Bearer 必填
+
+/** 站内信类型（总册「存储契约」枚举：资产到期 / 家族灵气三条 / 市集 / 系统） */
+export type MessageType = 'expiring' | 'spirit' | 'market' | 'system';
+
+/**
+ * 站内信条目（`jiazu_messages.items[<手机号>][]`）。
+ * `title` / `text` 为后端下发的**定稿文案**（M1–M4，docs/economy-ops.spec.md §6.2）：
+ * 前端**逐字渲染**，不得改写、不得拼接、不得自行补标点。
+ */
+export interface MessageItem {
+  id: string;
+  type: MessageType;
+  /** 短标题（定稿文案首段，不含【】） */
+  title: string;
+  /** 定稿文案逐字全文（含【】与标点） */
+  text: string;
+  created_at: string;
+  read: boolean;
+}
+
+/** 站内信列表出参（GET /messages） */
+export interface MessagesResult {
+  items: MessageItem[];
+  /** 未读条数（角标 / 「全部标为已读」显隐依据） */
+  unread: number;
+}
+
+/** 标记已读出参（POST /messages/read） */
+export interface MessagesReadResult {
+  ok: boolean;
+  unread: number;
+}
+
+/**
+ * 站内信列表（GET /messages；按 `created_at` 倒序，每用户保留最近 200 条）。
+ * 该入口同时是**预警惰性生成入口**：服务端先 `sweep(now)` 再按 `warned` 去重补当前请求人的预警。
+ */
+export async function fetchMessages(opts: { unread?: boolean } = {}): Promise<MessagesResult> {
+  return assetRequest<MessagesResult>(`/messages${opts.unread ? '?unread=1' : ''}`);
+}
+
+/**
+ * 标记已读（POST /messages/read）：`ids` 缺省 = **全部标为已读**；幂等；
+ * 不属于本人的 id 由服务端忽略（不报错）。
+ */
+export async function postMessagesRead(ids?: string[]): Promise<MessagesReadResult> {
+  return assetPostJson<MessagesReadResult>(
+    '/messages/read',
+    ids && ids.length ? { ids } : {},
+  );
+}
+
+// ---- 运营后台 · 资产运维（docs/economy-ops.spec.md §5；仅 chief_editor，其余角色 403）
+
+/** 运营审计日志条目（`jiazu_ops_logs.logs[]`；`delta` **保留符号**，负值原样记录） */
+export interface OpsLog {
+  id: string;
+  ts: string;
+  /** 操作人手机号（服务端取自 JWT，前端不可传） */
+  operator: string;
+  target_phone: string;
+  delta: AssetDelta;
+  /** 操作原因（`trim` 后非空；贡献依据已由服务端并入） */
+  reason: string;
+}
+
+/** 资产变更请求体（POST /admin/assets/grant；`reason` 必填、`delta` 至少一项非 0） */
+export interface GrantPayload {
+  target_phone: string;
+  delta: AssetDelta;
+  reason: string;
+  /** 贡献奖励依据（选填；服务端并入 `reason`，日志可见） */
+  evidence?: string;
+}
+
+/** 资产变更回执摘要（POST /admin/assets/grant 出参 `summary`） */
+export interface GrantSummary {
+  fragments: number;
+  seeds_total: number;
+  bamboos_total_pieces: number;
+  /** 玉的枚数 */
+  jades: number;
+  /** 本次审计日志 id（`jiazu_ops_logs`） */
+  log_id: string;
+  /** 发放后碎片满 10 即时合成的籽数（0 = 未触发） */
+  synthesized?: number;
+}
+
+/** 资产变更结果（POST /admin/assets/grant） */
+export interface GrantResult {
+  ok: boolean;
+  summary: GrantSummary;
+}
+
+/**
+ * 目标账号资产快照（GET /admin/assets/user；与 `/assets/summary` 同形，主体由「本人」改为 `phone`）。
+ * 玉清单的出参形态后端有两种登记口径（`jade_list` / `jades` 数组，或 `jades` 枚数）→ 一律用 `jadeListOf()` 归一化。
+ */
+export interface AdminAssetSnapshot {
+  phone: string;
+  fragments: number;
+  seeds_total: number;
+  bamboos_total_pieces: number;
+  /** 玉：数组形态（同 `/assets/summary`）或枚数（旧登记口径） */
+  jades: Jade[] | number;
+  /** 玉枚数（数组 `jades` 之外的显式计数，后端可选下发） */
+  jades_total?: number;
+  seed_lots: SeedLot[];
+  bamboo_lots: BambooLot[];
+  /** 玉清单（§5.4 登记字段；与 `jades` 数组形态二者取一） */
+  jade_list?: Jade[];
+  signin_date: string;
+}
+
+/** 玉清单归一化（兼容 `jade_list` / `jades` 数组 / `jades` 枚数三种出参形态） */
+export function jadeListOf(snapshot: AdminAssetSnapshot): Jade[] {
+  if (Array.isArray(snapshot.jade_list)) return snapshot.jade_list;
+  if (Array.isArray(snapshot.jades)) return snapshot.jades;
+  return [];
+}
+
+/** 玉枚数归一化（同上，供总览数字展示） */
+export function jadeCountOf(snapshot: AdminAssetSnapshot): number {
+  if (typeof snapshot.jades_total === 'number') return snapshot.jades_total;
+  if (typeof snapshot.jades === 'number') return snapshot.jades;
+  return jadeListOf(snapshot).length;
+}
+
+/** 日志筛选（`phone` = 目标手机号、`operator` = 操作人手机号；`limit` 默认 50、上限 200） */
+export interface OpsLogFilters {
+  phone?: string;
+  operator?: string;
+  limit?: number;
+}
+
+/**
+ * 资产变更（POST /admin/assets/grant；仅 chief_editor）。
+ * 校验：手机号格式 / 用户存在 / `reason` 必填 / `delta` 非全 0 / 整数 / 负向不足 → **409「资产不足」整单拒绝**。
+ */
+export async function postAdminAssetsGrant(payload: GrantPayload): Promise<GrantResult> {
+  return assetPostJson<GrantResult>('/admin/assets/grant', {
+    target_phone: payload.target_phone,
+    delta: payload.delta,
+    reason: payload.reason,
+    ...(payload.evidence ? { evidence: payload.evidence } : {}),
+  });
+}
+
+/** 资产变动日志（GET /admin/assets/logs；`ts` 倒序，过滤可叠加，空集合返回 `[]`） */
+export async function fetchAdminAssetsLogs(filters: OpsLogFilters = {}): Promise<OpsLog[]> {
+  const qs: string[] = [];
+  if (filters.phone) qs.push(`phone=${encodeURIComponent(filters.phone)}`);
+  if (filters.operator) qs.push(`operator=${encodeURIComponent(filters.operator)}`);
+  if (filters.limit) qs.push(`limit=${filters.limit}`);
+  const res = await assetRequest<{ logs?: OpsLog[] }>(
+    `/admin/assets/logs${qs.length ? `?${qs.join('&')}` : ''}`,
+  );
+  return res.logs || [];
+}
+
+/** 目标账号资产快照（GET /admin/assets/user；`phone` 必填；400 缺参 / 404 用户不存在） */
+export async function fetchAdminAssetsUser(phone: string): Promise<AdminAssetSnapshot> {
+  return assetRequest<AdminAssetSnapshot>(`/admin/assets/user?phone=${encodeURIComponent(phone)}`);
+}
+
+// ---- 账号注销（docs/economy-ops.spec.md §7；K10 定稿：存在 status='open' 挂单 → 409）
+
+/** 注销路由（P4 新增；后端 `index.js` 已注册 `POST /account/delete`，且挂在树编辑闸门之前） */
+const DELETE_ACCOUNT_PATH = '/account/delete';
+
+/** 注销结果（`POST /account/delete`；`cleared` = 本次清空的四类资产留痕） */
+export interface DeleteAccountResult {
+  ok: boolean;
+  phone: string;
+  cleared: AssetDelta;
+  /** `account_clear` 流水 id */
+  tx_id: string;
+  /** 保留的历史流水条数（清空但留痕） */
+  txs_kept: number;
+}
+
+/**
+ * 注销账号：清空本人碎片 / 石榴籽 / 竹片 / 玉（写一条 `account_clear` 流水留痕），**不可恢复**；
+ * 历史审计（`jiazu_ops_logs`、钱包流水、历史 `Tx`）与 `jiazu_users` / `jiazu_anchors` 保留。
+ * - 存在 `status='open'` 市集挂单 → 后端 **409「请先撤销未成交挂单」**（原文上抛，前端不改写）；
+ * - 未登录 → 401。
+ */
+export async function deleteAccount(): Promise<DeleteAccountResult> {
+  const token = getAuthToken();
+  if (!token) throw new ApiStatusError('未登录或登录已过期', 401);
+  const res = await fetch(`${API_BASE}${DELETE_ACCOUNT_PATH}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+    body: JSON.stringify({}),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiStatusError(body?.error || `注销失败 (${res.status})`, res.status, body);
+  }
+  return body as DeleteAccountResult;
 }

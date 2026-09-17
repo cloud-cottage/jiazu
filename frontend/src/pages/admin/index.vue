@@ -182,6 +182,146 @@
         </view>
       </view>
 
+      <!-- 资产运维（docs/economy-ops.spec.md §5）：仅 chief_editor 可见，与后端 403 口径一致 -->
+      <view class="section">
+        <text class="section-title">资产运维</text>
+        <view v-if="!isChief" class="empty">需要总编辑权限</view>
+
+        <template v-else>
+          <!-- 发放 / 扣减表单 -->
+          <text class="field-label">目标手机号</text>
+          <t-input
+            :value="grantPhone"
+            type="number"
+            placeholder="11 位手机号"
+            class="field"
+            @update:value="(v: string) => grantPhone = v"
+          />
+
+          <text class="field-label">资产增减（可正可负；留空 = 该项不变）</text>
+          <view class="delta-grid">
+            <view v-for="f in DELTA_FIELDS" :key="f.key" class="delta-cell">
+              <text class="delta-name">{{ f.label }}</text>
+              <t-input
+                :value="grantDelta[f.key]"
+                type="number"
+                :placeholder="f.unit"
+                size="small"
+                @update:value="(v: string) => setDelta(f.key, v)"
+              />
+            </view>
+          </view>
+
+          <text class="field-label">操作原因（必填）</text>
+          <t-input
+            :value="grantReason"
+            placeholder="如：上传史料奖励"
+            class="field"
+            @update:value="(v: string) => grantReason = v"
+          />
+
+          <text class="field-label">依据（选填，随日志留痕）</text>
+          <t-input
+            :value="grantEvidence"
+            placeholder="如：上传史料：某年族谱影印"
+            class="field"
+            @update:value="(v: string) => grantEvidence = v"
+          />
+
+          <view v-if="grantError" class="grant-error">{{ grantError }}</view>
+          <t-button theme="primary" block :loading="granting" @click="submitGrant">
+            发放 / 扣减
+          </t-button>
+
+          <!-- 用户资产查询 -->
+          <view class="grant-sub">
+            <text class="field-label">用户资产查询（手机号）</text>
+            <view class="query-row">
+              <t-input
+                :value="queryPhone"
+                type="number"
+                placeholder="11 位手机号"
+                class="query-input"
+                @update:value="(v: string) => queryPhone = v"
+                @confirm="queryUserAssets()"
+              />
+              <t-button size="small" variant="outline" :loading="querying" @click="queryUserAssets()">
+                查询
+              </t-button>
+            </view>
+            <view v-if="queryError" class="grant-error">{{ queryError }}</view>
+            <view v-if="snapshot" class="snap">
+              <view class="snap-row">
+                <text class="snap-label">碎片</text>
+                <text class="snap-value">{{ snapshot.fragments }} / 9</text>
+              </view>
+              <view class="snap-row">
+                <text class="snap-label">石榴籽</text>
+                <text class="snap-value">{{ snapshot.seeds_total }} 颗</text>
+              </view>
+              <view class="snap-row">
+                <text class="snap-label">竹片</text>
+                <text class="snap-value">{{ snapshot.bamboos_total_pieces }} 片</text>
+              </view>
+              <view class="snap-row">
+                <text class="snap-label">石榴籽玉</text>
+                <text class="snap-value">{{ snapshotJadeCount }} 枚</text>
+              </view>
+              <view class="snap-row">
+                <text class="snap-label">最近签到</text>
+                <text class="snap-value">{{ snapshot.signin_date || '—' }}</text>
+              </view>
+              <view v-for="lot in snapshot.seed_lots" :key="lot.id" class="snap-lot">
+                石榴籽批次 {{ lot.id }} · {{ lot.qty }} 颗 · 到期 {{ formatTime(lot.expires_at) }}
+              </view>
+              <view v-for="lot in snapshot.bamboo_lots" :key="lot.id" class="snap-lot">
+                竹片批次 {{ lot.id }} · {{ lot.qty }} 片 · 到期 {{ formatTime(lot.expires_at) }}
+              </view>
+              <view v-for="j in snapshotJades" :key="j.id" class="snap-lot">
+                石榴籽玉 {{ j.id }} · {{ j.expires_at ? '到期 ' + formatTime(j.expires_at) : '永久' }}
+                <template v-if="j.mounted_tree_id"> · 已镶嵌 {{ j.mounted_tree_id }}</template>
+              </view>
+            </view>
+          </view>
+
+          <!-- 资产变动日志 -->
+          <view class="grant-sub">
+            <text class="field-label">资产变动日志（最近 {{ opsLogs.length }} 条）</text>
+            <view class="query-row">
+              <t-input
+                :value="logPhone"
+                type="number"
+                placeholder="目标手机号"
+                class="query-input"
+                @update:value="(v: string) => logPhone = v"
+              />
+              <t-input
+                :value="logOperator"
+                type="number"
+                placeholder="操作人手机号"
+                class="query-input"
+                @update:value="(v: string) => logOperator = v"
+              />
+              <t-button size="small" variant="outline" :loading="logsLoading" @click="loadLogs">
+                筛选
+              </t-button>
+            </view>
+            <view v-if="logsError" class="grant-error">{{ logsError }}</view>
+            <view v-if="!opsLogs.length" class="empty">暂无资产变动日志</view>
+            <view v-for="log in opsLogs" :key="log.id" class="log-item">
+              <view class="log-head">
+                <text class="log-target">{{ log.target_phone }}</text>
+                <text class="log-delta" :class="{ minus: isMinusDelta(log.delta) }">
+                  {{ deltaText(log.delta) }}
+                </text>
+              </view>
+              <text class="log-sub">操作人 {{ log.operator }} · {{ formatTime(log.ts) }}</text>
+              <text class="log-reason">原因：{{ log.reason }}</text>
+            </view>
+          </view>
+        </template>
+      </view>
+
       <view v-if="error" class="error">{{ error }}</view>
     </template>
   </view>
@@ -189,9 +329,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchUserList, setUserRole, setAnchor, fetchLeaveRequests, approveLeave, fetchJoinRequests, approveJoinRequest, rejectJoinRequest, searchPeople, fetchMarriageRequests, decideMarriageRequest } from '@/business/api';
+import { fetchUserList, setUserRole, setAnchor, fetchLeaveRequests, approveLeave, fetchJoinRequests, approveJoinRequest, rejectJoinRequest, searchPeople, fetchMarriageRequests, decideMarriageRequest, postAdminAssetsGrant, fetchAdminAssetsLogs, fetchAdminAssetsUser, jadeListOf, jadeCountOf } from '@/business/api';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
-import type { ManagedUser, LeaveRequestItem, JoinRequestItem } from '@/business/api';
+import type { ManagedUser, LeaveRequestItem, JoinRequestItem, OpsLog, AdminAssetSnapshot } from '@/business/api';
+import type { AssetDelta, Jade } from '@/business/api';
 import type { PersonSummary } from '@/business/types';
 import { personIdDisplay } from '@/business/format';
 
@@ -380,6 +521,156 @@ async function rejectJoin(jr: JoinRequestItem) {
   }
 }
 
+// ---- 资产运维（docs/economy-ops.spec.md §5，仅 chief_editor） ----
+
+type DeltaKey = 'fragments' | 'seeds' | 'bamboos' | 'jades';
+
+/** 四类资产输入项（docs/economy.spec.md §3：碎片 / 石榴籽 / 竹片 / 石榴籽玉） */
+const DELTA_FIELDS: Array<{ key: DeltaKey; label: string; unit: string }> = [
+  { key: 'fragments', label: '碎片', unit: '个（可负）' },
+  { key: 'seeds', label: '石榴籽', unit: '颗（可负）' },
+  { key: 'bamboos', label: '竹片', unit: '片（可负）' },
+  { key: 'jades', label: '石榴籽玉', unit: '枚（可负）' },
+];
+
+/** 资产运维区仅 chief_editor 可见（非总编显示提示条，与后端 403「需要总编辑权限」一致） */
+const isChief = computed(() => isAuthenticated() && authState.role === 'chief_editor');
+
+const grantPhone = ref('');
+const grantDelta = ref<Record<DeltaKey, string>>({ fragments: '', seeds: '', bamboos: '', jades: '' });
+const grantReason = ref('');
+const grantEvidence = ref('');
+const grantError = ref('');
+const granting = ref(false);
+
+const queryPhone = ref('');
+const snapshot = ref<AdminAssetSnapshot | null>(null);
+const queryError = ref('');
+const querying = ref(false);
+
+const opsLogs = ref<OpsLog[]>([]);
+const logPhone = ref('');
+const logOperator = ref('');
+const logsError = ref('');
+const logsLoading = ref(false);
+
+const snapshotJades = computed<Jade[]>(() => (snapshot.value ? jadeListOf(snapshot.value) : []));
+const snapshotJadeCount = computed(() => (snapshot.value ? jadeCountOf(snapshot.value) : 0));
+
+function setDelta(key: DeltaKey, value: string) {
+  grantDelta.value[key] = value;
+}
+
+/** 输入串 → delta：空串 = 该项不变；非整数当场拦截（后端仍复验，不代替服务端校验） */
+function parseDeltaInput(): AssetDelta {
+  const delta: AssetDelta = {};
+  for (const f of DELTA_FIELDS) {
+    const raw = (grantDelta.value[f.key] || '').trim();
+    if (!raw) continue;
+    if (!/^-?\d+$/.test(raw)) throw new Error(`${f.label}数量必须为整数`);
+    delta[f.key] = Number(raw);
+  }
+  return delta;
+}
+
+/** 发放 / 扣减（POST /admin/assets/grant）：成功 toast「资产已变更」并回读快照 + 日志 */
+async function submitGrant() {
+  grantError.value = '';
+  const phone = grantPhone.value.trim();
+  if (!/^1\d{10}$/.test(phone)) {
+    grantError.value = '手机号格式不正确';
+    return;
+  }
+  const reason = grantReason.value.trim();
+  if (!reason) {
+    grantError.value = '请填写操作原因';
+    return;
+  }
+  let delta: AssetDelta;
+  try {
+    delta = parseDeltaInput();
+  } catch (e: any) {
+    grantError.value = e?.message || '资产数量不合法';
+    return;
+  }
+  if (!Object.keys(delta).length) {
+    grantError.value = '资产数量不能全为 0';
+    return;
+  }
+  const evidence = grantEvidence.value.trim();
+  granting.value = true;
+  try {
+    await postAdminAssetsGrant({ target_phone: phone, delta, reason, ...(evidence ? { evidence } : {}) });
+    uni.showToast({ title: '资产已变更', icon: 'success' });
+    grantDelta.value = { fragments: '', seeds: '', bamboos: '', jades: '' };
+    grantReason.value = '';
+    grantEvidence.value = '';
+    await queryUserAssets(phone);
+    await loadLogs();
+  } catch (e: any) {
+    grantError.value = e?.message || '资产变更失败';
+  } finally {
+    granting.value = false;
+  }
+}
+
+/** 目标账号资产快照（GET /admin/assets/user；含批次到期） */
+async function queryUserAssets(phone = queryPhone.value.trim()) {
+  const target = phone.trim();
+  queryError.value = '';
+  if (!/^1\d{10}$/.test(target)) {
+    snapshot.value = null;
+    queryError.value = '手机号格式不正确';
+    return;
+  }
+  querying.value = true;
+  try {
+    snapshot.value = await fetchAdminAssetsUser(target);
+    queryPhone.value = target;
+  } catch (e: any) {
+    snapshot.value = null;
+    queryError.value = e?.message || '查询失败';
+  } finally {
+    querying.value = false;
+  }
+}
+
+/** 资产变动日志（GET /admin/assets/logs；目标手机号 / 操作人筛选可叠加） */
+async function loadLogs() {
+  logsError.value = '';
+  logsLoading.value = true;
+  const phone = logPhone.value.trim();
+  const operator = logOperator.value.trim();
+  try {
+    opsLogs.value = await fetchAdminAssetsLogs({
+      ...(phone ? { phone } : {}),
+      ...(operator ? { operator } : {}),
+      limit: 50,
+    });
+  } catch (e: any) {
+    opsLogs.value = [];
+    logsError.value = e?.message || '加载日志失败';
+  } finally {
+    logsLoading.value = false;
+  }
+}
+
+/** delta → 文本（保留符号；0 项不显示） */
+function deltaText(delta: AssetDelta | undefined): string {
+  if (!delta) return '';
+  const parts: string[] = [];
+  for (const f of DELTA_FIELDS) {
+    const v = delta[f.key];
+    if (typeof v === 'number' && v !== 0) parts.push(`${v > 0 ? '+' : ''}${v} ${f.label}`);
+  }
+  return parts.join(' · ') || '—';
+}
+
+function isMinusDelta(delta: AssetDelta | undefined): boolean {
+  if (!delta) return false;
+  return DELTA_FIELDS.some((f) => (delta[f.key] ?? 0) < 0);
+}
+
 const ROLE_LABELS: Record<string, string> = {
   guest: '游客',
   user: '普通用户',
@@ -474,6 +765,8 @@ onMounted(() => {
     loadJoinRequests();
     loadMarriageRequests();
   }
+  // 资产运维区仅总编加载（其余角色后端 403，前端不发请求）
+  if (isChief.value) loadLogs();
 });
 
 function goLogin() {
@@ -539,4 +832,28 @@ function goLogin() {
 .approve-result-id { font-size: 11px; color: #999; margin-left: auto; }
 .approve-error { color: #C62828; font-size: 13px; text-align: center; margin: 8px 0; }
 .approve-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* 资产运维（资产发放 / 用户快照 / 变动日志） */
+.field-label { font-size: 13px; color: #3E2723; display: block; margin: 10px 0 4px; }
+.field { margin-bottom: 4px; }
+.delta-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.delta-cell { flex: 1 1 45%; }
+.delta-name { font-size: 12px; color: #999; display: block; margin-bottom: 2px; }
+.grant-error { color: #C62828; font-size: 13px; margin: 8px 0; }
+.grant-sub { margin-top: 18px; padding-top: 12px; border-top: 1px solid #f5f0ea; }
+.query-row { display: flex; gap: 6px; align-items: center; }
+.query-input { flex: 1; }
+.snap { margin-top: 8px; background: #FBF6EF; border: 1px solid #F0E0C8; border-radius: 10px; padding: 10px; }
+.snap-row { display: flex; justify-content: space-between; padding: 4px 0; }
+.snap-label { font-size: 13px; color: #999; }
+.snap-value { font-size: 13px; color: #3E2723; font-weight: 500; }
+.snap-lot { font-size: 11px; color: #B5A594; display: block; margin-top: 2px; }
+.log-item { padding: 10px 0; border-bottom: 1px solid #f5f0ea; }
+.log-item:last-child { border-bottom: none; }
+.log-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.log-target { font-size: 14px; color: #3E2723; font-weight: 500; }
+.log-delta { font-size: 13px; color: #2E7D32; font-weight: bold; }
+.log-delta.minus { color: #C62828; }
+.log-sub { font-size: 11px; color: #B5A594; display: block; margin-top: 2px; }
+.log-reason { font-size: 12px; color: #777; display: block; margin-top: 2px; }
 </style>

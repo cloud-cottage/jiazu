@@ -39,7 +39,7 @@
  * 家族消息（审批入口）：本树管理员在此处理
  * - 联姻 / 离异申请（跨树嫁娶，docs/marriage.spec.md 权限口径 C）→ 可就地通过/驳回
  * - 认祖申请（始祖挂载，docs/founder-attach.spec.md）→ 目标上层树 chief_editor 就地通过/驳回
- * - 建谱申请（宗谱，docs/clan-tree.spec.md §5）→ 仅 chief_editor 就地通过/驳回
+ * - 建谱申请（祖谱，docs/clan-tree.spec.md §5）→ 仅 chief_editor 就地通过/驳回
  * - 加入申请 / 退出申请 → 需要选人/复核，跳管理工作台处理
  * 入口只在有管理权限（chief_editor / 本树 tree_steward）时可见（hall 页控制）。
  */
@@ -63,7 +63,7 @@ const props = withDefaults(
     treeId: string;
     /**
      * 层级（只影响文案，不影响权限口径与数据源）：
-     * master = 中华世本 →「世本消息」/ clan = 宗谱 →「宗谱消息」/ family = 普通树 →「家族消息」
+     * master = 中华世本 →「世本消息」/ clan = 祖谱 →「祖谱消息」/ family = 普通树 →「家族消息」
      */
     level?: 'master' | 'clan' | 'family';
   }>(),
@@ -71,10 +71,10 @@ const props = withDefaults(
 );
 
 /** 层级文案（入口可见性仍由宿主控制：chief_editor 全局 / 本树 tree_steward） */
-const levelLabel = computed(() => (props.level === 'master' ? '世本' : props.level === 'clan' ? '宗谱' : '家族'));
+const levelLabel = computed(() => (props.level === 'master' ? '世本' : props.level === 'clan' ? '祖谱' : '家族'));
 const messageTitle = computed(() => `${levelLabel.value}消息`);
 const messageSub = computed(() => {
-  const who = props.level === 'master' ? '总谱' : props.level === 'clan' ? '本宗谱' : '本树';
+  const who = props.level === 'master' ? '总谱' : props.level === 'clan' ? '本祖谱' : '本树';
   return `需要${who}管理员审批的事项（联姻/离异 · 认祖 · 建谱；仅管理权限可见）`;
 });
 
@@ -154,7 +154,7 @@ async function load() {
       });
     }
     // 认祖申请（docs/founder-attach.spec.md）：目标上层树的 chief_editor 就地通过/驳回
-    // 通过 → 建立镜像挂载（宗谱→世本 / 普通树→宗谱）；驳回 → 只写理由，不改数据
+    // 通过 → 建立镜像挂载（祖谱→世本 / 普通树→祖谱）；驳回 → 只写理由，不改数据
     const founderCanApproveAll = !!founders.can_approve_all;
     for (const f of (founders.list || []).filter((x: any) => x.status === 'pending')) {
       const targetKind = f.target_kind || (f.master_tree_id === 'zhonghua' ? 'master' : 'clan');
@@ -172,14 +172,14 @@ async function load() {
         request: f,
       });
     }
-    // 建谱申请（docs/clan-tree.spec.md §5）：仅 chief_editor 可就地审批（通过 → 建宗谱树）
+    // 建谱申请（docs/clan-tree.spec.md §5）：仅 chief_editor 可就地审批（通过 → 建祖谱树）
     for (const c of (clans.list || []).filter((x: any) => x.status === 'pending')) {
       out.push({
         key: `c:${c._id}`,
         type: 'clan',
         kind: '建谱申请',
         theme: 'warning',
-        title: `${c.surname}氏宗谱 · 始祖 ${c.master_name || c.master_handle}`,
+        title: `${c.surname}氏祖谱 · 始祖 ${c.master_name || c.master_handle}`,
         desc:
           `${c.surname} 姓建谱申请（锚：${c.tree_id || '—'}）· ` +
           `${c.requested_by || ''} 于 ${(c.created_at || '').slice(0, 10)}`,
@@ -211,7 +211,7 @@ async function decide(it: any, approve: boolean) {
       uni.showToast({ title: approve ? '已通过，始祖挂载已建立' : '已驳回', icon: approve ? 'success' : 'none' });
     } else if (it.type === 'clan') {
       await decideClanRequest(it.request._id, approve, token, approve ? '' : '管理员驳回');
-      uni.showToast({ title: approve ? '已通过，宗谱已建立' : '已驳回', icon: approve ? 'success' : 'none' });
+      uni.showToast({ title: approve ? '已通过，祖谱已建立' : '已驳回', icon: approve ? 'success' : 'none' });
     } else {
       await decideMarriageRequest(it.request.to_tree, it.request._id, approve, token, approve ? '' : '管理员驳回');
       uni.showToast({ title: approve ? '已通过，双方家族已更新' : '已驳回', icon: approve ? 'success' : 'none' });

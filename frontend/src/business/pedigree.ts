@@ -92,7 +92,7 @@ export function buildPedigreeForest(
         return [node];
       }
     }
-    // 始祖 gramps_id 在当前数据中不存在（如已晋宗迁出）→ 回退多根构建
+    // 始祖 gramps_id 在当前数据中不存在（如已迁出）→ 回退多根构建
   }
 
   // ---- 多根构建 ----

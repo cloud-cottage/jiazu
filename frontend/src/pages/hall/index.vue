@@ -1,6 +1,6 @@
 <template>
   <view class="container">
-    <!-- 宗谱（kind='clan'）：三段版式（顶端世本镜像链 / 自有世代 / 支系入口列表） -->
+    <!-- 祖谱（kind='clan'）：三段版式（顶端世本镜像链 / 自有世代 / 支系入口列表） -->
     <ClanHall v-if="isClan" :tree-id="treeId" />
 
     <!-- 普通家族树首页 -->
@@ -22,13 +22,13 @@
           <text class="join-btn-text">🌳 申请加入本家族</text>
         </view>
 
-        <!-- 申请建立宗谱（docs/clan-tree.spec.md §5）：本姓现有树 steward/chief 发起 → 总编审批。
-             已绑定宗谱（本树始祖已认祖到某宗谱）的家族隐藏该入口 -->
+        <!-- 申请建立祖谱（docs/clan-tree.spec.md §5）：本姓现有树 steward/chief 发起 → 总编审批。
+             已绑定祖谱（本树始祖已认祖到某祖谱）的家族隐藏该入口 -->
         <view v-if="canManageTree && !hasClan" class="join-entry" @click="openClanRequest">
-          <text class="join-btn-text">📜 申请建立宗谱</text>
+          <text class="join-btn-text">📜 申请建立祖谱</text>
         </view>
         <view v-else-if="canManageTree && hasClan" class="clan-bound-hint">
-          <text class="clan-bound-text">本家族树已绑定宗谱：始祖已认祖到本姓宗谱，无需再申请建谱。</text>
+          <text class="clan-bound-text">本家族树已绑定祖谱：始祖已认祖到本姓祖谱，无需再申请建谱。</text>
         </view>
 
         <!-- 节点级可见分层提示（docs/permission-tier.spec.md）：guest/未加入仅部分世系可见 -->
@@ -39,6 +39,16 @@
         >
           <text class="access-text">{{ accessNotice }}</text>
           <text class="access-cta">{{ accessCta }}</text>
+        </view>
+
+        <!-- 时流子域入口（docs/spirit-domain.spec.md §8-1）：状态文案与到期日由 GET /spirit 下发；
+             已停用态置灰但仍可进入（灌注可重新激活） -->
+        <view class="spirit-entry" :class="{ off: spiritOff }" @click="goSpirit">
+          <view class="spirit-entry-main">
+            <text class="spirit-entry-title">🕰 时流子域</text>
+            <text class="spirit-entry-sub">{{ spiritEntrySub }}</text>
+          </view>
+          <text class="spirit-entry-arrow">›</text>
         </view>
       </view>
 
@@ -215,12 +225,12 @@
       </view>
     </view>
 
-    <!-- 建谱申请弹窗：选中华世本始祖节点 → 提交（总编审批后建宗谱树，URL 形如 /z/<tree_id>） -->
+    <!-- 建谱申请弹窗：选中华世本始祖节点 → 提交（总编审批后建祖谱树，URL 形如 /z/<tree_id>） -->
     <view v-if="showClanRequest" class="modal-mask" @click.self="showClanRequest = false">
       <view class="modal" @click.stop>
-        <text class="modal-title">申请建立宗谱</text>
+        <text class="modal-title">申请建立祖谱</text>
         <text class="modal-sub">
-          宗谱按姓建立：宗谱始祖是中华世本（总谱）节点的镜像；普通家族树此后认祖到宗谱（不得直挂世本）。提交后待总编辑审批建谱。
+          祖谱按姓建立：祖谱始祖是中华世本（总谱）节点的镜像；普通家族树此后认祖到祖谱（不得直挂世本）。提交后待总编辑审批建谱。
         </text>
 
         <view class="form-item">
@@ -229,7 +239,7 @@
         </view>
         <view class="form-item">
           <text class="label">谱名（选填）</text>
-          <input v-model="clanTitle" class="input" placeholder="如：季氏宗谱" />
+          <input v-model="clanTitle" class="input" placeholder="如：季氏祖谱" />
         </view>
 
         <text class="label">选择中华世本中的始祖节点</text>
@@ -261,7 +271,7 @@
         <view v-if="selectedClanMaster" class="identity-confirm">
           <text class="identity-text">
             将以中华世本始祖「{{ selectedClanMaster.name }}」（{{ personIdDisplay(selectedClanMaster.gramps_id) }}）
-            建立「{{ clanSurname }}氏宗谱」（同姓同世本节点只能建立一支）。
+            建立「{{ clanSurname }}氏祖谱」（同姓同世本节点只能建立一支）。
           </text>
         </view>
 
@@ -289,7 +299,7 @@
           <input v-model="editForm.display_title" class="input" placeholder="如：季氏费县白露村家族" />
         </view>
         <view class="form-item">
-          <text class="label">谱名（家谱/族谱/宗谱名称）</text>
+          <text class="label">谱名（家谱/族谱/祖谱名称）</text>
           <input v-model="editForm.genealogy_name" class="input" placeholder="如：季氏家谱" />
         </view>
         <view class="form-item">
@@ -335,7 +345,8 @@
 import { ref, computed, onMounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
 import { fetchTreeMetaRemote, updateTreeMeta, fetchTreeBalance, fetchTreeRank, searchPeople, submitJoinRequest, fetchMyAnchor, submitClanRequest, fetchPerson, fetchPersonList } from '@/business';
-import type { TreeAccessInfo } from '@/business/api';
+import { fetchSpirit, stateTextPrimary } from '@/business/api';
+import type { TreeAccessInfo, SpiritInfo } from '@/business/api';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
 import type { TreeEntry, PersonSummary } from '@/business/types';
 import { personIdDisplay, attrMapOf } from '@/business/format';
@@ -347,6 +358,7 @@ import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
 
 const treeId = ref('');
+const spiritInfo = ref<SpiritInfo | null>(null);
 const hallInfo = ref<TreeEntry | null>(null);
 const treeBalance = ref<string | null>(null);
 // 节点级可见分层（rank 返回 access 元信息；full=全可见无提示）
@@ -398,13 +410,13 @@ const isAdmin = computed(() => isAuthenticated() && authState.role === 'chief_ed
 // 中华世本总谱（is_master；tree_id=zhonghua 为兜底，避免首帧闪跳）
 const isMaster = computed(() => hallInfo.value?.is_master === true || treeId.value === 'zhonghua');
 
-/** 宗谱（kind='clan'）：走三段版式，不走普通树首页（docs/clan-tree.spec.md §3-5） */
+/** 祖谱（kind='clan'）：走三段版式，不走普通树首页（docs/clan-tree.spec.md §3-5） */
 const isClan = computed(() => hallInfo.value?.kind === 'clan');
 
 /**
- * 本树是否已绑定宗谱（已绑定 → 隐藏「📜 申请建立宗谱」入口）：
+ * 本树是否已绑定祖谱（已绑定 → 隐藏「📜 申请建立祖谱」入口）：
  * ① tree-meta 条目带 clan_tree_id / clan_handle → 已绑定；
- * ② 本树始祖节点是指向某「宗谱」的镜像（external_link_type='founder' 且 external_tree 对应树 kind='clan'）→ 已绑定。
+ * ② 本树始祖节点是指向某「祖谱」的镜像（external_link_type='founder' 且 external_tree 对应树 kind='clan'）→ 已绑定。
  * 读不到始祖节点时保守处理：保持入口可见（后端建谱申请会再校验同姓同始祖唯一）。
  */
 const hasClan = ref(false);
@@ -565,7 +577,7 @@ function openClanRequest() {
   showClanRequest.value = true;
 }
 
-/** 在中华世本中搜索始祖节点（宗谱始祖 = 世本节点镜像） */
+/** 在中华世本中搜索始祖节点（祖谱始祖 = 世本节点镜像） */
 async function doSearchClanMaster() {
   const q = clanMasterQuery.value.trim();
   if (!q) {
@@ -587,7 +599,7 @@ async function doSearchClanMaster() {
   }
 }
 
-/** 提交建谱申请（写 pending；总编审批通过后建宗谱树，URL 为 /z/<tree_id>） */
+/** 提交建谱申请（写 pending；总编审批通过后建祖谱树，URL 为 /z/<tree_id>） */
 async function doSubmitClanRequest() {
   const token = getAuthToken();
   if (!token) {
@@ -693,7 +705,7 @@ onMounted(async () => {
     if (hallInfo.value?.display_title) {
       uni.setNavigationBarTitle({ title: hallInfo.value.display_title });
     }
-    // 已绑定宗谱判定（普通树才需要：总谱/宗谱页面不出现建谱入口）
+    // 已绑定祖谱判定（普通树才需要：总谱/祖谱页面不出现建谱入口）
     if (!isMaster.value && !isClan.value) {
       await detectClanBound(meta);
     }
@@ -701,13 +713,22 @@ onMounted(async () => {
     console.error('加载数字馆信息失败:', e);
   }
 
-  // 家族树资金（公开；总谱页与宗谱页不展示）
+  // 家族树资金（公开；总谱页与祖谱页不展示）
   if (!isMaster.value && !isClan.value) {
     try {
       const fund = await fetchTreeBalance(treeId.value);
       treeBalance.value = fund.balance_yuan;
     } catch (e) {
       console.error('加载家族树资金失败:', e);
+    }
+  }
+
+  // 时流子域入口状态（guest 亦可读摘要；失败只降级文案，不影响首页渲染）
+  if (!isMaster.value) {
+    try {
+      spiritInfo.value = await fetchSpirit(treeId.value);
+    } catch {
+      spiritInfo.value = null;
     }
   }
 
@@ -732,6 +753,30 @@ onMounted(async () => {
     }
   }
 });
+
+/** 时流子域入口文案：未镶嵌「未开启 · 镶嵌石榴籽玉解锁」；已镶嵌状态**主**文案（state_text.primary）+ 到期日；停用置灰 */
+const spiritOff = computed(() => spiritInfo.value?.status === 'expired');
+const spiritEntrySub = computed(() => {
+  const s = spiritInfo.value;
+  if (!s) return '家族专属空间 · 灵气蓄能';
+  if (!s.mounted) return '未开启 · 镶嵌石榴籽玉解锁';
+  if (s.status === 'expired') return '已停用，灌注可重新激活';
+  const exp = (s.spirit_expires_at || '').slice(0, 10);
+  // 入口条只取主文案（对象出参直接拼接会显示 [object Object]）
+  const main =
+    stateTextPrimary(s.state_text) ||
+    (s.status === 'active' ? '灵气充盈' : s.status === 'buffer' ? '灵气已尽' : '未激活');
+  return exp ? `${main} · 到期 ${exp}` : main;
+});
+
+/** 进入时流子域页（带当前 tree_id） */
+function goSpirit() {
+  if (!treeId.value) {
+    uni.showToast({ title: '缺少家族树参数', icon: 'none' });
+    return;
+  }
+  uni.navigateTo({ url: `/pages/spirit/index?tree_id=${treeId.value}` });
+}
 
 function goTransfer() {
   // 跳转钱包页，预填 tree_id
@@ -818,7 +863,7 @@ async function saveEdit() {
   padding: 4px 10px; border: 1px solid #D7B27A; border-radius: 12px;
 }
 
-/* 已绑定宗谱提示（替代建谱入口） */
+/* 已绑定祖谱提示（替代建谱入口） */
 .clan-bound-hint {
   display: inline-block; margin-top: 10px; padding: 6px 14px;
   background: #FBF6EF; border: 1px dashed #D7B27A; border-radius: 16px;
@@ -906,6 +951,18 @@ async function saveEdit() {
   flex: 1; font-size: 12px; color: #2C5F8A;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* 时流子域入口 */
+.spirit-entry {
+  margin-top: 12px; padding: 12px 14px; background: #FBF6EF;
+  border-radius: 10px; display: flex; align-items: center; gap: 10px;
+  text-align: left;
+}
+.spirit-entry.off { background: #F2F2F2; opacity: 0.75; }
+.spirit-entry-main { flex: 1; }
+.spirit-entry-title { font-size: 14px; font-weight: bold; color: #8B4513; display: block; }
+.spirit-entry-sub { font-size: 12px; color: #B5A594; display: block; margin-top: 2px; }
+.spirit-entry-arrow { font-size: 18px; color: #B5A594; }
 
 /* 家族树资金 */
 .tree-fund {

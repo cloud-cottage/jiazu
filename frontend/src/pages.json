@@ -37,6 +37,24 @@
       }
     },
     {
+      "path": "pages/assets/index",
+      "style": {
+        "navigationBarTitleText": "我的资产"
+      }
+    },
+    {
+      "path": "pages/market/index",
+      "style": {
+        "navigationBarTitleText": "竹简市集"
+      }
+    },
+    {
+      "path": "pages/spirit/index",
+      "style": {
+        "navigationBarTitleText": "时流子域"
+      }
+    },
+    {
       "path": "pages/admin/index",
       "style": {
         "navigationBarTitleText": "角色管理"

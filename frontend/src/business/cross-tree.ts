@@ -62,7 +62,7 @@ export function resolveTreeIdByHost(host: string, meta: TreeMeta): string | null
 export function treePathAlias(treeId: string, meta: TreeMeta | null): string {
   const entry = meta?.trees?.[treeId] || Object.values(meta?.trees || {}).find((t) => t.tree_id === treeId);
   if (entry?.path_alias) return entry.path_alias;
-  // 宗谱固定走 /z/<tree_id>（docs/clan-tree.spec.md §6）
+  // 祖谱固定走 /z/<tree_id>（docs/clan-tree.spec.md §6）
   if (entry?.kind === 'clan') return `/z/${treeId}`;
   return `/${treeId}`;
 }

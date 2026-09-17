@@ -3,19 +3,19 @@
     <view class="clan-hero">
       <text class="clan-title">{{ info?.title || treeId }}</text>
       <view class="clan-meta">
-        <t-tag theme="primary" variant="light" size="small">宗谱</t-tag>
+        <t-tag theme="primary" variant="light" size="small">祖谱</t-tag>
         <text v-if="info?.surname" class="clan-surname">{{ info.surname }}氏</text>
         <text v-if="info?.genealogy_name" class="clan-genealogy">谱名：{{ info.genealogy_name }}</text>
       </view>
       <text v-if="info?.notice" class="clan-notice">⚠️ {{ info.notice }}</text>
-      <!-- 编辑宗谱信息（复用普通树的编辑表单 + PUT /tree-meta；该接口限总编辑） -->
+      <!-- 编辑祖谱信息（复用普通树的编辑表单 + PUT /tree-meta；该接口限总编辑） -->
       <view v-if="isAdmin" class="clan-edit-entry" @click="openEdit">
-        <text class="clan-edit-text">✏️ 编辑宗谱信息</text>
+        <text class="clan-edit-text">✏️ 编辑祖谱信息</text>
       </view>
     </view>
 
     <view v-if="loading" class="clan-loading">
-      <t-loading theme="spinner" text="加载宗谱..." />
+      <t-loading theme="spinner" text="加载祖谱..." />
     </view>
     <view v-else-if="error" class="clan-error">
       <text>{{ error }}</text>
@@ -23,7 +23,7 @@
     </view>
 
     <template v-else>
-      <!-- 左侧功能按钮（与普通家族树首页对齐）：血脉图示 / 版式文档（占位）/ 宗谱消息（管理权限） -->
+      <!-- 左侧功能按钮（与普通家族树首页对齐）：血脉图示 / 版式文档（占位）/ 祖谱消息（管理权限） -->
       <view class="view-toggle">
         <view class="view-btn" :class="{ active: view === 'pedigree' }" @click="view = 'pedigree'">
           <text class="view-text">血脉图示</text>
@@ -37,7 +37,7 @@
           :class="{ active: view === 'msg' }"
           @click="view = 'msg'"
         >
-          <text class="view-text">宗谱消息</text>
+          <text class="view-text">祖谱消息</text>
         </view>
       </view>
 
@@ -52,7 +52,7 @@
           镜像自中华世本（总谱），以真身为准；本层内不可修改，要改请到真身所在层。
         </text>
         <view v-if="!mirrors.length" class="seg-empty">
-          该宗谱未认祖世本：请在本宗谱始祖节点发起「认祖（挂到中华世本）」。
+          该祖谱未认祖世本：请在本祖谱始祖节点发起「认祖（挂到中华世本）」。
         </view>
         <view v-else class="mirror-list">
           <view
@@ -69,7 +69,7 @@
               <view class="mirror-head">
                 <text class="mirror-name">{{ m.name }}</text>
                 <t-tag theme="primary" variant="light" size="small">
-                  {{ m.link_type === 'founder' ? '宗谱始祖' : '世系链' }}
+                  {{ m.link_type === 'founder' ? '祖谱始祖' : '世系链' }}
                 </t-tag>
                 <t-tag theme="default" variant="light" size="small">只读</t-tag>
               </view>
@@ -87,7 +87,7 @@
           <text class="seg-count">自有 {{ ownCount }} 人 · 镜像 {{ mirrors.length }} · 合计 {{ totalCount }}</text>
         </view>
         <text class="seg-hint">
-          自有世代是本宗真实数据（可编辑、可续编、可被普通家族树认祖）；宗谱人数不计入世本统计。
+          自有世代是本宗真实数据（可编辑、可续编、可被普通家族树认祖）；祖谱人数不计入世本统计。
         </text>
         <view v-if="info?.founder_handle" class="seg-actions">
           <t-button size="small" variant="outline" theme="primary" @click="openOwnFounder">
@@ -97,14 +97,14 @@
         <TreePedigree :tree-id="treeId" default-layout="vertical" />
       </view>
 
-      <!-- ③ 底部：支系入口列表（认本宗谱为祖的普通家族树） -->
+      <!-- ③ 底部：支系入口列表（认本祖谱为祖的普通家族树） -->
       <view class="segment">
         <view class="seg-head">
           <text class="seg-title">支系入口列表</text>
           <text class="seg-count">{{ branches.length }} 支</text>
         </view>
-        <text class="seg-hint">认本宗谱为祖的普通家族树；各支人数不计入本宗谱。</text>
-        <view v-if="!branches.length" class="seg-empty">暂无家族树认本宗谱为祖。</view>
+        <text class="seg-hint">认本祖谱为祖的普通家族树；各支人数不计入本祖谱。</text>
+        <view v-if="!branches.length" class="seg-empty">暂无家族树认本祖谱为祖。</view>
         <view
           v-for="b in branches"
           :key="b.tree_id"
@@ -122,29 +122,29 @@
       </view>
       </view>
 
-      <!-- 版式文档（占位：宗谱版式文档尚未开放） -->
+      <!-- 版式文档（占位：祖谱版式文档尚未开放） -->
       <view v-else-if="view === 'doc'" class="doc-placeholder">
         <text class="doc-ph-title">版式文档</text>
-        <text class="doc-ph-text">宗谱版式文档（印刷版式 / 排版导出）尚未开放，敬请期待。</text>
+        <text class="doc-ph-text">祖谱版式文档（印刷版式 / 排版导出）尚未开放，敬请期待。</text>
       </view>
 
-      <!-- 宗谱消息（审批入口）：复用 family-messages，文案按层级 = 「宗谱消息」 -->
+      <!-- 祖谱消息（审批入口）：复用 family-messages，文案按层级 = 「祖谱消息」 -->
       <view v-else class="clan-msg-body">
         <FamilyMessages :tree-id="treeId" level="clan" />
       </view>
     </template>
 
-    <!-- 编辑宗谱信息弹窗（字段与普通家族树首页一致；PUT /tree-meta） -->
+    <!-- 编辑祖谱信息弹窗（字段与普通家族树首页一致；PUT /tree-meta） -->
     <view v-if="showEdit" class="modal-mask" @click.self="showEdit = false">
       <view class="modal" @click.stop>
-        <text class="modal-title">编辑宗谱信息</text>
+        <text class="modal-title">编辑祖谱信息</text>
         <view class="form-item">
-          <text class="label">宗谱名称</text>
-          <input v-model="editForm.display_title" class="input" placeholder="如：季氏宗谱" />
+          <text class="label">祖谱名称</text>
+          <input v-model="editForm.display_title" class="input" placeholder="如：季氏祖谱" />
         </view>
         <view class="form-item">
-          <text class="label">谱名（宗谱/族谱名称）</text>
-          <input v-model="editForm.genealogy_name" class="input" placeholder="如：季氏宗谱" />
+          <text class="label">谱名（祖谱/族谱名称）</text>
+          <input v-model="editForm.genealogy_name" class="input" placeholder="如：季氏祖谱" />
         </view>
         <view class="form-item">
           <text class="label">文献地址（线上网盘 uri）</text>
@@ -160,7 +160,7 @@
         </view>
         <view class="form-item">
           <text class="label">简介</text>
-          <textarea v-model="editForm.description" class="textarea" placeholder="宗谱简介" />
+          <textarea v-model="editForm.description" class="textarea" placeholder="祖谱简介" />
         </view>
         <view v-if="editError" class="edit-error">{{ editError }}</view>
         <view class="modal-actions">
@@ -177,12 +177,12 @@
 
 <script setup lang="ts">
 /**
- * 宗谱首页（docs/clan-tree.spec.md §3-5 / §7 P4）：三段版式
+ * 祖谱首页（docs/clan-tree.spec.md §3-5 / §7 P4）：三段版式
  *   ① 顶端「世系链（世本镜像段 · 只读）」—— link_type='founder'/'chain'，真身在中华世本
  *   ② 中部「本宗自有世代」—— 真实数据，可编辑/续编（树图复用 TreePedigree）
- *   ③ 底部「支系入口列表」—— 认本宗谱为祖的普通家族树，可点进
+ *   ③ 底部「支系入口列表」—— 认本祖谱为祖的普通家族树，可点进
  * 路由：/z/<tree_id>（App.vue 解析）；数据：GET /admin/clan-info
- * 统计口径：宗谱人数不计入世本；普通树人数不计入宗谱。
+ * 统计口径：祖谱人数不计入世本；普通树人数不计入祖谱。
  */
 import { computed, onMounted, ref, watch } from 'vue';
 import { fetchClanInfo, openTreeHome, updateTreeMeta, fetchTreeMetaRemote, fetchMyAnchor } from '@/business';
@@ -203,13 +203,13 @@ const loading = ref(true);
 const error = ref('');
 
 // ---- 视图切换与功能入口（与普通家族树首页对齐） ----
-/** 血脉图示（默认）/ 版式文档（占位）/ 宗谱消息（管理权限） */
+/** 血脉图示（默认）/ 版式文档（占位）/ 祖谱消息（管理权限） */
 const view = ref<'pedigree' | 'doc' | 'msg'>('pedigree');
-/** 宗谱消息入口可见性：chief_editor 全局；tree_steward 仅本宗谱（锚点树 == 本树） */
+/** 祖谱消息入口可见性：chief_editor 全局；tree_steward 仅本祖谱（锚点树 == 本树） */
 const canManageTree = ref(false);
-/** 总编辑（PUT /tree-meta 限 chief_editor）→ 编辑宗谱信息入口 */
+/** 总编辑（PUT /tree-meta 限 chief_editor）→ 编辑祖谱信息入口 */
 const isAdmin = computed(() => isAuthenticated() && authState.role === 'chief_editor');
-/** 本宗谱 tree-meta 条目（编辑表单回填） */
+/** 本祖谱 tree-meta 条目（编辑表单回填） */
 const clanEntry = ref<TreeEntry | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
@@ -249,7 +249,7 @@ function openEdit() {
   showEdit.value = true;
 }
 
-/** 保存宗谱信息（复用现有 updateTreeMeta；成功后就地刷新宗谱信息） */
+/** 保存祖谱信息（复用现有 updateTreeMeta；成功后就地刷新祖谱信息） */
 async function saveEdit() {
   const token = getAuthToken();
   if (!token) {
@@ -288,7 +288,7 @@ async function load() {
     if (info.value.title) {
       uni.setNavigationBarTitle({ title: info.value.title });
     }
-    // 宗谱 tree-meta 条目（编辑表单回填；读不到就以 clan-info 为准）
+    // 祖谱 tree-meta 条目（编辑表单回填；读不到就以 clan-info 为准）
     try {
       const m = await fetchTreeMetaRemote();
       clanEntry.value = (Object.values(m.trees) as TreeEntry[]).find((t) => t.tree_id === props.treeId) || null;
@@ -296,7 +296,7 @@ async function load() {
       clanEntry.value = null;
     }
   } catch (e: any) {
-    error.value = e?.message || '加载宗谱失败';
+    error.value = e?.message || '加载祖谱失败';
   } finally {
     loading.value = false;
   }
@@ -339,7 +339,7 @@ watch(
 <style scoped>
 .clan-hall { padding: 12px 12px 32px; }
 
-/* 编辑宗谱信息入口 */
+/* 编辑祖谱信息入口 */
 .clan-edit-entry {
   display: inline-block; margin-top: 10px; padding: 7px 16px;
   background: #FFF3E0; border: 1px solid #E8C9A0; border-radius: 18px;
@@ -368,7 +368,7 @@ watch(
 .doc-ph-title { font-size: 15px; font-weight: bold; color: #8B4513; display: block; }
 .doc-ph-text { font-size: 12px; color: #A1887F; display: block; margin-top: 8px; line-height: 1.6; }
 
-/* 宗谱消息视图（左侧按钮留位） */
+/* 祖谱消息视图（左侧按钮留位） */
 .clan-msg-body { margin-left: 8px; }
 
 /* 编辑弹窗 */

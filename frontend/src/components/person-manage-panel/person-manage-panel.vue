@@ -26,7 +26,7 @@
         <text v-else class="mp-hint">{{ chainBlockedHint }}</text>
       </template>
 
-      <!-- 普通家族树：加父/加子/加配偶 + 拆分（晋宗入口已废弃：见 docs/founder-attach.spec.md §6，改走始祖挂载「认祖」） -->
+      <!-- 普通家族树：加父/加子/加配偶 + 拆分（始祖挂载「认祖」见 docs/founder-attach.spec.md §6） -->
       <template v-else>
         <t-button
           v-if="canAddNode"
@@ -50,6 +50,15 @@
           :loading="splitting"
           @click="confirmSplit"
         >{{ splitting ? '处理中...' : '⛔ 移除并新建家族树' }}</t-button>
+        <!-- 立支（docs/branch-clan-ops.spec.md §6-1 / §9-1）：本树普通节点 N → 新家族树始祖（一次 9999 颗石榴籽） -->
+        <t-button
+          v-if="canEstablishBranch"
+          size="small"
+          variant="outline"
+          theme="warning"
+          :loading="establishing"
+          @click="confirmEstablishBranch"
+        >{{ establishing ? '处理中...' : '🌱 立支（新家族树）' }}</t-button>
       </template>
 
       <!-- 加配偶（总谱/普通树通用）：同树配偶；已有家族补空位，已满则新建家族 -->
@@ -61,6 +70,8 @@
         @click="openAddNode('spouse', 'new')"
       >＋ 添加配偶</t-button>
     </view>
+    <!-- 计费口径提示（docs/economy-fee.spec.md §7 / §3-1 #9–#18）：新增类一律 0 片，避免用户因删改计费而不敢新增 -->
+    <text v-if="canAddNode" class="mp-hint">新增类操作（加父 / 加子 / 加配偶 / 挂接已有节点 / 续编）不消耗竹片</text>
     <text v-if="panelError" class="mp-error">{{ panelError }}</text>
 
     <!-- 加父/加子/续编/加配偶 内联面板 -->
@@ -188,7 +199,11 @@ import {
   addChildNode,
   appendChainNode,
   addSpouseNode,
+  postEstablishBranch,
+  fetchAssetsSummary,
+  fetchTreeMetaRemote,
 } from '@/business/api';
+import { isAssetInsufficientError, goMyAssets } from '@/business/asset-guide';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import { personIdDisplay } from '@/business/format';
 import type { PersonSummary } from '@/business/types';
@@ -201,8 +216,8 @@ import type { PersonSummary } from '@/business/types';
  * 全程内联于所在弹窗，不产生新的整屏弹窗层。
  * 所有操作成功后 emit('tree-changed')，由宿主刷新树图与档案。
  *
- * 注：「晋宗」（把祖先链并入总谱并删源）入口已按 docs/founder-attach.spec.md §6 废弃，
- * 改为始祖挂载的「认祖」（不删源，见 person-archive.vue）；promoteTree() 后端函数保留给历史数据。
+ * 注：把祖先链并入总谱并删源的旧入口已按 docs/founder-attach.spec.md §6 移除，
+ * 改走始祖挂载的「认祖」（不删源，见 person-archive.vue）。
  */
 const props = defineProps<{
   treeId: string;
@@ -220,6 +235,12 @@ const props = defineProps<{
   personGender?: 'M' | 'F' | 'U';
   /** 新增子节点的默认姓（随父姓：父方姓优先，父不详取本人姓） */
   childSurnameDefault?: string;
+  /** 本树层级（tree-meta.kind；'family' 才可立支，总谱 / 祖谱节点不可立支，§6-1-2） */
+  treeKind?: string;
+  /** 当前节点是否本树始祖位（始祖节点本身不可立支，§3-5） */
+  isFounder?: boolean;
+  /** 当前节点是否外树镜像节点（external_mirror='true' / 指向别树的始祖镜像 → 不可立支） */
+  isMirror?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -495,6 +516,139 @@ async function confirmSplit() {
     panelError.value = e.message || '拆分失败';
   } finally {
     splitting.value = false;
+  }
+}
+
+// ---- 立支（普通节点 → 新家族树始祖；docs/branch-clan-ops.spec.md §6-1 / §9-1 / §9-2）----
+
+/**
+ * 立支单价默认值（颗石榴籽）：真源在后端 `jiazu_wallets.config.branch_fee_seeds`（默认 9999，§5-4），
+ * 前端只用于**提交前**确认文案的明示数字；实际扣费以后端响应 `fee.amount` 为准。
+ */
+const BRANCH_FEE_SEEDS = 9999;
+
+/** 籽不足时的附注清单（§9-2 L3 定稿：签到 / 邀请 / 贡献 / 玉分解返还） */
+const HOW_TO_GET_SEEDS = '签到 / 邀请 / 贡献 / 玉分解返还';
+
+const establishing = ref(false);
+
+/**
+ * 可立支（§9-1 显示条件）：本树写权（`tree_steward` / `chief_editor`，即 canAddNode）
+ * 且树 `kind='family'`（总谱 / 祖谱节点不可立支）且该节点非始祖位、非镜像节点。
+ */
+const canEstablishBranch = computed(
+  () =>
+    canAddNode.value &&
+    (props.treeKind || 'family') === 'family' &&
+    !props.isFounder &&
+    !props.isMirror,
+);
+
+/** 预读当前石榴籽可用量（L1 的「当前可用【XX】颗」；读失败 → 占位写「以实际扣费为准」，不阻塞） */
+async function readSeedBalance(): Promise<number | null> {
+  try {
+    const summary = await fetchAssetsSummary();
+    return summary.seeds_total;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * L1 立支确认（**定稿文案逐字使用**，§9-2；` / ` = 换行，【】内为运行时填值）。
+ * 一次性写清：原树保留 N 及其全部后代 / 祖先链上移并入宗谱 / 新树以 N 为始祖 / 费用与不可退回。
+ */
+function establishConfirmText(name: string, balance: number | null): string {
+  const balanceText = balance === null ? '以实际扣费为准' : String(balance);
+  return [
+    '⚠️ 立支确认',
+    `本次将把「${name}」立为新家族树的始祖：其上级祖先链将整体上移并入本家族宗谱；原家族树保留「${name}」及其全部后代（始祖改为「${name}」）。`,
+    `本次操作将消耗${BRANCH_FEE_SEEDS}颗石榴籽，消耗时优先扣除您账户内即将最先到期的石榴籽，消耗后不可退回（当前可用${balanceText}颗）。`,
+    '是否确认立支？',
+  ].join('\n');
+}
+
+/** 新树展示名：立支出参无该字段（§8-1）→ 用 tree-meta 现查；查不到回落 tree_id */
+async function resolveNewTreeTitle(newTreeId: string): Promise<string> {
+  try {
+    const meta = await fetchTreeMetaRemote();
+    const hit = Object.values(meta.trees || {}).find((t: any) => t.tree_id === newTreeId);
+    return hit?.display_title || newTreeId;
+  } catch {
+    return newTreeId;
+  }
+}
+
+/** 籽不足时的明细行（`ASSET_INSUFFICIENT` 的 need / current / unit / how_to_get **带到 UI**） */
+function seedShortageLines(e: unknown): string[] {
+  const err = e as { need?: number; current?: number; unit?: string; howToGet?: string[] } | undefined;
+  const lines: string[] = [];
+  if (err?.need !== undefined || err?.current !== undefined || err?.unit !== undefined) {
+    lines.push(
+      `本次需 ${err?.need ?? '—'} 颗，当前可用 ${err?.current ?? '—'} 颗${err?.unit ? `（单位：${err.unit}）` : ''}`,
+    );
+  }
+  const provided = err?.howToGet;
+  const items = Array.isArray(provided) && provided.length ? provided.join(' / ') : HOW_TO_GET_SEEDS;
+  lines.push(`如何获得石榴籽：${items}`);
+  return lines;
+}
+
+/**
+ * 立支：二次强确认（L1）→ 提交 `{ tree_id, person_handle }` → L2 成功 toast（含新树名 / 上移人数 / 余量）。
+ * 取消一律**不发请求**（§9-1）；失败 L3「立支失败：【后端 error 原文】」（籽不足附「如何获得石榴籽」）。
+ */
+async function confirmEstablishBranch() {
+  const token = getAuthToken();
+  if (!token) {
+    panelError.value = '登录已过期，请重新登录';
+    return;
+  }
+  panelError.value = '';
+  const name = props.personName || '本节点';
+  const balance = await readSeedBalance();
+  const confirmed = await new Promise<boolean>((resolve) => {
+    uni.showModal({
+      title: '⚠️ 立支确认',
+      content: establishConfirmText(name, balance),
+      confirmText: '确认立支',
+      cancelText: '取消',
+      success: (res) => resolve(!!res.confirm),
+      fail: () => resolve(false),
+    });
+  });
+  if (!confirmed) return;
+
+  establishing.value = true;
+  try {
+    const res = await postEstablishBranch(props.treeId, props.handle);
+    const newTitle = await resolveNewTreeTitle(res.new_tree_id);
+    // L2 立支成功（定稿文案逐字；数字取本次响应）
+    uni.showToast({
+      title: `立支成功：新家族树「${newTitle}」（${res.new_tree_id}）已建立，共上移${res.moved_ancestors}位祖先、${res.moved_families}个家族，本次消耗 ${res.fee?.amount ?? BRANCH_FEE_SEEDS} 颗石榴籽，余 ${res.fee?.balance_after ?? '—'} 颗`,
+      icon: 'none',
+      duration: 4000,
+    });
+    // 树图与档案刷新（原树始祖已改为 N，并多出一棵新树）
+    emit('tree-changed');
+  } catch (e: any) {
+    // L3 立支失败（定稿文案逐字：直出后端 error 原文，不改写、不自造错误码文案）
+    const msg = e?.message || '请求失败';
+    panelError.value = `立支失败：${msg}`;
+    if (isAssetInsufficientError(e)) {
+      const lines = [`立支失败：${msg}`, ...seedShortageLines(e)];
+      uni.showModal({
+        title: '⚠️ 立支失败',
+        content: lines.join('\n'),
+        confirmText: '去我的资产',
+        cancelText: '稍后再说',
+        success: (r) => { if (r.confirm) goMyAssets(); },
+      });
+      return;
+    }
+    uni.showModal({ title: '立支失败', content: `立支失败：${msg}`, showCancel: false });
+  } finally {
+    establishing.value = false;
   }
 }
 </script>

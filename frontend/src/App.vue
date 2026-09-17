@@ -8,15 +8,15 @@ const RESERVED_PATHS = new Set([
   'pages', 'static', 'assets', 'api', 'index.html', 'favicon.ico', 'node_modules', 'z',
 ]);
 
-/** 宗谱可读 uri：/z/<tree_id>（仅表示 kind='clan' 的树，页面内按 kind 切三段版式） */
+/** 祖谱可读 uri：/z/<tree_id>（仅表示 kind='clan' 的树，页面内按 kind 切三段版式） */
 const CLAN_PATH_RE = /^\/z\/([a-z0-9_]+)$/;
-/** hash 形式宗谱别名：#/z/<tree_id> */
+/** hash 形式祖谱别名：#/z/<tree_id> */
 const CLAN_HASH_RE = /^z\/([a-z0-9_]+)$/;
 
 /**
  * 家族树可读 uri 解析：
  * - 路径形式  /ji_23395_01          → 家族树首页（地址栏保持可读 uri）
- * - 路径形式  /z/ji_23395           → 宗谱首页（kind='clan'）
+ * - 路径形式  /z/ji_23395           → 祖谱首页（kind='clan'）
  * - hash 形式 #/ji_23395_01 / #/z/ji_23395 → 同上
  */
 function resolveTreeAlias() {
@@ -64,7 +64,7 @@ function resolveHostTree() {
       if (hashPath.startsWith('pages/')) return;
       const pathname = location.pathname.replace(/\/+$/, '');
       if (pathname.startsWith('/pages/')) return;
-      // 显式路径别名（如 /ji_23395_01、宗谱 /z/ji_23395）优先于子域
+      // 显式路径别名（如 /ji_23395_01、祖谱 /z/ji_23395）优先于子域
       if (CLAN_PATH_RE.test(pathname)) return;
       const m = pathname.match(/^\/([a-z0-9_]+)$/);
       if (m && !RESERVED_PATHS.has(m[1])) return;
@@ -73,9 +73,9 @@ function resolveHostTree() {
     .catch(() => {});
 }
 
-/** 按别名跳转家族树 / 宗谱首页（isClan=true 时地址栏保持 /z/<tree_id>） */
+/** 按别名跳转家族树 / 祖谱首页（isClan=true 时地址栏保持 /z/<tree_id>） */
 function openAlias(alias: string, isHash: boolean, isClan = false) {
-  // 常见形态：path_alias 即 /tree_id（ji_23395_01）或宗谱 /z/ji_23395，按规则直接跳转，零等待
+  // 常见形态：path_alias 即 /tree_id（ji_23395_01）或祖谱 /z/ji_23395，按规则直接跳转，零等待
   let treeId = /^[a-z]+_\d+(?:_\d{2})?$/.test(alias) ? alias : '';
   if (!treeId) {
     fetch('/api/tree-meta')
@@ -103,12 +103,12 @@ function gotoAlias(treeId: string, alias: string, isHash: boolean, isClan = fals
     location.replace(`#/pages/hall/index?tree_id=${treeId}`);
     return;
   }
-  // 路径形式：reLaunch 到首页，地址栏保持可读 uri（宗谱带 /z/ 前缀）
+  // 路径形式：reLaunch 到首页，地址栏保持可读 uri（祖谱带 /z/ 前缀）
   uni.reLaunch({ url: `/pages/hall/index?tree_id=${treeId}` });
   keepAliasUrl(alias, treeId, isClan ? `/z/${alias}` : `/${alias}`);
 }
 
-/** 等待内部路由提交后，把地址栏改写为可读 uri（/ji_23395_01 或宗谱 /z/ji_23395） */
+/** 等待内部路由提交后，把地址栏改写为可读 uri（/ji_23395_01 或祖谱 /z/ji_23395） */
 function keepAliasUrl(alias: string, treeId: string, readablePath: string, tries = 0) {
   if (location.hash.includes(`pages/hall/index?tree_id=${treeId}`)) {
     history.replaceState(null, '', readablePath);
