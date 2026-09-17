@@ -8,8 +8,10 @@
  * 写接口（P2）：
  *   POST /auth/send-code | /auth/register | /auth/login
  *   GET  /auth/me
- *   GET  /wallet/balance | /wallet/tree-balance
- *   POST /wallet/recharge | /wallet/transfer
+ *   GET  /wallet/balance
+ *   POST /wallet/recharge
+ *   /wallet/transfer、/wallet/tree-balance：**家族树资金功能已下线** → 恒 410（`TREE_FUND_RETIRED`，docs/economy.spec.md §12-3）
+ *   GET  /search/global（全站人物搜索：姓名 / 编号，跨树 + 节点级可见裁剪；无需 X-Tree-Id，注册在树编辑闸门之前）
  *   GET  /assets/summary | /assets/expiring（资产账本 · docs/economy.spec.md §6-1）
  *   POST /assets/synthesize-jade | /assets/decompose-jade（石榴籽玉合成 / 分解）
  *   GET  /spirit | POST /spirit/mount-jade | /spirit/charge（时流子域 · docs/spirit-domain.spec.md §6 / §7）
@@ -36,7 +38,7 @@
  *   POST /people/ | PUT /people/<handle> | POST /families/ | PUT /families/<handle>
  */
 import { getMeta, saveMeta, getTree, getAllDetails, getDetail, getEventIndex, colGet, colAll, colSet, updateTrees } from './lib/store.js';
-import { signJwt, verifyJwt, authUser, requestCode, verifyCode, findOrCreateUser, ROLE_LEVEL } from './lib/auth.js';
+import { signJwt, authUser, requestCode, verifyCode, findOrCreateUser, ROLE_LEVEL } from './lib/auth.js';
 import * as wallet from './lib/wallet.js';
 import * as ledger from './lib/economy-ledger.js';
 import * as eco from './lib/economy-fee.js';
@@ -51,7 +53,8 @@ import * as fa from './lib/founder-attach.js';
 import * as clan from './lib/clan.js';
 import * as bco from './lib/branch-clan-ops.js';
 import { resolveNode } from './lib/id-resolve.js';
-import { idAllocator, reserveFamilyIds, reservePersonIds } from './lib/id-seq.js';
+import { idAllocator, reserveFamilyIds, reservePersonIds, numberOfId } from './lib/id-seq.js';
+import { treeActivity } from './lib/tree-activity.js';
 import { computeAccess, isHiddenFamily, accessToPayload, computePersonDepth } from './lib/tree-access.js';
 
 const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
@@ -444,6 +447,8 @@ async function handleRequest(event) {
       const { totalGenerations, personCount, explicit } = computeTreeDepth(tree, gens);
       const rank = rankFromDepth(totalGenerations);
       const access = await resolveTreeAccess(headers, treeId, tree);
+      // activity：近 30 天与本树相关的互动事件数（lib/tree-activity.js；集合不可用恒 0，不抛）
+      const activity = await treeActivity(treeId, { now: new Date() });
       return send(200, {
         tree_id: treeId,
         total_generations: totalGenerations,
@@ -456,6 +461,8 @@ async function handleRequest(event) {
         root_count: Object.values(tree.people).filter((p) => !p.parent_family).length,
         person_count: personCount,
         explicit,
+        activity,
+        updated_at: tree.updated_at === undefined || tree.updated_at === null ? '' : String(tree.updated_at),
         access: accessToPayload(access, totalGenerations),
       });
     }
@@ -480,30 +487,14 @@ async function handleRequest(event) {
       }
     }
 
+    // 家族树资金 / 转账功能已整体下线（docs/economy.spec.md §12-3「人民币钱包收缩」）：
+    // 路由保留（防旧前端静默 404），**在任何鉴权 / 参数校验之前**恒返回 410 + `TREE_FUND_RETIRED`。
     if (pathname === '/wallet/transfer' && method === 'POST') {
-      const u = await authUser(headers);
-      if (!u) return send(401, { error: '未登录或登录已过期' });
-      const body = parseBody(event);
-      const targetTree = String(body.tree_id || '').trim();
-      const amount = Number(body.amount);
-      if (!targetTree) return send(400, { error: '缺少 tree_id' });
-      if (!amount || amount <= 0) return send(400, { error: '请输入正确的金额' });
-      const meta = await getMeta();
-      if (!Object.values(meta.trees).some((t) => t.tree_id === targetTree)) {
-        return send(404, { error: `家族树不存在: ${targetTree}` });
-      }
-      try {
-        const r = await wallet.transferToTree(u.phone, targetTree, Math.round(amount * 100));
-        return send(200, { ok: true, user_balance_yuan: (r.user_balance / 100).toFixed(2), tree_balance_yuan: (r.tree_balance / 100).toFixed(2) });
-      } catch (e) {
-        return safeError(e);
-      }
+      return send(410, { error: '家族树资金功能已下线', code: 'TREE_FUND_RETIRED' });
     }
 
     if (pathname === '/wallet/tree-balance' && method === 'GET') {
-      const targetTree = query.tree_id || '';
-      if (!targetTree) return send(400, { error: '缺少 tree_id' });
-      return send(200, { tree_id: targetTree, balance_yuan: ((await wallet.getTreeBalance(targetTree)) / 100).toFixed(2) });
+      return send(410, { error: '家族树资金功能已下线', code: 'TREE_FUND_RETIRED' });
     }
 
     // 后台费用设置（治理路由，沿用既有入口；docs/branch-clan-ops.spec.md §5-4 / §13-13）：
@@ -2026,6 +2017,251 @@ async function handleRequest(event) {
       if (!body.tree_id || !body.person_handle) return send(400, { error: '缺少 tree_id 或 person_handle' });
       await tw.removeBranchLink(body.tree_id, body.person_handle);
       return send(200, { ok: true });
+    }
+
+    // GET /search/global（全站人物搜索：跨树按姓名 / 编号检索，套节点级读权限裁剪 + 镜像归并）
+    // 口径 B：**不需要 X-Tree-Id**，且必须注册在树编辑闸门（下方 `缺少 X-Tree-Id`）**之前**。
+    // 口径 D（镜像归并）：镜像节点按**最终真身** handle 折叠，同一人只出一条；出参新增 restricted。
+    // 口径 D-2（假受限修复）：restricted **不再用「组内有没有真身节点」代理**，而是递归解析镜像链到最终真身，
+    //   再**直接判定真身对当前访问者的可见性**：
+    //   真身可见 → 代表取真身（tree_id/tree_title/handle/gramps_id/… 全取真身）且 restricted=false
+    //             —— 即使查询（编号 / 姓名）只命中镜像；
+    //   真身不可见 / 解析不到 → 代表保持镜像且 restricted=true，且**不得泄漏真身**任何信息。
+    // 入参 query（trim 后为空 → 200 []）、limit（默认 30，clamp 1..100）。
+    // 排序：matched==='id' 命中置顶 → 其余按 tree_id 字典序（稳定，同树内保持 people 键序）。
+    // **先归并、后截断到 limit**（同一人不会占多个名额，故扫描阶段不做 limit 短路）。
+    if (pathname === '/search/global' && method === 'GET') {
+      const raw = String(query.query ?? '').trim();
+      if (!raw) return send(200, []);
+      const parsedLimit = parseInt(String(query.limit ?? ''), 10);
+      const limit = Number.isFinite(parsedLimit) ? Math.min(100, Math.max(1, parsedLimit)) : 30;
+      const qNorm = raw.replace(/\s+/g, '').toLowerCase(); // 去空格 + 小写（大小写不敏感）
+      const qNum = numberOfId(raw); // 纯数字形态（`123` / `000123` / `I000123` → 123；非编号 → null）
+
+      // 镜像判据：**只有** external_mirror==='true' 才算镜像 —— 真身自身也会带 external_*（配偶指针），不能作判据。
+      const isMirrorNode = (p) => String(p?.external_mirror) === 'true' && !!p?.external_person_handle;
+
+      // 请求内缓存（口径 D-2 · 改动 3）：同一次搜索里 getTree / resolveTreeAccess / 真身解析
+      // 按 tree_id（真身解析按 tree:handle）各只算一次 —— 真身可能落在候选集之外的树，递归解析会引发额外 IO。
+      // **只在本请求生命周期内有效**：可见性判定取决于请求者身份，绝不写成模块级长存（否则跨请求串权）。
+      const ctx = { treeCache: new Map(), accessCache: new Map(), realCache: new Map() };
+      const ctxTree = async (id) => {
+        const key = String(id || '');
+        if (!key) return null;
+        if (!ctx.treeCache.has(key)) {
+          let t = null;
+          try {
+            t = await getTree(key);
+          } catch {
+            t = null;
+          }
+          ctx.treeCache.set(key, t);
+        }
+        return ctx.treeCache.get(key);
+      };
+      const ctxAccess = async (id, tree) => {
+        const key = String(id || '');
+        if (!ctx.accessCache.has(key)) ctx.accessCache.set(key, await resolveTreeAccess(headers, key, tree));
+        return ctx.accessCache.get(key);
+      };
+
+      const meta = await getMeta();
+      const trees = [];
+      for (const [key, entry] of Object.entries(meta?.trees || {})) {
+        const id = String(entry?.tree_id || key || '').trim();
+        if (!id) continue;
+        const tree = await ctxTree(id);
+        if (!tree || !tree.people) continue; // meta 有登记但树文件缺失 → 跳过该树（不得整体 500）
+        // ord：该树内 people 键序（供归并后「同树内保持 people 键序」显式 tie-break，不依赖遍历顺序）
+        trees.push({ id, title: entry?.display_title || id, tree, ord: new Map(Object.keys(tree.people).map((h, i) => [h, i])) });
+      }
+      trees.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)); // tree_id 字典序（稳定）
+      const treeById = new Map(trees.map((t) => [t.id, t]));
+      // 树引用：真身可能不在候选集（本次命中）里 → 按 tree_id 从已加载树取；未登记树兜底用 meta 标题
+      const treeRefOf = (id) =>
+        treeById.get(id) || { id, title: String(meta?.trees?.[id]?.display_title || id), tree: null, ord: null };
+
+      // 递归解析最终真身（口径 D-2）：镜像节点沿 external_person_handle 逐级向上，直到非镜像节点。
+      // - 定位：先在 external_tree 对应的**已加载树**里找该 handle；external_tree 空/指错 → 扫其余已加载树（全局定位）；
+      // - 防环：已访问 handle 集合命中环 → 返回 null（环上没有真身，绝不拿镜像冒充真身）；
+      // - 防深：至多 MAX_MIRROR_HOPS 跳；断链（该环解析失败）→ 返回最后一个已解析节点（兵底，可能为 null）；
+      // - **绝不抛**：任何一环异常都收敛为「解析不到」（调用侧按 restricted=true 处理）。
+      const MAX_MIRROR_HOPS = 32;
+      const findPersonByHandle = async (treeId, handle) => {
+        const tip = String(treeId || '').trim();
+        if (tip) {
+          const p = treeById.get(tip)?.tree?.people?.[handle];
+          if (p) return { treeId: tip, person: p };
+        }
+        for (const t of trees) {
+          const p = t.tree?.people?.[handle];
+          if (p) return { treeId: t.id, person: p };
+        }
+        return null; // 未登记树 / 幽灵树 → 解析不到（不猜）
+      };
+      const resolveRealBody = async (t, p) => {
+        const ck = `${t.id}:${p.handle}`;
+        if (ctx.realCache.has(ck)) return ctx.realCache.get(ck);
+        const walk = async () => {
+          if (!isMirrorNode(p)) return { treeId: t.id, person: p }; // 已是真身
+          let cur = p;
+          let last = null; // 兵底：最后一个成功解析到的节点
+          const seen = new Set();
+          for (let hop = 0; hop < MAX_MIRROR_HOPS; hop++) {
+            const ref = String(cur.external_person_handle || '').trim();
+            if (!ref || seen.has(ref)) return null; // 空指针 / 成环 → 环上没有真身
+            seen.add(ref);
+            let hit = null;
+            try {
+              hit = await findPersonByHandle(cur.external_tree, ref);
+            } catch {
+              hit = null;
+            }
+            if (!hit) return last; // 该环解析失败 → 兵底（绝不抛）
+            if (!isMirrorNode(hit.person)) return hit; // 最终非镜像节点 = 真身
+            last = hit;
+            cur = hit.person;
+          }
+          return last; // 超深（异常数据）→ 兵底
+        };
+        const out = await walk();
+        ctx.realCache.set(ck, out);
+        return out;
+      };
+
+      const shape = (t, p, matched) => ({
+        tree_id: t.id,
+        tree_title: t.title,
+        handle: p.handle,
+        gramps_id: p.gramps_id || '',
+        name: p.name || `${p.surname || ''}${p.given || ''}`,
+        gender: p.gender || '',
+        birth_date: p.birth_date === undefined || p.birth_date === null ? '' : String(p.birth_date),
+        death_date: p.death_date === undefined || p.death_date === null ? '' : String(p.death_date),
+        matched,
+      });
+
+      // 候选全量收集（不截断；归并后再截断）：pushHit 只做 (tree_id, handle) 精确去重
+      const seen = new Set();
+      const hits = [];
+      const pushHit = (t, p, matched, pinned) => {
+        const k = `${t.id}:${p.handle}`;
+        if (seen.has(k)) return;
+        seen.add(k);
+        hits.push({ t, p, matched, pinned: pinned === true });
+      };
+
+      // ① 编号 / handle 精确命中（不传 treeId = 全站解析）→ matched:'id' 并置顶
+      let refHit = null;
+      try {
+        refHit = await resolveNode(raw);
+      } catch {
+        refHit = null; // 多树重号等歧义 → 退回下方姓名 / 编号扫描，不让搜索整体失败
+      }
+      if (refHit) {
+        const t = trees.find((x) => x.id === refHit.tree_id);
+        const p = t?.tree.people?.[refHit.handle];
+        if (t && p) {
+          const access = await ctxAccess(t.id, t.tree);
+          if (!access.isHiddenPerson(p.handle)) pushHit(t, p, 'id', true);
+        }
+      }
+
+      // ② 编号匹配（gramps_id 去掉 I/F 前缀后的数字部分与 query 的纯数字形态相等）→ matched:'id'
+      for (const t of trees) {
+        const access = await ctxAccess(t.id, t.tree);
+        for (const p of Object.values(t.tree.people)) {
+          if (!p || !p.handle) continue;
+          if (seen.has(`${t.id}:${p.handle}`)) continue;
+          if (access.isHiddenPerson(p.handle)) continue; // 节点级可见裁剪（guest / 登录未加入 / member 分档沿用既有函数）
+          const pid = numberOfId(p.gramps_id);
+          if (qNum === null || pid === null || pid !== qNum) continue;
+          pushHit(t, p, 'id', false);
+        }
+      }
+
+      // ③ 姓名匹配（name / surname / given 任一包含 query）→ matched:'name'
+      for (const t of trees) {
+        const access = await ctxAccess(t.id, t.tree);
+        for (const p of Object.values(t.tree.people)) {
+          if (!p || !p.handle) continue;
+          if (seen.has(`${t.id}:${p.handle}`)) continue;
+          if (access.isHiddenPerson(p.handle)) continue;
+          const hitName = [p.name, p.surname, p.given].some((f) =>
+            String(f === undefined || f === null ? '' : f)
+              .replace(/\s+/g, '')
+              .toLowerCase()
+              .includes(qNorm),
+          );
+          if (!hitName) continue;
+          pushHit(t, p, 'name', false);
+        }
+      }
+
+      // ==== 镜像归并（口径 D / D-2）：同一归并键 = 同一人 → 只出一条 ====
+      // 归并键 = 递归解析到的**最终真身** handle（多级镜像链折叠到同一真身）；解析不到 → 退回
+      // 「镜像取 external_person_handle / 真身取自身 handle」（handle 全站唯一；**绝不按姓名归并**）。
+      const groups = new Map(); // 归并键 → 组内候选（保持 hits 扫描序）
+      for (const h of hits) {
+        const rel = await resolveRealBody(h.t, h.p);
+        const key =
+          rel?.person?.handle || (isMirrorNode(h.p) ? String(h.p.external_person_handle) : String(h.p.handle));
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(h);
+      }
+
+      // 组内选代表（逐字口径）：①matched==='id' 者优先 → ②真身（非镜像）优先 → ③tree_id 字典序 → handle 字典序
+      const cmpRep = (a, b) => {
+        const ai = a.matched === 'id' ? 0 : 1;
+        const bi = b.matched === 'id' ? 0 : 1;
+        if (ai !== bi) return ai - bi;
+        const am = isMirrorNode(a.p) ? 1 : 0;
+        const bm = isMirrorNode(b.p) ? 1 : 0;
+        if (am !== bm) return am - bm;
+        if (a.t.id !== b.t.id) return a.t.id < b.t.id ? -1 : 1;
+        if (a.p.handle !== b.p.handle) return a.p.handle < b.p.handle ? -1 : 1;
+        return 0;
+      };
+
+      const picked = [];
+      for (const members of groups.values()) {
+        const best = members.slice().sort(cmpRep)[0];
+        // tier：0 = resolveNode 置顶命中，1 = 其余编号命中，2 = 姓名命中（同 tier 内稳定按 tree_id 字典序）
+        const tier = best.matched === 'id' ? (best.pinned ? 0 : 1) : 2;
+        // 组内**有**非镜像命中节点：该真身进候选集前已过节点级裁剪 → 对访问者必然可见 → 代表 = 该真身
+        const realMembers = members.filter((m) => !isMirrorNode(m.p));
+        if (realMembers.length > 0) {
+          const realBest = realMembers.slice().sort(cmpRep)[0];
+          picked.push({ t: realBest.t, p: realBest.p, matched: best.matched, restricted: false, tier });
+          continue;
+        }
+        // 组内**全是**镜像命中节点：解析最终真身（可能在别树、甚至不在本次候选集里），
+        // 再**直接判定真身对该访问者的可见性**（不用「组内有无真身」代理 → 假受限的根因即在此）
+        const rel = await resolveRealBody(best.t, best.p);
+        const real = rel && !isMirrorNode(rel.person) ? rel : null; // 解析不到 / 兵底是镜像 → 视为无真身
+        const realTree = real ? treeRefOf(real.treeId) : null;
+        const realVisible = realTree
+          ? !(await ctxAccess(realTree.id, realTree.tree)).isHiddenPerson(real.person.handle)
+          : false;
+        if (realVisible) {
+          // 真身可见 → 代表改为真身（字段全取真身），matched 保留原命中类型，restricted=false
+          picked.push({ t: realTree, p: real.person, matched: best.matched, restricted: false, tier });
+        } else {
+          // 真身不可见 / 解析不到 → 代表保持镜像、restricted=true（只填镜像自身信息，绝不泄漏真身）
+          picked.push({ t: best.t, p: best.p, matched: best.matched, restricted: true, tier });
+        }
+      }
+      picked.sort((a, b) => {
+        if (a.tier !== b.tier) return a.tier - b.tier;
+        if (a.t.id !== b.t.id) return a.t.id < b.t.id ? -1 : 1;
+        // 同 tier 同树 → 按该树 people 键序（显式 tie-break，不依赖遍历顺序）
+        return (a.t.ord?.get(a.p.handle) ?? 0) - (b.t.ord?.get(b.p.handle) ?? 0);
+      });
+
+      return send(200, picked.slice(0, limit).map(({ t, p, matched, restricted }) => ({
+        ...shape(t, p, matched),
+        restricted,
+      })));
     }
 
     // ================= 树编辑 =================

@@ -1,8 +1,10 @@
 /**
  * 钱包模块（集合 jiazu_wallets，_id='global'）
- * 规则与 auth-server/wallet.js 一致：分存储、树余额仅入账、建树费 9.9 元默认。
+ * 规则与 auth-server/wallet.js 一致：分存储、建树费 9.9 元默认。
+ * **家族树资金功能已下线**（docs/economy.spec.md §12-3）：`trees[tree_id].balance_cents`、`transferToTree`、
+ * `getTreeBalance` 均已移除（`/wallet/transfer`、`/wallet/tree-balance` 恒 410）；本模块只留
+ * 个人 ¥ 余额（充值与购买官方竹简的唯一通道）与建树费设置。auth-server/** 属遗留链路，不在本册范围。
  */
-import crypto from 'node:crypto';
 import { colGet, colSet } from './store.js';
 
 const DEFAULT_FEE_CENTS = 990;
@@ -36,11 +38,6 @@ export async function getUserBalance(phone) {
   return w.users[phone]?.balance_cents || 0;
 }
 
-export async function getTreeBalance(treeId) {
-  const w = await load();
-  return w.trees[treeId]?.balance_cents || 0;
-}
-
 export async function getTreeCreateFeeCents() {
   const w = await load();
   return w.config.tree_create_fee_cents ?? DEFAULT_FEE_CENTS;
@@ -54,19 +51,6 @@ export async function recharge(phone, amountCents) {
   w.transactions.push({ id: txid(), type: 'recharge', user: phone, amount_cents: amountCents, desc: '充值', ts: new Date().toISOString() });
   await persist(w);
   return w.users[phone].balance_cents;
-}
-
-export async function transferToTree(phone, treeId, amountCents) {
-  if (amountCents <= 0) throw new Error('转账金额必须大于 0');
-  const w = await load();
-  const balance = w.users[phone]?.balance_cents || 0;
-  if (balance < amountCents) throw new Error(`余额不足：当前 ¥${(balance / 100).toFixed(2)}`);
-  w.users[phone].balance_cents -= amountCents;
-  if (!w.trees[treeId]) w.trees[treeId] = { balance_cents: 0 };
-  w.trees[treeId].balance_cents += amountCents;
-  w.transactions.push({ id: txid(), type: 'transfer', user: phone, tree: treeId, amount_cents: amountCents, desc: `转账到家族树 ${treeId}`, ts: new Date().toISOString() });
-  await persist(w);
-  return { user_balance: w.users[phone].balance_cents, tree_balance: w.trees[treeId].balance_cents };
 }
 
 export async function deductTreeCreateFee(phone) {
