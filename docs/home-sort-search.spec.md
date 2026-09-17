@@ -41,7 +41,7 @@
 
 - **树内 `GET /search` 完全未改**（**不得改**）：加父 / 加子 / 挂接 / 认祖 / 审批选人靠它，它必须仍然能看到**本树镜像 / 登记节点**；
   跨树检索是**新路由**（§5-2），不改树内语义、不改其鉴权（仍需 `X-Tree-Id`）。
-- `auth-server/**`（遗留 Gramps 链路）仍保留 `/wallet/transfer` 与 `transferToTree`，**本轮未动**（见 §7-c）。
+- ~~`auth-server/**`（遗留 Gramps 链路）仍保留 `/wallet/transfer` 与 `transferToTree`，**本轮未动**~~ → **已于 2026-09-18 删除**（见 §7-c「已解决」条；事实与回滚见 `docs/zhonghua-cleanup-2026-09.spec.md`）。
 - 不新增任何列表聚合路由（如 `GET /trees/overview`）：每树派生指标一律加在**既有** `GET /tree/rank` 出参上（§5-1）。
 
 ---
@@ -173,12 +173,17 @@ score = 0.4 * norm(人员数) + 0.4 * norm(活跃度) + 0.2 * norm(新近度)
 - **a. 被可见性裁剪的真身，用其编号搜索返回 0 条。**
   与既有树内搜索 / 隐私分层口径一致（裁剪在服务端读路径，编号等值命中前已过 `isHiddenPerson`）。
   要改成「回落到可见镜像（返回镜像条 + `restricted=true`）」**需另行拍板**。
-- **b. 世本「补录」节点与祖谱自有段始祖是「同名无指针的双记录」。**
-  实例：世本 `zhonghua/I0046` 顾清学 vs 祖谱 `gu_39038/I000139` 顾清学（两条记录之间**没有**镜像指针）。
-  搜索**保持出 2 条** —— **不做数据手术、不按姓名合并**；参考事实：全站按真身 handle 归并后**仍有 41 组**同名不同人。
-- **c. `auth-server/**`（遗留 Gramps 链路）仍保留 `/wallet/transfer` 与 `transferToTree`。**
-  （`auth-server/server.js`、`auth-server/wallet.js`）本轮**未动**；它属**遗留链路**，不在运行链路口径内，
-  不得据它判定「资金功能未下线」。
+- **b.（已解决 · 2026-09-18 · ✅）世本「补录」节点与祖谱自有段始祖的「同名无指针双记录」已做数据手术消除。**
+  原实例：世本 `zhonghua/I0046` 顾清学 vs 祖谱 `gu_39038/I000139` 顾清学（两条记录之间**没有**镜像指针）→ 原口径「搜索**保持出 2 条**、不做数据手术」。
+  **用户拍板后本轮已删世本孤立补录节点 `I0046`**（`people` **140 → 139**，同批删其详情文档 `zhonghua:103ff1c309eb7bf2cb4f6ff1762e`）⇒
+  **该边界不再存在**：搜索「顾清学」现为 **guest 1 条**（`gu_39038_01` 镜像 · `restricted = true`）/ **chief 1 条**（祖谱 `gu_39038` `I000139` 真身）；
+  按编号 `I0046` 检索 **0 条**。事实、删前核查、备份 / 回滚与云端同步要求见 **`docs/zhonghua-cleanup-2026-09.spec.md`**。
+  **归并口径未变**：仍**不按姓名合并**（全站按真身 handle 归并后**仍有 41 组**同名不同人）——本次只删这一个孤立节点，**不是**姓名级去重。
+- **c.（已解决 · 2026-09-18 · ✅）`auth-server/**`（遗留 Gramps 链路）的同名转账残留已删除。**
+  `auth-server/server.js` 的 `/api/wallet/transfer` 与 `/api/wallet/tree-balance` 两条路由、`auth-server/wallet.js` 的
+  `transferToTree` / `getTreeBalance` **本轮已删**（`grep` 0 残留）；其**钱包数据残留**（`trees` 字段 + `type:'transfer'` 流水，两个文件各 1 条）同批清理。
+  它**仍属遗留链路、当前不部署**（若日后部署需与本次代码同批发布）。
+  事实 / 备份 / 回滚见 **`docs/zhonghua-cleanup-2026-09.spec.md`**（§3-5 / §4 / §5）。
 
 ---
 
@@ -209,5 +214,8 @@ score = 0.4 * norm(人员数) + 0.4 * norm(活跃度) + 0.2 * norm(新近度)
   `config/tree-meta.json` + `migrate-output/trees` + `migrate-output/collections` 的 **md5 逐字节未变**。
 - **真源数据本轮零改动**：会话期间唯一被写的真源文件是 `migrate-output/collections/jiazu_sms_codes.json`
   （由主代理取 dev 验证码产生），与本批改动无关。
+  - **后注（2026-09-18 用户拍板批次）**：随后的数据修正批次对真源做了**两项数据手术**（世本删 `I0046` 顾清学 + 钱包 `transfer` 残留清理）——
+    与**本批**（首页列表 / 三档排序 / 全站搜索 / 资金下线）的代码改动**无关**，本批代码本身仍零数据改动；
+    该两笔手术的作业依据、前后 md5 与上云要求见 `docs/zhonghua-cleanup-2026-09.spec.md`。
 - **前端验收项**（本册不代为断言结果）：`npx vue-tsc --noEmit` exit 0；首页三档切换 + 搜索框（受限条只 toast / 非受限跳转）可用。
 - **部署**：本轮**不部署**；需上云的动作（重打包 / 前端 hosting）逐条登记在 `docs/PENDING_DEPLOY.md` §16。

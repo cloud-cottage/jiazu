@@ -310,9 +310,9 @@
 5. 本轮**无定时任务**：到期作废、21 点发售、到期预警全部靠惰性结算在请求内完成（定时任务与推送留部署阶段，§12-4）。
 6. **市集挂单惰性过期与锁定释放（K9 · 已定稿）**：同一次 `sweep(now)` 内，凡 `status='open'` 且 `expires_at <= now` 的挂单 → 置 `status='expired'` **并释放其锁定**（挂单占量消失、该批次竹片回到可用量，§11-20）；**成交与撤单仅对 `open` 有效**，对 `expired` 挂单调用 → **409「挂单已过期」**；`GET /market/listings` 默认不展示 `expired`（§6-1）。`expires_at = created_at + LISTING_TTL_DAYS 天`（常量默认 **7**，可配，见 §11-25）。
 
-### 5-5 建树扣 9 颗石榴籽
+### 5-5 建树扣 9颗石榴籽
 
-1. 新建家族树改为扣 **9 颗完整石榴籽**；原 `deductTreeCreateFee`（¥9.90，`wallet.js`）的**人民币扣费钩子废弃**（`/admin/create-tree` 的 `onBeforeWrite: () => wallet.deductTreeCreateFee(...)` 替换为资产侧扣费）。
+1. 新建家族树改为扣 **9颗石榴籽**；原 `deductTreeCreateFee`（¥9.90，`wallet.js`）的**人民币扣费钩子废弃**（`/admin/create-tree` 的 `onBeforeWrite: () => wallet.deductTreeCreateFee(...)` 替换为资产侧扣费）。
 2. 时序：**全部校验通过后、落库前扣费**（校验 = 权限 / 姓氏 / 始祖 / 唯一性 / 树 id 等既有校验）。
 3. 创建失败 → **不扣**；若已扣而后落库失败 → **原路返还同一批次**（恢复原 `qty` 与 `expires_at`，写 `type='fee_refund'` 流水，不新造批次）。
 4. 家族树**后续删除不退还**建树籽。
@@ -344,7 +344,7 @@
 | 删除节点 · 仅本节点（promote）正式提交 | `POST /admin/delete-node`（`mode='promote'`，`dry_run≠true`） | 删除 | **3 片** |
 | 删除节点 · `dry_run=true` 预演 | `POST /admin/delete-node` | 删除 | **0 片**（只算不写；响应带 `fee` 供前端拼确认文案） |
 | 删除节点 · 确认数不符（409 范围变化） | `POST /admin/delete-node` | 删除 | **0 片**（校验先于扣费，409 之前不扣） |
-| 新建家族树 | `POST /admin/create-tree` | 建树 | **9 颗完整石榴籽**（非竹片，§5-5） |
+| 新建家族树 | `POST /admin/create-tree` | 建树 | **9颗石榴籽**（非竹片，§5-5） |
 | 新增类 / 关系类：加父、加子、加配偶、挂接已有节点、总谱续编、认祖及其审批、建谱及其审批、跨树嫁娶及其审批、解除挂载、绑定类、`POST /people`、`POST /families` | 各自路由 | 新增 / 关系 | **0 片**（**不接扣费闸门**） |
 
 - **扣费范围**：**全树都扣**（含中华世本 `zhonghua` 与祖谱 `kind='clan'`），**无豁免通道**；管理员 / `chief_editor` 同样不例外。始祖与上层镜像节点本就只读 → 403，结构上写不进去，不存在扣费。
@@ -404,7 +404,7 @@
 | POST | `/market/official-buy` | `{ bundles? }`（默认 1） | `{ ok:true, pieces, balance_cents, stock_left_today }` | 401；**409 未到发售时间**（21:00 前）；**409 今日已售罄**；**409 人民币余额不足**（引导充值） |
 
 > 市集与官方购买中的「资产不足」= 籽不足（`/market/buy`）或人民币余额不足（`/market/official-buy`），统一 409 + `error` 文案不同。
-> **既有写路由改语义（路由名不变，响应新增 `fee` 字段，单价与顺序见 §5-8）**：`PUT /people/<handle>`（人物内容修改 1 片/节点）、`POST /admin/reparent`（同树改父 1 片/节点；跨树改父 9 片/次）、`POST /admin/delete-node`（正式提交 3 片/节点；`dry_run` 与 409 范围变化不扣）、`POST /admin/create-tree`（建树扣 9 颗完整石榴籽）。
+> **既有写路由改语义（路由名不变，响应新增 `fee` 字段，单价与顺序见 §5-8）**：`PUT /people/<handle>`（人物内容修改 1 片/节点）、`POST /admin/reparent`（同树改父 1 片/节点；跨树改父 9 片/次）、`POST /admin/delete-node`（正式提交 3 片/节点；`dry_run` 与 409 范围变化不扣）、`POST /admin/create-tree`（建树扣 9颗石榴籽）。
 
 ### 6-3 管理
 
@@ -452,7 +452,7 @@
 | 落点 | 文件 | 内容 |
 |---|---|---|
 | 资产总览 | 新增 `frontend/src/pages/assets/index.vue` | 「我的资产」：碎片（9 格进度 + 「满 10 自动合成」提示）、完整籽（总数 + 批次明细 + 有效期倒计时）、竹片（折算「N 束 M 片」）、玉；即将过期批次 + 流水列表；签到按钮（当日已签 → 置灰，409 时提示「今日已签到」） |
-| 钱包 | `frontend/src/pages/wallet/index.vue` | 保留人民币余额展示，文案收敛为「仅用于购买官方竹简」；新增「市集」入口与「官方竹简 · 每日 21:00 限量」购买区；建树费文案由「¥9.90」改为「**9 颗完整石榴籽**」 |
+| 钱包 | `frontend/src/pages/wallet/index.vue` | 保留人民币余额展示，文案收敛为「仅用于购买官方竹简」；新增「市集」入口与「官方竹简 · 每日 21:00 限量」购买区；建树费文案由「¥9.90」改为「**9颗石榴籽**」 |
 | 市集 | 新增 `frontend/src/pages/market/index.vue` | 挂单（选束数 + 自由报价籽数，仅整束；**无需任何家族树归属**，K7）、我的挂单（撤单；**展示 7 天有效期 `expires_at` 与「已过期」态，`expired` 不可撤单**，K9）、购买、官方限量区（21 点倒计时 + 今日剩余）；买入确认弹窗显示 `fee_seeds`（0 时显示「免收」） |
 | 家族专属空间（时流子域） | `frontend/src/pages/hall/index.vue` 家族页顶部区块（本轮仅平台内页面） | 灵气状态（未开启/未激活/生效中/缓冲中/已过期）、灵气到期日、已镶玉、五档蓄能套餐（§5-9）、镶嵌玉入口（选本人未镶嵌玉）；**镶嵌与灌注入口对任何已登录用户开放（K1 · 已定稿），不再受本树写权限门禁**；**灌注流水对本树成员全量可见**；总谱页不提供镶嵌入口（K2） |
 | 人物档案 | `frontend/src/pages/person/detail.vue` | 修改类保存前提示「本次修改将扣 1 片竹简」；竹片不足 → 引导去签到/市集；新增类操作（加父/加子/加配偶/挂接/认祖）**不提示扣费**；删除 / 跨树改父按 `fee` 字段拼确认文案（`docs/economy-fee.spec.md` §7） |
@@ -523,7 +523,7 @@
    - 写（10 条）：`POST /assets/signin`、`POST /assets/synthesize-jade`、`POST /assets/decompose-jade`、`POST /messages/read`、
      `POST /spirit/mount-jade`、`POST /spirit/charge`、`POST /market/list`、`POST /market/cancel`、`POST /market/buy`、`POST /market/official-buy`
    - 管理（4 条）：`POST /admin/assets/grant`、`GET /admin/assets/logs`、`GET /admin/assets/user`、`PUT /admin/market/official-stock`
-   - 另有 **4 条既有路由改语义**（路由名不变，响应新增 `fee` 字段，单价见 §5-8）：`POST /admin/create-tree`（扣费钩子换成扣 9 颗完整石榴籽）、
+   - 另有 **4 条既有路由改语义**（路由名不变，响应新增 `fee` 字段，单价见 §5-8）：`POST /admin/create-tree`（扣费钩子换成扣 9颗石榴籽）、
      `POST /admin/reparent`（同树改父 1 片/节点；跨树改父 9 片/次）、`PUT /people/<handle>`（人物内容修改 1 片/节点）、
      **`POST /admin/delete-node`**（正式提交 3 片/节点；`dry_run` 与 409 范围变化不扣）。
    - ⚠️ 上述路由必须挂在 `index.js` 树编辑闸门（约 1586 行 `缺少 X-Tree-Id`）**之前**。
@@ -539,10 +539,13 @@
    > ② **`lib/wallet.js` 已删 `transferToTree` / `getTreeBalance`**，**保留** `deductTreeCreateFee`（建树费钩子不变）。
    > ③ **前端入口已移除**：家族树页「家族树资金」区块 + 「转账支持」入口、钱包页「转账到家族树」区块，
    > 以及 `business/{api,index}.ts` 的两个封装（`transferToTree` / `fetchTreeBalance`）均已删除，并同步 `about.vue` / `mine/index.vue` 文案。
-   > ④ **`auth-server/**`（遗留 Gramps 链路）** 的 `/wallet/transfer` 与 `transferToTree` **本轮未动** —— 它属遗留链路，
-   > 不在运行链路口径内；**不得据它判定本节未落地**。
-   > ⑤ 遗留未改项（待裁决 / 待改）：钱包页余额卡片仍写「新建家族树费用：¥9.90」（本册 **§5-5 建树扣 9 颗石榴籽** 已改口径，
-   > 且 **§9 前端落点表**已要求该文案改为「9 颗完整石榴籽」）—— 已登记于 `docs/PENDING_DEPLOY.md` §16-7。
+   > ④ **已处理（2026-09-18 · ✅）**：`auth-server/**`（遗留 Gramps 链路）的同名转账残留**已删除** ——
+   > `auth-server/server.js` 的 `/api/wallet/transfer` 与 `/api/wallet/tree-balance` 两条路由、`auth-server/wallet.js` 的
+   > `transferToTree` / `getTreeBalance` 均已移除（`grep` 0 残留），其**钱包数据残留**（`trees` 字段 + `type:'transfer'` 流水）同批清理。
+   > 它**仍属遗留链路、当前不部署**（若日后部署需与本次代码同批发布）；事实 / 备份 / 回滚见 **`docs/zhonghua-cleanup-2026-09.spec.md`**。
+   > ⑤ **已处理（2026-09-18 · ✅）**：钱包页余额卡片文案已由「新建家族树费用：¥9.90」改为「新建家族树消耗 **9颗石榴籽**」
+   > （`frontend/src/pages/wallet/index.vue` 第 8 行 + 常量 `TREE_CREATE_FEE_SEEDS = 9`），与本册 **§5-5 建树扣 9颗石榴籽**
+   > 及 **§9 前端落点表** 口径一致；原登记项 `docs/PENDING_DEPLOY.md` §16-7 已同步标为 ✅。
 4. **无定时任务**：本轮不注册任何定时任务，到期作废 / 21 点发售 / 到期预警 / **挂单过期释放锁定（K9）**全靠**惰性结算**在请求内完成；
    定时任务与推送（含真二级域名绑定）统一留部署阶段。
 5. **打包与部署**：沿用现有流程 —— `npx esbuild cloudfunctions/compat-api/index.js --bundle --platform=node --format=cjs --external:@cloudbase/node-sdk --outfile=cloudfunctions/deploy/compat-api/index.js`，

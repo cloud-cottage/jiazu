@@ -33,7 +33,7 @@
 | 4 | 跨树改父 **9 片 / 次，与带多少后代无关**（用户明确覆盖了"按迁移人数计费"的建议） | 不得实现为 `9 × 人数`；迁移 1 人和迁移 200 人同价 |
 | 5 | 删除节点：**批量删除多条人物节点，每条节点独立扣费，不合并计费** | subtree 模式 = `3 × people_count`；promote 模式 = 3 片；永不"打包折扣" |
 | 6 | 扣费范围：**所有树都扣**（含中华世本 `zhonghua` 与祖谱 `kind='clan'`），**无豁免通道** | 不按 `treeId === MASTER_TREE_ID` 或 `kind` 免单；但始祖 / 上层镜像本就是只读节点，写不进去 → 403，不存在扣费 |
-| 7 | 建树：`POST /admin/create-tree` 由原 ¥9.90 **改为扣 9 颗完整石榴籽**；成功才扣，失败不扣 / 原路返还；**删树不退** | 替换 `wallet.deductTreeCreateFee(u.phone)` 钩子；`jiazu_wallets` 保留（充值 / 转账仍用它） |
+| 7 | 建树：`POST /admin/create-tree` 由原 ¥9.90 **改为扣 9颗石榴籽**；成功才扣，失败不扣 / 原路返还；**删树不退** | 替换 `wallet.deductTreeCreateFee(u.phone)` 钩子；`jiazu_wallets` 保留（充值 / 转账仍用它） |
 | 8 | 扣减优先级：籽 / 竹片一律 **FIFO by `expires_at` 升序**；不足 → **整单拒绝 409**「资产不足，需 X 片竹片，当前 Y 片」 | 绝不部分扣、绝不透支、绝不先扣一部分再报错 |
 | 9 | 闸门必须**先扣费成功再落库**，且与既有写入同事务语义：跨树迁移的扣费要与 `store.updateTrees` 的双树事务一致（**扣费失败 → 两棵树都不写**；**写入失败 → 扣费回滚**） | 禁止出现「扣了片但没改数据」与「改了数据但没扣片」两种脏态 |
 | 10 | 未登录 / 无权限 → **401 / 403，且不得先扣费**（权限校验必须在扣费之前） | 路由内固定顺序：鉴权 → 只读预检 → 余额预检 → 扣费 → 落库 |
@@ -80,7 +80,7 @@
 | 5 | 删除节点 · 仅本节点（promote）正式提交 | `POST /admin/delete-node`（`mode='promote'`，`dry_run≠true`） | 删除 | **3 片** | — | 两模式同价；子女上提一级不额外计费 |
 | 6 | 删除节点 · 预演 | `POST /admin/delete-node`（`dry_run=true`） | 删除 | **0 片** | ✅ dry_run | 只算不写；响应须带 `fee` 供前端拼确认文案 |
 | 7 | 删除节点 · 确认数不符 | `POST /admin/delete-node`（`confirm_count` 与实际 `people_count` 不符 → 409） | 删除 | **0 片**（409 前不扣） | — | 校验在扣费之前；重跑 dry_run 后重新提交才扣 |
-| 8 | 新建家族树 | `POST /admin/create-tree` | 建树 | **9 颗完整石榴籽**（非竹片） | 无 | 原 ¥9.90 改口径；**成功才扣**，失败不扣 / 原路返还；**删树不退** |
+| 8 | 新建家族树 | `POST /admin/create-tree` | 建树 | **9颗石榴籽**（非竹片） | 无 | 原 ¥9.90 改口径；**成功才扣**，失败不扣 / 原路返还；**删树不退** |
 | 9 | 添加子节点（父母均在本树） | `POST /admin/add-child` | 新增 | **0 片** | — | 新增类 |
 | 10 | 添加子节点（跨树婚姻家庭 → 子女落父真身树） | `POST /admin/add-child`（父为镜像，`cross_tree=true`） | 新增 | **0 片** | — | 跨树也不扣：一次操作只新增节点 |
 | 11 | 添加父节点（前端 `addParentNode`） | `POST /people/` + `POST /families/` | 新增 · 绑定 | **0 片** | — | 加父 = 新建 person + 建家族绑定，两步都属新增 / 绑定 |
@@ -219,7 +219,7 @@
 | 场景 | 状态码 | 响应体（要点） |
 |---|---|---|
 | 竹片不足 | **409** | `{ error: '资产不足，需 X 片竹片，当前 Y 片', code: 'ASSET_INSUFFICIENT', need: X, current: Y, unit: 'bamboos', how_to_get: ['官方 9.9 元/束', '每日 21 点限量发售', '市集购买', '蓄能档位赠送（季度 1 束 / 半年度 2 束 / 年度 8 束）'] }` |
-| 石榴籽不足（建树） | **409** | `{ error: '资产不足，需 9 颗完整石榴籽，当前 N 颗', code: 'ASSET_INSUFFICIENT', need: 9, current: N, unit: 'seeds', how_to_get: [同上四条] }` |
+| 石榴籽不足（建树） | **409** | `{ error: '资产不足，需 9颗石榴籽，当前 N 颗', code: 'ASSET_INSUFFICIENT', need: 9, current: N, unit: 'seeds', how_to_get: [同上四条] }` |
 | 删除范围变化 | **409** | `{ error: '删除范围已变化（当前 N 人，确认时 M 人），请重新确认', code: 'DELETE_SCOPE_CHANGED' }` —— 沿用既有 `confirm_count` 语义，**先于扣费**判定，不扣费 |
 | 未登录 | **401** | `{ error: '请先登录后再进行编辑操作' }`（沿用 `requireWriteUser` 文案），**不扣费** |
 | 无权限 / 无写权 / 游客 / 权限范围外 / 总谱仅总编 | **403** | 沿用既有文案（`游客无编辑权限，请注册后编辑` / `您的权限范围仅限本人及向下节点` / `中华世本总谱仅总编辑（chief_editor）可编辑` 等），**不扣费** |
@@ -246,7 +246,7 @@
 | 同上 → 删除 / 保存的 409 处理 | 文案与 `how_to_get` 直出，不自行改写；用户可获得「9.9 元/束购买」入口（跳钱包页） |
 | `frontend/src/components/person-manage-panel/person-manage-panel.vue` | 「＋ 添加父节点 / ＋ 添加子节点 / ＋ 添加配偶」面板加一行灰字提示 **「新增类操作不消耗竹片」**，避免用户因删改计费而不敢新增 |
 | `frontend/src/business/api.ts` | 新增 `fetchAssetSummary(token)` → `GET /assets/summary`（总册 §6-1，不新增重复接口）；`NodeDeleteResult` 增加 `fee: { unit, pieces, balance, balance_after }`；`reparentNode()` 返回类型增加 `fee`；错误对象透出 `code` / `need` / `current` / `how_to_get`（供弹窗） |
-| 钱包 / 资产页（总册 §9 落点 `frontend/src/pages/wallet/index.vue`、新增 `pages/assets/index.vue`） | 竹片区块展示：当前折算「N 束 M 片」、最近流水（`Tx.type` 取总册枚举：`edit_fee` / `delete_fee` / `move_fee` / `tree_create` / `fee_refund` / `official_buy` / `market_buy` / `spirit_charge` / `admin_grant` / `expire`）、入口「官方竹简 · 每日 21:00 限量」「去市集」；建树费文案由「¥9.90」改为「**9 颗完整石榴籽**」（总册 §9） |
+| 钱包 / 资产页（总册 §9 落点 `frontend/src/pages/wallet/index.vue`、新增 `pages/assets/index.vue`） | 竹片区块展示：当前折算「N 束 M 片」、最近流水（`Tx.type` 取总册枚举：`edit_fee` / `delete_fee` / `move_fee` / `tree_create` / `fee_refund` / `official_buy` / `market_buy` / `spirit_charge` / `admin_grant` / `expire`）、入口「官方竹简 · 每日 21:00 限量」「去市集」；建树费文案由「¥9.90」改为「**9颗石榴籽**」（总册 §9） |
 
 ---
 
@@ -348,7 +348,7 @@
 | `PUT /people/<handle>` | **变更**：接竹片闸门（1 片 / 节点），响应新增 `fee` |
 | `POST /admin/reparent` | **变更**：同树 1 片、跨树 9 片；响应新增 `fee`；跨树路径接入 `updateTrees` 闭包内扣费 + 冲正 |
 | `POST /admin/delete-node` | **变更**：正式提交 3 片 / 节点；`dry_run` 响应新增 `fee`（免费）；409 不扣 |
-| `POST /admin/create-tree` | **变更**：扣费由 ¥9.90 改为 **9 颗完整石榴籽**（`onBeforeWrite` 钩子替换） |
+| `POST /admin/create-tree` | **变更**：扣费由 ¥9.90 改为 **9颗石榴籽**（`onBeforeWrite` 钩子替换） |
 | `GET /assets/summary` | **不新增**：沿用总册 §6-1 既定接口作为前端余额提示的数据源（挂树编辑闸门之前） |
 | 其余全部写路由 | **不变**（0 片，不接闸门） |
 

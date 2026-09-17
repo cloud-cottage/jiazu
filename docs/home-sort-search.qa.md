@@ -1052,3 +1052,222 @@ $ grep -c '^not ok' <完整输出>   → 0        # 完整输出留档 /tmp/neng
 - **S4（取证手段受限）**：F4 的两处删除与后端本轮其它改动同处一个 diff（`index.js +260/-24`、`wallet.js +4/-20`），**无法用「某次 diff 只删了这两个词」隔离断言**；本次以 `grep` 零残留 + `node --check` + 全量 350/350 三证收口，并用 `git log -S` 定位到引入/移除 commit（23a7f18 → a235bd0）作为归属证据。
 - **S5（明确未覆盖）**：未起本地实例做 410 / `/search/global` 的 HTTP 真机探针（派单允许只读现成测试计数，故仅以 §12.5 的套件计数为据）；未做浏览器点测（派单禁止）；F3 的 TDZ 未做**运行时**复现（无前端实例），结论建立在「声明行号先于 immediate watch」的静态顺序 + `vue-tsc --noEmit` exit 0 + SFC 模板编译 0 错三项静态证据上，符合本轮「轻量增量质检」范围。
 
+## 13. 增量验收（措辞统一 + auth-server 删码 + 数据手术）
+
+> **S2 已解决** —— 上一轮登记的「9颗石榴籽」与「9 颗完整石榴籽」措辞不统一，已由用户拍板并落地为统一口径「**9颗石榴籽**」（提交 `2bf89f7` 后端 + `dc8214f` 前端）。本节为本项与 auth-server 删码、两项真源数据手术（世本删 I0046 / 钱包 transfer 残留清理）的**增量复验**。
+
+### 13.0 基线与纪律（⚠️ 本轮 HEAD 再次位移）
+
+- 开工快照 HEAD = **2042b83**；质检期间主代理落两 commit（均 2026-09-18 06:48:04）：**2bf89f7**（后端措辞统一 + 删 auth-server 转账代码 + 两个新脚本）、**dc8214f**（前端措辞统一）。收工时 HEAD = **dc8214f**。
+- ⚠️ **工作区在撰写期间再次变动**：我完成全部取证后、写本节之前，主代理把 4 份 spec 的措辞统一为**未提交**的工作区改动（`docs/economy-ops.spec.md` / `economy-fee.spec.md` / `economy.spec.md` / `home-sort-search.spec.md`，见 §13.1 ④ 与 §13.6 S1）。**代码零改动**（`git status --short | grep -v '^ M docs/'` 仅剩未跟踪的 `docs/zhonghua-cleanup-2026-09.spec.md`）→ 不影响任何代码侧结论。
+- 因措辞改动在窗口内被提交，`TREE_CREATE_CONFIRM` 的「逐字未变」断言对**两个** HEAD（2042b83 与 dc8214f）各验一次，结论一致（§13.1.3）。
+- 纪律：全程只读（`git show` / `grep` / `diff` / `md5` / `node --check` / `node --test` / `node -e`（临时脚本均落 `/tmp/neng13/`）/ `npx vue-tsc`）+ 对 **3100** 的只读 HTTP 探针；**未改任何代码/数据/脚本**；**未用浏览器**；**未重启/停止 3100（PID 2839）/ 5199（PID 41219）**（探针前后 PID 未变，§13.3.5）；**未起 3000/8000**；未重跑前几轮整套矩阵。
+
+### 13.1 措辞统一为「9颗石榴籽」→ 通过
+
+**① 旧口径 grep（建树费语境必须 0 命中）**
+
+```bash
+$ grep -rn '9 颗完整石榴籽\|9颗完整石榴籽' frontend/src cloudfunctions/ auth-server/
+cloudfunctions/compat-api/lib/economy-fee.js:43:  // 立支（POST /admin/establish-branch）：9999 颗完整石榴籽 / 次（…）
+cloudfunctions/compat-api/lib/economy-spirit.test.js:299:  assert.match(err.message, /石榴籽不足：合成石榴籽玉需 999 颗完整石榴籽/);
+EXIT=0
+```
+逐条判定：`:43` = **立支 9999**（派单明确不属本轮口径）；`:299` = **玉合成 999**（不属）。→ **建树费语境命中 = 0 ✅**
+
+补扫带空格变体 `9 颗石榴籽` → 7 命中，**全部为立支(9999)语境**（`api.ts:1454` / `types.ts:202` / `person-manage-panel.vue:53` / `index.js:29` / `economy-fee.js:43,:105` / `economy-fee.test.js:286`）→ 建树费 **0 命中 ✅**。
+
+**② `node --test cloudfunctions/compat-api/lib/economy-fee.test.js`**
+
+```bash
+# tests 18   # pass 18   # fail 0   # cancelled 0   # skipped 0   # todo 0      exit=0
+```
+（含 `ok 8 建树 9颗石榴籽（非竹片）`、`ok 831 建树 409 文案口径：9颗石榴籽（不带空格 / 不带「完整」，用户拍板）`）
+
+**③ 8.4 定稿弹窗 + `TREE_CREATE_CONFIRM` 逐字未变（硬项）**
+
+```bash
+$ git show HEAD:frontend/src/pages/index/index.vue | awk '/^const TREE_CREATE_CONFIRM = \{/,/^\} as const;/'
+# 三份提取件：blk.head.txt(HEAD=2042b83) / blk.head2.txt(HEAD=dc8214f) / blk.post.txt(工作区)
+md5 6c5c7946f6c6d7bb7d8c4b4f23e7b129  blk.head.txt
+md5 6c5c7946f6c6d7bb7d8c4b4f23e7b129  blk.head2.txt
+md5 6c5c7946f6c6d7bb7d8c4b4f23e7b129  blk.post.txt      # 三份同 md5，各 9 行
+$ diff blk.head2.txt blk.post.txt
+（无输出）  DIFF_EXIT=0
+```
+块内正文仍为「本次操作将消耗**9颗石榴籽**，创建全新家族谱系大树。…」——与本轮统一口径**逐字一致**（这正是 S2 收口的依据）。
+
+**④ 真源 spec 的措辞状态（含撰写期间的变动）**：
+- 两个 commit（`2bf89f7` / `dc8214f`）**均未改 spec**：`git diff 2042b83..HEAD --stat -- docs/economy-ops.spec.md` → **空**（当时真源 8.4 条逐字未动，故「代码层先统一、spec 层保持定稿」）。
+- 但**撰写期间**主代理已把 spec 措辞统一为**未提交**的工作区改动：`docs/economy-ops.spec.md`（`§5-8` 示例句「需 9 颗完整石榴籽」→「需 9颗石榴籽」；8.4 条**落点列**补充说明）、`docs/economy-fee.spec.md`（5 处）、`docs/economy.spec.md`（7 处，含 `### 5-5 建树扣 9颗石榴籽` 标题与 `§9` 落点表）、`docs/home-sort-search.spec.md`。
+- **8.4 弹窗正文（真源唯一真源条款）逐字未变**（硬项仍成立）：`grep -c '本次操作将消耗9颗石榴籽' docs/economy-ops.spec.md` = **1**；`git diff` 对 8.4 行的改动**只落在落点说明列**，「⚠️ 创建家族树确认 / 本次操作将消耗9颗石榴籽，…」引文原样。
+- 残留旧写法（**建树费语境**）：`docs/PENDING_DEPLOY.md:1166` 仍写「改为「**9 颗完整石榴籽**」」（且该条目的正文同时声明「auth-server 转账链路待裁决/未动」「钱包页文案待改」——**两项本轮均已完成**，属过期登记，见 §13.6 S5）。
+- 玉域（`999 颗完整石榴籽`）见 `docs/economy.spec.md:26,80`、`docs/spirit-domain.spec.md:247` —— **派单明确不属**本轮口径。
+
+**⑤ 落地 diff 摘要**（真改动点）：`index.vue:101`/`:161` 入口行与弹窗费用行「…颗完整石榴籽」→「…颗石榴籽」；`wallet/index.vue` 余额卡片文案；`asset-guide.ts` 的 `feeText()` 增 `unit==='seeds'` 分支（「本次消耗 9颗石榴籽，余 0 颗」），竹片域保持「N 片竹片」；后端 `economy-fee.js` / `economy-ledger.js` / `index.js` 注释与 409 文案同步。**未动**：官方竹简 ¥9.90/束、立支 9999、玉 999。
+
+### 13.2 auth-server 转账代码删除 → 通过
+
+```bash
+$ grep -rn 'transferToTree\|getTreeBalance\|tree-balance\|wallet/transfer' auth-server/
+EXIT=1        # 0 命中（含 auth-server/data/，无任何临时文件命中）
+$ grep -rn 'transfer' auth-server/server.js auth-server/wallet.js
+EXIT=1        # 连宽泛关键词 transfer 也 0 命中
+$ node --check auth-server/server.js   → server.js OK
+$ node --check auth-server/wallet.js   → wallet.js OK
+$ grep -n 'api/wallet' auth-server/server.js
+779:    if (urlPath === '/api/wallet/balance' && req.method === 'GET') {
+786:    if (urlPath === '/api/wallet/recharge' && req.method === 'POST') {
+```
+- 两条保留路由**读码断言**（**未起 auth-server**，未碰 3000/8000）：`:779 GET /api/wallet/balance` → `authUser` 401 守卫 → `wallet.getWalletOverview(u.phone)`；`:786 POST /api/wallet/recharge` → 401 守卫 + 金额校验(400) → `wallet.recharge()` → 返回 `{ok, balance_yuan, payment:'mock'}`。两条均**不引用任何被删符号**。
+- `auth-server/wallet.js`（136 行）现存导出：`getUserBalance` / `getTreeCreateFeeCents` / `getTreeCreateFeeYuan` / `recharge` / `deductTreeCreateFee` / `setTreeCreateFeeCents` / `getTransactions` / `getWalletOverview` —— `transferToTree` / `getTreeBalance` 已不在导出表，且 `node --check` 无未定义引用报错。
+
+### 13.3 数据手术独立重算 → 通过
+
+#### 13.3.1 世本 `zhonghua.json`（直读磁盘，非 memory cache）
+脚本 `/tmp/neng13/recompute.mjs` → **PASS=27 FAIL=0**：
+
+```
+people: cur=139  bak=140                                  # 139 ✅（差额恰 1）
+I0046: bak=["103ff1c309eb7bf2cb4f6ff1762e"] cur=[]        # 当前无 I0046 ✅
+被删 handle = 103ff1c309eb7bf2cb4f6ff1762e               # 与 details 文件名一致 ✅
+handle 集合差集 = 恰好 {被删 handle}                      # 无其它增删 ✅
+families 与备份深度相等 ✅（80 条目）；families 文本不含被删 handle / I0046 ✅
+其余 139 人逐条叶子级全等 = 139/139 ✅（isDeepStrictEqual 逐人比对，不等者 0）
+people 键顺序 == 备份去掉被删键后逐位相同 ✅
+version 未变 = 72 ✅；updated_at 未变 = 2026-09-16T05:54:39.003Z ✅；_schema/tree_id 未变 ✅
+顶层键集合与顺序未变 [_schema, tree_id, version, updated_at, people, families] ✅
+仍引用被删 handle 的字段数 = 0 ✅
+```
+md5：备份 `9b22e0b9b66f6c3588228eb0d86c1f68` → 现状 `2c6fbdcae6cd9b7a1cf811408d7b017d`。
+
+#### 13.3.2 详情文档
+```bash
+$ ls 'migrate-output/details/zhonghua:103ff1c309eb7bf2cb4f6ff1762e.json'
+ls: …: No such file or directory ✅
+details 目录 287 个文件，含 I0046/handle 的残留文件 = [] ✅
+备份件仍在（md5 6ca7e089e26548b85468cb2f79f140c9，462B；attributes: external_relation_note「清学顾 — 家族树 gu_39038_01 的始祖（补录）」）
+```
+
+#### 13.3.3 两个钱包文件
+脚本 `/tmp/neng13/recompute-wallets.mjs` → **PASS=26 FAIL=1**（该 FAIL 为断言口径问题，已核实非缺陷）：
+
+```
+[migrate-output/collections/jiazu_wallets.json]
+  容器键 [_id,users,transactions,config] == 备份去掉 trees ✅（备份 [_id,users,trees,transactions,config]，顺序保持）
+  transactions 15（备份 16）；type==='transfer' 0 条 ✅；备份恰 1 条 transfer = tx_1786619723140_a9z8lw
+  type 分布 cur {recharge:2,tree_create_fee:10,refund:3} == 备份去掉 transfer 后 ✅
+  current transactions == 备份去掉 transfer 后的序列（逐条 isDeepStrictEqual，顺序相同）✅
+  trees 字段已删（备份值 {"gu_39038_01":{"balance_cents":2000}}）✅
+  users 未变 {"16601061656":{"balance_cents":1070}} ✅；config 未变 {"tree_create_fee_cents":990} ✅
+[auth-server/data/wallets.json]（顶层形状，无 global 包裹）
+  顶层键 [users,transactions,config] == 备份去掉 trees ✅；其余同上全部 ✅
+```
+- **唯一 FAIL 的解释（非缺陷）**：两钱包文件互比「内层内容深度相等」不成立，差异**仅** `collections.global._id='global'`——auth-server 文件**本就没有** `_id`。该差异在**备份件里同样存在**（备份 collections 有 `_id`、备份 auth-server 无）→ 属**既有形状差**，非本轮手术引入。
+- md5：collections `1b52c2e7…` → `1c2ca5a078eee318bd3f0f80fefad69d`；auth-server `e8c44649…` → `b0818848e4435dfb9969746e862b929e`。
+
+#### 13.3.4 写入面取证（窗口判定）
+```bash
+$ find migrate-output config auth-server/data -type f -newermt '2026-09-18 06:30'
+auth-server/data/wallets.json                     2026-09-18T06:45:56   ← 手术二
+migrate-output/collections/jiazu_sms_codes.json   2026-09-18T06:47:15   ← 第 4 个（见下）
+migrate-output/collections/jiazu_wallets.json     2026-09-18T06:45:56   ← 手术二
+migrate-output/trees/zhonghua.json                2026-09-18T06:45:56   ← 手术一
+```
+- **窗口恰当**：备份目录名时间戳 `2026-09-17T22:45:56Z`(UTC) = **06:45:56 CST**，三个手术文件 mtime 与之**逐秒吻合** → 06:30 起点可把手术批次完整包入且不牵入更早改动。
+- **第 4 个文件说明**：`jiazu_sms_codes.json` 的 mtime（06:47:15）**晚于**手术批次 79 秒，内容为测试号 `13900000003` 的验证码（`expires_at = 1786780328541` → **2026-08-15，早已过期**）。判定：这是**真机登录/SMS 探针的运行时产物**，**不是手术写入面**（手术只碰 2 个钱包 + 1 棵树 + 1 份详情）。该文件**不在备份集内**（备份只含 4 件），但因 mtime 分组不同 + 本节全程其 md5 未变（§13.4.5），可排除手术所致。**归属待主代理确认**（见 §13.6 S3）。
+
+#### 13.3.5 真机只读探针（真 **3100**，未重启）
+脚本 `/tmp/neng13/probe.mjs`：chief 身份用**本地自签 JWT**（默认 secret `dev-only-secret-change-me`，payload `{phone:'16601061656'}`，该号在 `jiazu_users` 中 `role=chief_editor`）；**未走 /auth/login**，以免写 `jiazu_sms_codes` 污染真源。**PASS=20 FAIL=0**：
+
+```
+E1 GET /people/?profile=all (X-Tree-Id: zhonghua) → http=200，条数 = 139 ✅
+   无 I0046 ✅；含「顾清学」/姓「顾」= 0 条 ✅；无被删 handle ✅
+E2 GET /search/global?query=顾清学
+   [guest] 1 条：tree_id=gu_39038_01 handle=103f95b87b5a464242933ee319d5 gramps_id=I000143 restricted=true  ✅
+   [chief] 1 条：tree_id=gu_39038    handle=5ae4c6e505c90d290f71f66b   gramps_id=I000139 restricted=false ✅
+      （与派单预期「chief 1 条（gu_39038/I000139）」完全吻合；restricted=false 亦证明自签 token 生效）
+E3 query=I0046 → [guest] 0 条 ✅；[chief] 0 条 ✅
+   反向对照 query=I0047 → 2 条（首条 zhonghua/I0047）✅ → 检索链路未整体失效（防假绿）
+E4 POST /wallet/transfer          → 410 + code=TREE_FUND_RETIRED ✅（无鉴权亦 410，未被 401 抢先）
+E4' POST /wallet/transfer(+鉴权)   → 410 + code=TREE_FUND_RETIRED ✅
+E5 GET  /wallet/tree-balance      → 410 + code=TREE_FUND_RETIRED ✅（含带鉴权变体）
+```
+探针前后 `lsof -iTCP:3100` PID = **2839**、`5199` PID = **41219** 未变 → **未重启**。注意：3100 进程内 `treeCache` **已反映手术结果**（返回 139 / 无 I0046），说明主代理在开工前已让实例加载到术后数据。
+
+### 13.4 回归与卫生 → 通过
+
+1. **全量 `npm test`**：
+```bash
+# tests 350   # pass 350   # fail 0   # cancelled 0   # skipped 0   # todo 0     exit=0   (duration_ms 1505.6)
+```
+与基线 **350 / 350 / 0** 一致，**零回退**。
+2. `cd frontend && npx vue-tsc --noEmit` → **exit 0**，输出 0 行。
+3. `node --check` 两个新脚本 → `cleanup-retired-transfer-data.mjs` **OK**、`remove-zhonghua-person.mjs` **OK**。
+4. **`console.log` 审计**（279 + 395 行）：命中 ~60 处，逐条判读**全为脚本自身 CLI 报告输出**（`--help` 头注释直出、DRY-RUN/APPLY 标题、逐文件计划与 md5、自检结果、汇总、回滚提示）→ **非调试残留**。`grep -n 'DEBUG\|debugger\|FIXME\|XXX\|临时\|TODO'` → **0 命中**（exit 1）。（`console.error` 仅用于非法参数 / 自检不通过拒写等错误路径，属正常。）
+5. **真源体检**：跑全部测试 + 真机探针前后，`config/tree-meta.json` + `migrate-output/trees/*.json`(9) + `collections/*.json`(12) 共 **22 个文件 md5 逐行 diff → 无输出（TRUTH_DIFF_EXIT=0）** → 本次质检动作**零写入**。
+
+### 13.5 反向验证（防假绿）→ 通过
+
+**① 字节级 diff：只少一个 person 块**
+```bash
+$ diff -u 备份zhonghua.json 现状zhonghua.json
+@@ -786,23 +786,6 @@        # 全文件唯一 hunk
+删除行 17   新增行 0
+```
+- 被删块 = 备份 **第 789–805 行（17 行）**：`"103ff1c309eb7bf2cb4f6ff1762e": { … "gramps_id": "I0046" … },`，即 1 行入口 + 15 字段 + 1 行 `},`。用 `sed -n '789,805p'` 取块与 diff 删除行逐行比对 → **一致**。总行数 3365 → 3348（**-17**）。
+
+**② 当前文件无新增字段 / 重排序 / 缩进漂移（重序列化逐字比较）**
+```bash
+node -e "raw === JSON.stringify(JSON.parse(raw), null, 2)"
+migrate-output/trees/zhonghua.json               raw=95376B  reser=95376B  → true ✅
+migrate-output/collections/jiazu_wallets.json    raw=3815B   reser=3815B   → true ✅
+auth-server/data/wallets.json                    raw=3516B   reser=3516B   → true ✅
+（三文件均「末尾无换行」，reser 亦无 → 缩进=2 空格、无重排、无空白漂移）
+```
+→ 手术是**纯行区间删除**，未发生任何重序列化副作用。
+
+### 13.6 判定、返工清单与可疑点
+
+**总体判定：通过**（措辞统一 / auth-server 删码 / 两项数据手术 / 回归 / 反向验证 全项达标，**必修返工 0 项**）。**S2 已解决**。
+
+| 项 | 结果 | 关键证据 |
+|---|---|---|
+| 建树费措辞统一「9颗石榴籽」 | **通过** | §13.1（建树费语境 0 命中；8.4 块三份 md5 同 `6c5c7946…`、spec 8.4 正文未变；18/18/0；spec 措辞同步见 §13.1 ④） |
+| auth-server 删转账代码 | **通过** | §13.2（4 关键词 0 命中；`node --check` OK；balance/recharge 路由在；未起服务） |
+| 世本删 I0046 | **通过** | §13.3.1/2（139 vs 140、families 深等、139 人全等、version/updated_at 未变、详情文档已删） |
+| 钱包 transfer 残留清理 | **通过** | §13.3.3（transfer 0 条、trees 已删、15 条流水逐条相等、users/config 未变、两文件同） |
+| 真机复验 | **通过** | §13.3.5（20/20：139 且无顾清学、guest 1 受限、chief 1 `gu_39038/I000139`、I0046 0 条、410+`TREE_FUND_RETIRED`；PID 未变） |
+| 回归 / 卫生 | **通过** | §13.4（npm 350/350/0；vue-tsc exit 0；`node --check` OK；无调试残留；真源 22/22 未变） |
+| 反向验证 | **通过** | §13.5（唯 1 hunk、删 17 行 789–805、重序列化逐字相等） |
+
+**返工清单（必修）：0 项。**
+
+**可疑点 / 覆盖边界**（如实列出，未改任何代码/数据）：
+
+- **S1（流程，复现上轮现象且更严重）**：质检窗口内 HEAD 由 `2042b83` 位移至 **`2bf89f7` → `dc8214f`**（主代理提交，含本轮四项中的措辞改动与两脚本入库），工作区由多处 ` M` 变为干净；随后**在撰写本节期间工作区又出现 4 份 spec 的未提交改动**（§13.0 / §13.1 ④）。`TREE_CREATE_CONFIRM` 的「未变」断言已对**两个** HEAD 各验一次（md5 相同），结论不受影响；但**后续轮次若拿「与 HEAD diff = 0」当「未改动」证据，会退化成恒真的空断言**（同上轮 S1）。**本节所有「未变」结论均以 md5 / 时间戳快照钉住，而非以「对比 HEAD」为据**。
+- **S2（已解决 ✅）**：措辞统一落地为「9颗石榴籽」（`2bf89f7` / `dc8214f`，spec 层亦已在工作区同步）。**本项关闭**。
+- **S3（归属已确认 ✅）**：窗口内第 4 个被写文件 `migrate-output/collections/jiazu_sms_codes.json`（06:47:15，测试号 13900000003，码已过期 2026-08-15）**不属手术写入面**：主代理在 `docs/PENDING_DEPLOY.md` 原文中自述「会话期间唯一被写的真源文件是 `migrate-output/collections/jiazu_sms_codes.json`，**由主代理取 dev 验证码产生，与本批无关、不构成上传项**」——与本节判定一致。**残留风险**：该文件**不在备份集内**，若日后手术清单扩展到该集合，现有备份不足以回滚（建议补备份口径）。
+- **S4（口径并存的「已判定不属项」）**：同一份 `lib/economy-fee.js` 内 `:42`「建树：9颗石榴籽」与 `:43`「立支：9999 颗完整石榴籽」并存；`lib/economy-spirit.js:393` 仍用「999 颗完整石榴籽」。按本轮用户拍板口径（只管建树费）**不属返工**，但属**同册内两种量词写法并存**，登记备查。
+- **S5（文档层措辞 —— 撰写期间已全部收口 ✅）**：截至本节最后一次核对（**2026-09-18 06:52:58 CST**），`docs/` 全域**建树费语境旧写法 = 0 命中**——`docs/economy-ops.spec.md:238`（→「需 9颗石榴籽」）、`docs/economy-fee.spec.md`（5 处）、`docs/economy.spec.md`（7 处）、`docs/PENDING_DEPLOY.md:1166` **均已在撰写期间被主代理修复**（未提交），且我先前标记的 `PENDING_DEPLOY.md` 两条**过期登记**（「auth-server 转账链路待裁决/未动」「钱包页文案待改」）也已回写为 **✅ 已处理**。剩余 `完整石榴籽` 命中**全部为合法语境**：资产官方名（总册 §3-2 完整石榴籽 / §3-3 石榴籽玉）、立支 9999（`branch-clan-ops.spec.md`）、玉 999（`spirit-domain.spec.md`）——**按派单口径不属**。（本节 §13.1 的 0 命中结论扫描范围 = `frontend/src` + `cloudfunctions` + `auth-server`，与 `docs/` 无关。）
+- **S6（仓库状态）**：`docs/zhonghua-cleanup-2026-09.spec.md`（216 行，手术记录册）收工时仍 **untracked**。其声明的术后终态与我独立重算**逐项吻合**（140→139、树 md5 `2c6fbdca…`、详情 md5 `6ca7e089…`、两钱包 md5、搜索 2→1、`I0046` 1→0、`grep -c transfer`=0、余额 1070 未动）→「文档 vs 实测」一致，**建议入库**。
+- **S7（对搜索基数的净影响；实测 + 一处推断）**：被删节点在备份中**无 `external_mirror` 字段**且 `external_person_handle` 为空 → 按 `/search/global` 的 `isMirrorNode` 判据**它不是镜像节点**，此前是一条**独立（真身）命中**。故「顾清学」chief 命中由 **2 → 1**（现状 1 条为**本次实测**；术前 2 条为手术记录册声明，**本次未能实测术前态**，标为**推断**）。
+- **S8（取证手段）**：真机探针的 chief 身份用**本地自签 JWT**取得（默认 secret、复用已存在的 chief 号），**未走 `/auth/login`**；若运行实例设了 `AUTH_JWT_SECRET` 则可疑，但探针返回 `restricted=false` 证明校验通过、身份生效。**未做浏览器点测**（派单禁止）。
+
+### 13.7 快照钉住（本节结论的证据锚点）
+
+本节所有断言以下列**实测快照**为准（快照时间 **2026-09-18 06:47 – 06:53 CST**，HEAD = **dc8214f**）：
+
+| 对象 | 快照值 |
+|---|---|
+| `migrate-output/trees/zhonghua.json` | `2c6fbdcae6cd9b7a1cf811408d7b017d`（139 人；备份 `9b22e0b9b66f6c3588228eb0d86c1f68` / 140 人） |
+| `migrate-output/details/zhonghua:103ff1c309eb7bf2cb4f6ff1762e.json` | **不存在**（备份 `6ca7e089e26548b85468cb2f79f140c9`） |
+| `migrate-output/collections/jiazu_wallets.json` | `1c2ca5a078eee318bd3f0f80fefad69d`（备份 `1b52c2e7166573b43b45887abdaf414f`） |
+| `auth-server/data/wallets.json` | `b0818848e4435dfb9969746e862b929e`（备份 `e8c4464922f487b3b3cd7e71514f4c1c`） |
+| `TREE_CREATE_CONFIRM` 块（index.vue） | `6c5c7946f6c6d7bb7d8c4b4f23e7b129`（HEAD 2042b83 / dc8214f / 工作区 三份相同） |
+| 真源集合（22 文件） | 质检前后 md5 逐行 **TRUTH_DIFF_EXIT=0**（`/tmp/neng13/truth-pre.txt` ≡ `truth-final.txt`） |
+| 服务 | 3100 PID 2839 / 5199 PID 41219（探针前后未变，未重启） |
+
+> 复算脚本留档（`/tmp`，可能被系统清理）：`recompute.mjs`（树）、`recompute-wallets.mjs`（钱包）、`probe.mjs`（真机探针）、`inspect.mjs`（结构勘察）、`tree.diff`（字节级 diff）。
+
+

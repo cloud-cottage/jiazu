@@ -1035,11 +1035,12 @@ CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs
 
 > **权威规格**：`docs/home-sort-search.spec.md`（本批新建；**从属于** `docs/economy.spec.md` 等总纲——经济域口径的唯一权威仍是 `docs/economy.spec.md`）；
 > 资金下线的**总纲表述** = `docs/economy.spec.md` **§12-3**（已回写状态）。
-> **本批性质**：**纯代码批次**（后端 `cloudfunctions/**` + 前端 `frontend/**` + 根 `package.json`）→
-> **无新增集合、无数据变更**；真源数据本轮**零改动**（`config/tree-meta.json` 与 `migrate-output/**` 逐字节未变；会话期间唯一被写的真源文件是
-> `migrate-output/collections/jiazu_sms_codes.json`，由主代理取 dev 验证码产生，**与本批无关、不构成上传项**）。
+> **本批性质**：**代码批次 + 数据修正批次**（后端 `cloudfunctions/**` + 前端 `frontend/**` + `auth-server/**` + 根 `package.json`；两项数据手术已对**真源**执行）。
+> **无新增集合**；但**本轮有真源数据变更**（原「无」已作废 → 见 **§16-3**）：① 世本 `zhonghua` 删节点 `I0046`（顾清学）：`people` **140 → 139** + 删其详情文档；
+> ② 钱包集合删 `type:'transfer'` 流水与 `trees` 字段（`migrate-output/collections/jiazu_wallets.json` + `auth-server/data/wallets.json`；**用户余额未动**）。
+> 作业依据 / 删前核查 / 前后 md5 / 备份与回滚见 **`docs/zhonghua-cleanup-2026-09.spec.md`**。
 > ⚠️ **云函数必须重打包**：`cloudfunctions/deploy/compat-api/index.js` **仍是旧产物**，落后本批全部后端改动
-> （新增 **1 条路由** + **1 条路由出参增量** + **2 条路由改 410**）。
+> （新增 **1 条路由** + **1 条路由出参增量** + **2 条路由改 410** + **建树 409 文案统一**）。
 > ⚠️ **前端 H5 / 小程序同样必须重打包**：不重打包则线上仍是被删掉的资金入口 + 没有首页搜索框。
 
 ### 16-0 总览
@@ -1048,7 +1049,7 @@ CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs
 |---|---|---|---|
 | 1 | 云函数 `compat-api` | **必须重打包 + `tcb fn deploy`**（§16-1：`GET /search/global` 新增、`GET /tree/rank` 出参增量、`/wallet/transfer` 与 `/wallet/tree-balance` 改 410） | 无 |
 | 2 | CloudBase 集合 | **无**（不新增集合；`COLLECTIONS` 保持 §11-2 的 12 项） | — |
-| 3 | 云端数据 | **无**（不改数据 → 不重跑迁移上传） | — |
+| 3 | 云端数据 | **有变更**（§16-3：重传 `zhonghua` 树 JSON（**139 人**）+ **手工删**云端 I0046 详情文档 + 重传清理后的钱包集合 `jiazu_wallets`） | 需 CB_ENV/CB_KEY |
 | 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（§16-4：首页列表 / 三档排序 / 搜索框、家族树页删资金块、钱包页删转账区、business 封装 + 两处文案） | 需确认 hosting 目标与云函数 HTTP 域名 |
 
 ### 16-1 云函数 `compat-api`：新增 1 条路由 + 1 条出参增量 + 2 条路由改 410（**必须重打包 + 部署**）
@@ -1062,6 +1063,7 @@ CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs
 | **`POST /wallet/transfer`** | **改语义为下线**：在**鉴权 / 参数校验之前**恒返 **410** + `{ error: '家族树资金功能已下线', code: 'TREE_FUND_RETIRED' }` | `lib/home-sort-search.test.js` C 组（**15 种请求组合实测全 410**；对照组 `GET /wallet/balance` 仍 401 / 200 正常） |
 | **`GET /wallet/tree-balance`** | 同上（恒 **410** + `TREE_FUND_RETIRED`） | 同上 |
 | `lib/wallet.js` | **删** `transferToTree` / `getTreeBalance`；**保留** `deductTreeCreateFee`（建树费钩子不变） | 同上（模块级导出已核对） |
+| **`lib/economy-ledger.js`** | **后续批次（2026-09-18）文案统一**：籽域 409 文案改为 **`资产不足，需 9颗石榴籽，当前 N 颗`**（数字与量词**连写**、**不带**「完整」；用户拍板）；竹片 / 玉域**沿用既有**「需 N 片竹片 / 需 N 枚石榴籽玉」空格写法；`need` / `current` / `unit` / `how_to_get` 的**字段名与取值一律不变** | `lib/economy-fee.test.js`（#8 / #34 与 409 文案断言）+ 全量 `npm test` **350 pass / 0 fail** |
 
 **具体命令**（仓库根；写法同 §1 / §11-1 / §14-1）：
 
@@ -1088,6 +1090,9 @@ grep -c 'TREE_FUND_RETIRED' cloudfunctions/deploy/compat-api/index.js
 - 全量 `npm test` = **350 pass / 0 fail**；新增文件 `cloudfunctions/compat-api/lib/home-sort-search.test.js`
   **已注册**进根 `package.json` 的 `scripts.test`（未注册 = 假绿）。
 - 前端改动与规格逐条对应（§16-4 表）；`git diff --stat` 覆盖 `cloudfunctions/` 2 个文件、`frontend/` 7 个文件、根 `package.json`，**无真源数据文件**。
+- **后续批次（2026-09-18，同批登记在本节）**：建树费文案统一（提交 `dc8214f` / `2bf89f7`，涉 `cloudfunctions/compat-api/lib/{economy-ledger,economy-fee}.js` + 2 个测试文件 +
+  `frontend/src/pages/{wallet,index}/index.vue` / `business/{api,asset-guide}.ts`）、`auth-server` 转账路由与方法删除（提交 `2bf89f7`）、两项数据手术（§16-3）。
+  该批次完成后**重跑**全量 `npm test` = **350 pass / 0 fail**（数据手术后的真源上仍全绿）。
 
 **阻塞点**：**无**（命令与判据齐备）；仅需 `tcb` 登录态与 envId 权限（同既有批次）。
 
@@ -1098,12 +1103,47 @@ grep -c 'TREE_FUND_RETIRED' cloudfunctions/deploy/compat-api/index.js
 - 附注（不构成部署项）：`lib/tree-activity.js` 只**读**四个申请集合（`jiazu_join_requests` / `jiazu_marriage_requests` /
   `jiazu_founder_requests` / `jiazu_clan_requests`）—— 它们已在 §2 / §11-2 的清单内；**某个集合在云端尚不存在时，活跃度只返回 0、不报错**（不阻塞本批）。
 
-### 16-3 云端数据：**无**
+### 16-3 云端数据：**有变更**（两项数据手术 · **必须重跑迁移上传 + 1 项手工删除**）
 
-- **无数据变更**（明确「**无**」）：本批不改树 JSON / 详情文档 / `tree-meta` / 编号计数器 → **不需要重跑**
-  `CB_ENV=… CB_KEY=… node scripts/upload-migrated-to-cloudbase.mjs`。
-- 真源数据本轮**零改动**：`config/tree-meta.json`、`migrate-output/**` 均无改动；会话期间唯一被写的真源文件是
-  `migrate-output/collections/jiazu_sms_codes.json`（主代理取 dev 验证码产生），**与本批无关、不上传**。
+> ⚠️ 本节为**回写变更**（原为「**无**」）：2026-09-18 用户拍板批次对真源做了两项数据手术 —— 世本删节点 `I0046` 与钱包 `transfer` 残留清理。
+> 作业依据 / 删前核查 / 前后 md5 / 备份与回滚 / 云端要求见 **`docs/zhonghua-cleanup-2026-09.spec.md`**（本清单只列**上云动作**）。
+
+**为什么需要**（逐条列出被改的真源 → 对应云端副本）：
+
+| 真源文件（本地） | 变更 | 对应云端副本 |
+|---|---|---|
+| `migrate-output/trees/zhonghua.json` | 删 `I0046`（顾清学）：`people` **140 → 139**；md5 `9b22e0b9b66f6c3588228eb0d86c1f68` → **`2c6fbdcae6cd9b7a1cf811408d7b017d`**（`version` / `updated_at` 故意未动） | 云存储 **`trees/zhonghua.json`**（重跑全量上传即覆盖） |
+| `migrate-output/details/zhonghua:103ff1c309eb7bf2cb4f6ff1762e.json` | **删除**（原 md5 `6ca7e089e26548b85468cb2f79f140c9`） | 集合 `jiazu_person_details` 的 **`_id = zhonghua:103ff1c309eb7bf2cb4f6ff1762e`**（**必须手工删**，见下） |
+| `migrate-output/collections/jiazu_wallets.json` | 删 `type:'transfer'` 流水 1 条 + 删 `trees` 字段；md5 `1b52c2e7166573b43b45887abdaf414f` → **`1c2ca5a078eee318bd3f0f80fefad69d`**；`users[*].balance_cents` **未动（1070 分）**，那笔 ¥20 **不返还** | 集合 `jiazu_wallets` 的 `global` 文档（重跑覆盖） |
+| `auth-server/data/wallets.json` | 同上（各 1 条 / 1 处）；md5 `e8c4464922f487b3b3cd7e71514f4c1c` → `b0818848e4435dfb9969746e862b929e` | 属**遗留链路、不上云**（见 §16-7-1） |
+
+**具体命令**：
+
+```bash
+# ① 全量重跑迁移上传（树 JSON 逐棵覆盖 + 详情 upsert + tree-meta.storage_files 回写）
+CB_ENV=liwu-d8gek6jjdab1d087c CB_KEY=<云开发 API Key> \
+  node scripts/upload-migrated-to-cloudbase.mjs
+
+# ② ⚠️ 手工删除云端已不存在的详情文档
+#    重跑**不会**删旧键：脚本对详情是 doc(_id).set()（upsert，只增不删）→ 不删 = 云端残留已删节点的详情
+#    控制台：云开发 → 数据库 → jiazu_person_details → 按 _id **精确**查询后删除记录
+#    或一次性脚本（不入库）：await db.collection('jiazu_person_details')
+#        .doc('zhonghua:103ff1c309eb7bf2cb4f6ff1762e').remove()
+
+# ③ 本地侧判据
+python3 -c "import json;d=json.load(open('migrate-output/trees/zhonghua.json'));print(len(d['people']))"   # 期望 139
+python3 -c "import json;g=json.load(open('migrate-output/collections/jiazu_wallets.json'))['global'];print(sum(1 for t in g['transactions'] if t['type']=='transfer'), 'trees' in g)"   # 期望 0 False
+```
+
+**本地验证证据**：
+
+- 上表 md5 / `people` 数**均在真源实测**（备份件见 `docs/zhonghua-cleanup-2026-09.spec.md` §4-1；详情文档已确认不在磁盘）。
+- 数据手术后**重跑**全量 `npm test` = **350 pass / 0 fail**（2026-09-18）。
+- 云端侧断言见 **§16-5 第 8 步**（上传后回读）。
+- ⚠️ **`jiazu_wallets` 以云端实际为准**：若云端该文档**本就没有** `transfer` 流水 / `trees` 字段（例如从未上传过家族树资金数据），
+  则该文件属**幂等无变化** —— 在部署记录里注明「云端本来就无该字段」即可，**不构成阻塞**。
+
+**阻塞点**：需 CB_ENV / CB_KEY；第 ② 步**必须显式执行**（遗漏 → 云端残留失效详情文档，按 `tree_id` 取详情时命中已删节点，与真源口径分叉）。
 
 ### 16-4 前端 H5（**必须重打包 + hosting 部署**；小程序同理）
 
@@ -1118,6 +1158,7 @@ grep -c 'TREE_FUND_RETIRED' cloudfunctions/deploy/compat-api/index.js
 | 钱包页删转账区 | `frontend/src/pages/wallet/index.vue` | **删**「转账到家族树」区块（-61 行） |
 | business 封装 | `business/api.ts` / `business/index.ts` / `business/types.ts` | **删** `transferToTree` / `fetchTreeBalance` 封装与转出；**新增** `searchPeopleGlobal` + `GlobalPersonHit`；`DigitalHallCard.kind?`；rank 类型加 `activity?: number` / `updated_at?: string` |
 | 文案同步 | `pages/about/about.vue`、`pages/mine/index.vue` | 「转账支持家族树」→「充值购买站内资产」；「我的钱包」描述「余额 / 充值 / 转账」→「余额 / 充值 / 交易流水」 |
+| **建树费文案统一**（后续批次 2026-09-18） | `pages/wallet/index.vue`、`pages/index/index.vue`、`business/asset-guide.ts` | 一律写「**9颗石榴籽**」（数字与量词**连写**、**不带**「完整」）：钱包页余额卡片「新建家族树消耗 9颗石榴籽」（第 8 行，常量 `TREE_CREATE_FEE_SEEDS = 9`）、首页入口行「消耗 9颗石榴籽」（第 101 行）、建树弹窗费用行「建树消耗 9颗石榴籽（可用籽数见「我的资产」）」（第 161 行）、籽域扣费回执 `feeText`「本次消耗 9颗石榴籽，余 N 颗」；**8.4 定稿弹窗正文逐字未动** |
 
 **具体命令**：
 
@@ -1130,6 +1171,8 @@ npm run build:mp-weixin                                        # 产物交微信
 
 **本地验证证据**：上表改动与 `docs/home-sort-search.spec.md` §2 / §3 / §5-2（前端消费）/ §8 逐条对应；
 `git diff --stat` = `cloudfunctions/compat-api/index.js`、`lib/wallet.js`、`frontend/` 7 个文件、根 `package.json`（**无真源数据文件**）。
+**后续批次补记**：建树费文案统一另涉 `frontend/src/business/asset-guide.ts`（上表末行）与 `frontend/src/business/api.ts` 注释，
+提交 `dc8214f`；该文案**随本次 hosting 发布**，不与数据手术耦合。
 （`npx vue-tsc --noEmit` 与前端真机点测属本轮验收项，**不由本清单代为断言**。）
 
 **阻塞点**：H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限。
@@ -1147,7 +1190,12 @@ npm run build:mp-weixin                                        # 产物交微信
    → **一律 410 + `code='TREE_FUND_RETIRED'`**；对照 `GET /wallet/balance` → 未登录 **401** / 登录 **200**（证明只下线这两条）；
 7. **页面**：首页**不再出现祖谱与世本卡片**；三档排序切换顺序可复现（同分按 `tree_id` 升序）；
    搜索框：受限条点击只出 toast「权限受限，不可见详情」、**不进详情页**，非受限条正常跳人物详情；
-   家族树页无「家族树资金」区块、钱包页无「转账到家族树」区块。
+   家族树页无「家族树资金」区块、钱包页无「转账到家族树」区块；钱包页建树费文案显示「**新建家族树消耗 9颗石榴籽**」（**不带**空格、**不带**「完整」）。
+8. **数据手术后自检（§16-3 回读，重要）**：云端树 JSON `trees/zhonghua.json` 的 `people` 数 = **139**（不是 140）；
+   `jiazu_person_details` 按 `_id = zhonghua:103ff1c309eb7bf2cb4f6ff1762e` 查询**查不到**；
+   云端 `jiazu_wallets/global` 的 `transactions[]` **无** `type='transfer'`、**无** `trees` 字段（若云端本来就没有 → 注明，不作缺陷）；
+   首页搜索「顾清学」→ **guest 1 条（受限）/ chief 1 条（祖谱真身）**，按编号 `I0046` 检索 → **0 条**
+   （口径与事实见 `docs/zhonghua-cleanup-2026-09.spec.md` §2-5）。
 
 ### 16-6 本批**不需要**上云的东西
 
@@ -1156,14 +1204,19 @@ npm run build:mp-weixin                                        # 产物交微信
 - `/tmp` 下的数据副本与取证文件：临时产物。
 - 规格与质检文档（`docs/home-sort-search.spec.md` / `docs/home-sort-search.qa.md`）：不进产物、不影响云端。
 
-### 16-7 顺带登记：未处理事项（**待裁决 / 待改**；本批未动）
+### 16-7 顺带登记：原「未处理事项」—— **本批已全部处理（2026-09-18 · ✅）**
 
-1. **`auth-server` 遗留转账链路**（**待裁决**）：`auth-server/server.js`（`/api/wallet/transfer` 分支，内调 `wallet.transferToTree(...)`）与
-   `auth-server/wallet.js`（`transferToTree`）**仍在**。它属**遗留 Gramps 链路**（已退出运行链路），本批**未动**；
-   待裁决：是否随遗留链路整体清理（本次不动，避免扩大改动范围；**不得据它判定资金下线未落地**）。
-2. **钱包页余额卡片文案仍是人民币口径**（**待改**）：`frontend/src/pages/wallet/index.vue` 第 7 行
-   `新建家族树费用：¥{{ wallet?.tree_create_fee_yuan || '9.90' }}`。
-   而经济总纲 `docs/economy.spec.md` **§5-5（建树扣 9 颗石榴籽）** 且 **§9 前端落点表**已要求该文案改为「**9 颗完整石榴籽**」
-   → 现状与规格不符，**本批只登记、不改**。
-   - 同根因的**附带观察**（建议一并裁决）：`frontend/src/pages/index/index.vue` 第 340 行 `const feeYuan = ref('9.90')`
-     （新建家族树弹窗取 `fetchWallet().tree_create_fee_yuan`），文案同样会显示「¥9.90」。
+1. **`auth-server` 遗留转账链路 → ✅ 已处理**：`auth-server/server.js` 的 `/api/wallet/transfer` 与 `/api/wallet/tree-balance` 两条路由、
+   `auth-server/wallet.js` 的 `transferToTree` / `getTreeBalance`（含 `type:'transfer'` 流水写入）**均已删除**（提交 `2bf89f7`；`grep` 0 残留）；
+   其**钱包数据残留**（`trees` 字段 + `type:'transfer'` 流水，两个文件各 1 条）同批清理（§16-3）。
+   该链路**仍属遗留链路、当前不部署**；若日后部署 `auth-server`，需**与本次代码同批发布**。
+   事实 / 备份 / 回滚 / 云端同步见 `docs/zhonghua-cleanup-2026-09.spec.md`。
+2. **钱包页余额卡片人民币口径 → ✅ 已处理**：文案已由 `新建家族树费用：¥{{ wallet?.tree_create_fee_yuan || '9.90' }}` 改为
+   **「新建家族树消耗 {{ TREE_CREATE_FEE_SEEDS }}颗石榴籽」**（`frontend/src/pages/wallet/index.vue` 第 8 行 + 第 85 行常量 `TREE_CREATE_FEE_SEEDS = 9`），
+   与经济总纲 `docs/economy.spec.md` **§5-5（建树扣 9颗石榴籽）** 及 **§9 前端落点表** 口径一致（该册 §12-3-⑤ 已同步标 ✅）。
+   - 同根因的**附带观察**也一并处理：`frontend/src/pages/index/index.vue` 的新建家族树弹窗**不再取** `fetchWallet().tree_create_fee_yuan`，
+     费用行改为「建树消耗 9颗石榴籽（可用籽数见「我的资产」）」（第 161 行）、入口行第 101 行同口径；原 `const feeYuan = ref('9.90')` **已不存在**。
+   - **建树费措辞统一口径（用户拍板 2026-09-18）**：一律写「**9颗石榴籽**」（数字与量词**连写**、**不带**「完整」二字），与 8.4 定稿弹窗逐字一致；
+     后端 409 文案同步为 `资产不足，需 9颗石榴籽，当前 N 颗`（`lib/economy-ledger.js`）。
+     **未动**：玉合成「999 颗石榴籽」、官方竹简「¥9.90/束」、立支 9999 颗石榴籽、竹片 / 玉域的「需 N 片竹片 / 需 N 枚石榴籽玉」写法
+     （钱包页残留的 `¥9.90` 全部属**官方竹简售价**语境）。
