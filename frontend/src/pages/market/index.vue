@@ -81,7 +81,10 @@
       </view>
       <view v-for="l in listings" :key="l.id" class="row-item">
         <view class="row-left">
-          <text class="row-main">{{ l.price_seeds }} 籽 · {{ l.bundles }} 束（{{ l.pieces }} 片）</text>
+          <view class="ico-line">
+            <image class="ico-sm" :src="ICON.SEED" mode="aspectFit" />
+            <text class="row-main">{{ l.price_seeds }} 籽 · {{ l.bundles }} 束（{{ l.pieces }} 片）</text>
+          </view>
           <text class="row-sub">卖方 {{ maskPhone(l.seller_phone) }} · 剩 {{ daysLeft(l) }} 天</text>
         </view>
         <t-button
@@ -149,7 +152,10 @@
         </view>
         <view v-for="l in myListings" :key="l.id" class="row-item">
           <view class="row-left">
-            <text class="row-main">{{ l.price_seeds }} 籽 · {{ l.bundles }} 束（{{ l.pieces }} 片）</text>
+            <view class="ico-line">
+              <image class="ico-sm" :src="ICON.SEED" mode="aspectFit" />
+              <text class="row-main">{{ l.price_seeds }} 籽 · {{ l.bundles }} 束（{{ l.pieces }} 片）</text>
+            </view>
             <text class="row-sub">{{ statusLabel(l.status) }} · {{ daysLeft(l) > 0 ? `剩 ${daysLeft(l)} 天` : '已到期' }}</text>
           </view>
           <t-button
@@ -178,7 +184,10 @@
         <text class="modal-sub">整单全量成交，不支持部分购买与议价</text>
         <view class="modal-row">
           <text class="modal-label">标价</text>
-          <text class="modal-value">{{ buyTarget.price_seeds }} 籽</text>
+          <view class="ico-line">
+            <image class="ico-sm" :src="ICON.SEED" mode="aspectFit" />
+            <text class="modal-value">{{ buyTarget.price_seeds }} 籽</text>
+          </view>
         </view>
         <view class="modal-row">
           <text class="modal-label">手续费（1%）</text>
@@ -217,6 +226,7 @@ import {
 import type { MarketListing, MarketMyAssets, MarketOfficial } from '@/business/api';
 import { authState, isAuthenticated } from '@/business/auth';
 import { isAssetInsufficientError, showAssetInsufficientGuide } from '@/business/asset-guide';
+import { ICON } from '@/business/icons';
 
 /** 挂单时限（天）：与后端常量 `LISTING_TTL_DAYS = 7` 同口径，仅用于文案 */
 const LISTING_TTL_DAYS = 7;
@@ -612,6 +622,10 @@ function goWallet() {
 .row-main { font-size: 14px; color: #555; display: block; }
 .row-sub { font-size: 11px; color: #B5A594; margin-top: 2px; display: block; }
 .own-tag { font-size: 12px; color: #B5A594; }
+
+/* 石榴籽行内图标（统一经 business/icons.ts 常量引用，禁止手写 /static 路径） */
+.ico-line { display: flex; align-items: center; gap: 6rpx; }
+.ico-sm { width: 28rpx; height: 28rpx; flex-shrink: 0; }
 
 .form-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
 .form-label { font-size: 13px; color: #3E2723; width: 72px; flex-shrink: 0; }

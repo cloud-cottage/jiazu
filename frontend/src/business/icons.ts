@@ -8,7 +8,18 @@ export const ICON = {
   /** 性别徽章：男 / 女（黑底白字圆章） */
   GENDER_MALE: '/static/icons/male.svg',
   GENDER_FEMALE: '/static/icons/female.svg',
+  /** 石榴籽（资产计量 / 市集标价「N 籽」） */
+  SEED: '/static/icons/seed.svg',
+  /** 石榴籽玉（家族树凹槽镶玉 / 玉操作） */
+  JADE: '/static/icons/jade.svg',
 } as const;
+
+/** 按资产种类取图标 URL（seed→石榴籽 / jade→石榴籽玉 / 其它→空串不显示） */
+export function assetIconSrc(kind: 'seed' | 'jade'): string {
+  if (kind === 'seed') return ICON.SEED;
+  if (kind === 'jade') return ICON.JADE;
+  return '';
+}
 
 /** 按性别取图标 URL（M→男章 / F→女章 / 其它→空串不显示） */
 export function genderIconSrc(gender?: 'M' | 'F' | 'U' | string | null): string {

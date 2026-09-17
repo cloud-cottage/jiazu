@@ -72,7 +72,10 @@
         </view>
 
         <view class="asset-row">
-          <text class="asset-name">完整石榴籽</text>
+          <view class="asset-name-cell">
+            <image class="ico-card" :src="ICON.SEED" mode="aspectFit" />
+            <text class="asset-name">完整石榴籽</text>
+          </view>
           <view class="asset-value-wrap">
             <text class="asset-value">{{ seedsTotal }} 颗</text>
             <text class="asset-sub">{{ seedLotCount }} 个批次 · 最近到期 {{ formatDate(nearestSeedExpiry) }}</text>
@@ -88,7 +91,10 @@
         </view>
 
         <view class="asset-row">
-          <text class="asset-name">石榴籽玉</text>
+          <view class="asset-name-cell">
+            <image class="ico-card" :src="ICON.JADE" mode="aspectFit" />
+            <text class="asset-name">石榴籽玉</text>
+          </view>
           <view class="asset-value-wrap">
             <text class="asset-value">{{ jades.length }} 枚</text>
             <text class="asset-sub">{{ jadeSub }}</text>
@@ -103,7 +109,12 @@
             :loading="synthesizing"
             :disabled="!canSynthesize || synthesizing"
             @click="confirmSynthesize"
-          >合成石榴籽玉（消耗 {{ JADE_SYNTH_SEEDS }} 颗）</t-button>
+          >
+            <view class="btn-inline">
+              <image class="ico-inline" :src="ICON.SEED" mode="aspectFit" />
+              <text>合成石榴籽玉（消耗 {{ JADE_SYNTH_SEEDS }} 颗）</text>
+            </view>
+          </t-button>
           <text class="jade-ops-hint">{{ synthHint }}</text>
         </view>
       </view>
@@ -115,6 +126,7 @@
           <text>暂未持有石榴籽玉（{{ JADE_SYNTH_SEEDS }} 颗石榴籽可合成 1 枚）</text>
         </view>
         <view v-for="j in jades" :key="j.id" class="row-item">
+          <image class="ico-list" :src="ICON.JADE" mode="aspectFit" />
           <view class="row-left">
             <text class="row-main">{{ jadeTitle(j) }}</text>
             <text class="row-sub">{{ jadeSubLine(j) }}</text>
@@ -186,6 +198,7 @@ import {
 import type { AssetDelta, AssetsSummary, ExpiringAsset, Jade, MessageItem } from '@/business/api';
 import { isAssetInsufficientError, showAssetInsufficientGuide } from '@/business/asset-guide';
 import { isAuthenticated } from '@/business/auth';
+import { ICON } from '@/business/icons';
 import {
   DECOMPOSE_CONFIRM_BODY,
   DECOMPOSE_CONFIRM_TITLE,
@@ -604,6 +617,13 @@ function goLogin() {
 .asset-row:last-child { border-bottom: none; }
 .asset-name { font-size: 14px; color: #3E2723; flex-shrink: 0; }
 .asset-value-wrap { flex: 1; text-align: right; }
+
+/* 石榴籽 / 石榴籽玉 图标（统一经 business/icons.ts 常量引用，禁止手写 /static 路径） */
+.asset-name-cell { display: flex; align-items: center; gap: 10rpx; flex-shrink: 0; }
+.ico-card { width: 64rpx; height: 64rpx; flex-shrink: 0; }
+.ico-list { width: 32rpx; height: 32rpx; flex-shrink: 0; margin-right: 10rpx; }
+.ico-inline { width: 32rpx; height: 32rpx; flex-shrink: 0; vertical-align: middle; }
+.btn-inline { display: flex; align-items: center; justify-content: center; gap: 8rpx; }
 .asset-value { font-size: 16px; font-weight: bold; color: #8B4513; display: block; }
 .asset-sub { font-size: 11px; color: #B5A594; display: block; margin-top: 2px; }
 

@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="512" height="512">
+  <defs>
+    
+    <linearGradient id="upperDark" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#9b0a14"></stop>
+      <stop offset="60%" stop-color="#c1121f"></stop>
+      <stop offset="100%" stop-color="#e63946"></stop>
+    </linearGradient>
+    
+    
+    <linearGradient id="lowerLight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b6b"></stop>
+      <stop offset="50%" stop-color="#ff8a8a"></stop>
+      <stop offset="100%" stop-color="#ffb3b3"></stop>
+    </linearGradient>
+    
+    
+    <linearGradient id="facetShine" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.7"></stop>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"></stop>
+    </linearGradient>
+  </defs>
+
+  
+  
+  <path d="M 55 38
+           L 145 32
+           L 168 95
+           L 100 175
+           L 32 102
+           Z" fill="url(#upperDark)" stroke="#5a0008" stroke-width="1.8" stroke-linejoin="round"></path>
+
+  
+  <path d="M 48 95
+           L 155 88
+           L 168 95
+           L 100 175
+           L 32 102
+           Z" fill="url(#lowerLight)" fill-opacity="0.85"></path>
+
+  
+  <path d="M 55 38
+           L 100 55
+           L 85 100
+           L 32 102
+           Z" fill="url(#facetShine)" fill-opacity="0.35"></path>
+
+  
+  <path d="M 145 32
+           L 168 95
+           L 120 100
+           L 100 55
+           Z" fill="#3d0000" fill-opacity="0.35"></path>
+
+  
+  <path d="M 38 98
+           L 162 92" fill="none" stroke="#ffcccc" stroke-width="1.4" stroke-opacity="0.5" stroke-linecap="round"></path>
+
+  
+  <path d="M 55 38
+           L 85 100
+           L 100 175" fill="none" stroke="#ff9999" stroke-width="1.1" stroke-opacity="0.4"></path>
+
+  
+  <path d="M 145 32
+           L 120 100
+           L 100 175" fill="none" stroke="#ff9999" stroke-width="1.1" stroke-opacity="0.4"></path>
+
+  
+  <path d="M 55 38
+           L 145 32
+           L 125 55
+           L 75 58
+           Z" fill="#ffffff" fill-opacity="0.4"></path>
+
+  
+  <path d="M 85 150
+           L 100 175
+           L 115 150
+           Z" fill="#ffcccc" fill-opacity="0.35"></path>
+
+  
+  <path d="M 70 70
+           L 95 65
+           L 110 85
+           L 80 90
+           Z" fill="#ffffff" fill-opacity="0.15"></path>
+</svg>

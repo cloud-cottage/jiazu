@@ -31,11 +31,17 @@
 
       <!-- ② 镶玉区：凹槽唯一、镶嵌不可逆 -->
       <view class="section">
-        <text class="section-title">家族树凹槽 · 镶玉</text>
+        <view class="ico-line">
+          <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
+          <text class="section-title">家族树凹槽 · 镶玉</text>
+        </view>
 
         <template v-if="isMounted">
           <view class="jade-mounted">
-            <text class="jade-line">已镶玉：{{ shortId(mountedJade?.jade_id) }}</text>
+            <view class="ico-line">
+              <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
+              <text class="jade-line">已镶玉：{{ shortId(mountedJade?.jade_id) }}</text>
+            </view>
             <text class="jade-line">镶嵌时间 {{ formatDate(mountedJade?.mounted_at || '') }}</text>
             <text class="jade-line">
               玉有效期 {{ mountedJade?.expires_at ? formatDate(mountedJade.expires_at) : '永久有效' }}
@@ -43,12 +49,18 @@
             <text class="jade-warn">
               镶嵌即永久占用本树唯一凹槽：该玉已销毁，不可取回、不可分解、不可二次使用。
             </text>
-            <text class="jade-note">凹槽已占用，每棵家族树仅可镶嵌 1 枚石榴籽玉。</text>
+            <view class="ico-line">
+              <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
+              <text class="jade-note">凹槽已占用，每棵家族树仅可镶嵌 1 枚石榴籽玉。</text>
+            </view>
           </view>
         </template>
 
         <template v-else>
-          <text class="section-hint">本树凹槽未占用 · 选择本人未镶嵌的石榴籽玉即可解锁「时流子域」</text>
+          <view class="ico-line">
+            <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
+            <text class="section-hint">本树凹槽未占用 · 选择本人未镶嵌的石榴籽玉即可解锁「时流子域」</text>
+          </view>
           <view v-if="!isAuthenticated()" class="empty">
             <text>请先登录后镶嵌石榴籽玉</text>
             <text class="link" @click="goLogin">去登录</text>
@@ -78,7 +90,10 @@
       <view class="section">
         <view class="section-head">
           <text class="section-title">玉露灵泽蓄能</text>
-          <text class="section-extra">可用 {{ seedsTotal }} 颗石榴籽</text>
+          <view class="ico-line ico-line-end">
+            <image class="ico-seed" :src="ICON.SEED" mode="aspectFit" />
+            <text class="section-extra">可用 {{ seedsTotal }} 颗石榴籽</text>
+          </view>
         </view>
 
         <view v-if="!isMounted" class="section-hint">本树尚未镶嵌石榴籽玉，镶嵌后方可灌注玉露灵泽。</view>
@@ -128,7 +143,10 @@
 
       <!-- ④ 玉操作区：合成（8.2 定稿确认）/ 分解（免费 + 二次确认） -->
       <view class="section">
-        <text class="section-title">石榴籽玉</text>
+        <view class="ico-line">
+          <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
+          <text class="section-title">石榴籽玉</text>
+        </view>
         <text class="section-hint">{{ JADE_SYNTH_SEEDS }} 颗石榴籽合成 1 枚玉；分解免费，返还 {{ JADE_SYNTH_SEEDS }} 颗石榴籽（统一 {{ SEED_VALID_DAYS }} 天有效期）。</text>
 
         <t-button
@@ -138,7 +156,12 @@
           :loading="synthesizing"
           :disabled="synthesizing"
           @click="confirmSynthesize"
-        >合成石榴籽玉（999 颗）</t-button>
+        >
+          <view class="btn-inline">
+            <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
+            <text>合成石榴籽玉（999 颗）</text>
+          </view>
+        </t-button>
 
         <view v-if="!isAuthenticated()" class="empty">
           <text>请先登录后合成 / 分解石榴籽玉</text>
@@ -217,6 +240,7 @@ import {
   SYNTH_CONFIRM_TITLE,
 } from '@/business/jade-ops';
 import { isAuthenticated } from '@/business/auth';
+import { ICON } from '@/business/icons';
 
 // ---- 定稿文案（真源 docs/economy-ops.spec.md §6.1；§6.3 运行时填值；逐字引用，不得改写） ----
 
@@ -672,6 +696,13 @@ function goMyAssets() {
 .section-head .section-title { margin-bottom: 0; }
 .section-extra { font-size: 12px; color: #8B4513; }
 .section-hint { font-size: 12px; color: #B5A594; display: block; margin: 8px 0; }
+
+/* 石榴籽 / 石榴籽玉 行内图标（统一经 business/icons.ts 常量引用，禁止手写 /static 路径） */
+.ico-line { display: flex; align-items: center; gap: 8rpx; }
+.ico-line-end { justify-content: flex-end; flex-shrink: 0; }
+.ico-sm { width: 40rpx; height: 40rpx; flex-shrink: 0; }
+.ico-seed { width: 36rpx; height: 36rpx; flex-shrink: 0; }
+.btn-inline { display: flex; align-items: center; justify-content: center; gap: 8rpx; }
 
 .status { border-left: 4px solid #B5A594; }
 .status-active { border-left-color: #2E7D32; }
