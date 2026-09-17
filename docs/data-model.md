@@ -203,7 +203,7 @@ cloud 模式需 `CB_ENV`/`CB_KEY` 环境变量）。
 输出形状 = Gramps-Web 形状（`RawPerson` 等），**前端 api.ts 的解析逻辑原样可用**。
 
 > **P2 写接口已完成**：认证/钱包/角色/锚点/join/leave/people+families 编辑/
-> split-tree/promote/remove-branch-link/tree-meta PUT，权限矩阵与 auth-server 一致
+> split-tree/remove-branch-link/tree-meta PUT，权限矩阵与 auth-server 一致
 > （guest 只读、总谱仅 chief_editor、user/branch_curator 节点范围校验、≤72 世深度上限）。
 > 业务数据迁移：`node scripts/migrate-business-data.mjs [--local]`
 > （auth-server/data/*.json → jiazu_users/jiazu_wallets/jiazu_anchors/jiazu_leave_requests）。
@@ -273,8 +273,10 @@ body = Gramps RawPerson 形状 + 编辑表单约定顶层字段（仅 compat 消
 | `POST /people/` | 新建人：生成 handle → 写树 JSON → 建详情文档（空档案） |
 | `POST /families/` / `PUT /families/<handle>` | 建/改家族：更新树 JSON families + 相关 person 的 parent_family/spouse_families |
 | `POST /admin/split-tree` | 子树分割：从树 JSON 复制子树 → 生成新树 JSON（含新 tree_id、始祖、姓氏）→ 原树移除节点 → tree_meta 注册新树 |
-| `POST /admin/promote` | 晋宗：节点链并入 zhonghua 树 JSON + 原树移除（chief_editor） |
 | `POST /admin/remove-branch-link` | 校验占位节点后删除跨树软关联 |
+
+> 原 `POST /admin/promote`（晋宗：节点链并入 zhonghua + 原树移除）**已整体移除**（2026-09-17 产品决策：路由与 `promoteTree()` 均已删除）；
+> 本表不再登记该路由，替代操作【立支】/【汇宗】待规格落地后另行补入。
 
 ### 6.4 业务接口（业务集合）
 
@@ -339,5 +341,5 @@ body = Gramps RawPerson 形状 + 编辑表单约定顶层字段（仅 compat 消
 
 1. **P0**：迁移脚本（SQLite → 树 JSON + 详情文档），交付首批树数据 + 迁移报告
 2. **P1**：兼容层 API 只读半边（people/families/search/rank/tree-meta）→ 前端浏览功能全通
-3. **P2**：写半边（auth/wallet/join/编辑/拆分/晋宗）→ 全功能验收
+3. **P2**：写半边（auth/wallet/join/编辑/拆分）→ 全功能验收
 4. **P3**：GEDCOM 导入导出管线（数据主权闭环）
