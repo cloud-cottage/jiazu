@@ -330,7 +330,7 @@ export async function splitTree(opts) {
 
     // ---- 7. 小分支不入中华世本总谱 ----
     // 规则：zhonghua 仅存「无主先祖 + 各家族树始祖」。普通拆分（分迁）不自动登记，
-    // 如需入谱走【晋宗】操作（节点以上并入 zhonghua + 指定挂接位置）。
+    // 如需入谱，由总编辑在总谱侧「续编」处理（节点并入 zhonghua + 指定挂接位置）。
     const masterLink = null;
 
     return {

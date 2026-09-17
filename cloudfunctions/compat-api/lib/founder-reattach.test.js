@@ -9,7 +9,7 @@
  * 现口径：
  * - 无始祖态（founder_state='none'）→ **该树任意节点**均可发起认祖；认祖成功时在同一次写入里
  *   回写 tree-meta 的 founder_handle / founder_gramps_id / founder_name = 被指定节点，
- *   并删除 founder_state（语义：无始祖时的认祖 = 指定始祖；宗谱同理）。
+ *   并删除 founder_state（语义：无始祖时的认祖 = 指定始祖；祖谱同理）。
  * - 已有登记始祖 → 仍只允许始祖节点发起（其他节点 400）。
  * - 不再兜底 'I0001'：未登记始祖的树不得把 I0001 当始祖（与前端 isFounderNode 同口径）。
  *
@@ -50,16 +50,16 @@ const metaFixture = {
       tree_id: 'zhonghua', kind: 'master', is_master: true, path_alias: '/zhonghua',
       surname_char: '华', display_title: '中华世本 · 全球华人家谱总谱',
     },
-    // 已有登记始祖的宗谱（负例：非始祖节点不得发起认祖）
+    // 已有登记始祖的祖谱（负例：非始祖节点不得发起认祖）
     gu_clan: {
       tree_id: 'gu_clan', kind: 'clan', path_alias: '/z/gu_clan', surname: '顾', surname_char: '顾',
-      display_title: '顾氏宗谱', founder_handle: 'own_gu', founder_gramps_id: 'I0002',
+      display_title: '顾氏祖谱', founder_handle: 'own_gu', founder_gramps_id: 'I0002',
       founder_name: '顾清学', master_tree_id: 'zhonghua', master_handle: 'mGu', master_name: '顾始祖',
     },
-    // 重置后的宗谱（无始祖态）
+    // 重置后的祖谱（无始祖态）
     gu_clan_r: {
       tree_id: 'gu_clan_r', kind: 'clan', path_alias: '/z/gu_clan_r', surname: '顾', surname_char: '顾',
-      display_title: '顾氏宗谱（重置后）', founder_state: 'none',
+      display_title: '顾氏祖谱（重置后）', founder_state: 'none',
     },
     // 重置后的普通家族树（无始祖态）
     gu_family: {
@@ -148,7 +148,7 @@ writeTree({
 });
 writeDetail({ _id: 'zhonghua:mGu', tree_id: 'zhonghua', handle: 'mGu', name: '顾始祖', events: [], attributes: [{ key: 'external_chain_gen', value: '25' }] });
 
-/** 顾氏宗谱（自有段：own_gu 为支系入口） */
+/** 顾氏祖谱（自有段：own_gu 为支系入口） */
 writeTree({
   _schema: '1.0',
   tree_id: 'gu_clan',
@@ -163,7 +163,7 @@ writeTree({
 });
 writeDetail({ _id: 'gu_clan:own_gu', tree_id: 'gu_clan', handle: 'own_gu', name: '顾清学', events: [], attributes: [{ key: 'external_chain_gen', value: '12' }] });
 
-/** 重置后的宗谱（无始祖态：自有段仍在） */
+/** 重置后的祖谱（无始祖态：自有段仍在） */
 writeTree({
   _schema: '1.0',
   tree_id: 'gu_clan_r',
@@ -235,7 +235,7 @@ test('无始祖态判定与认祖入口守卫：founder_state=none → 任意节
   // 未登记始祖的树：不得把 I0001 当始祖（真实 gu_39038_01 里根本没有 I0001）
   const orphan = { tree_id: 't_orphan', people: { a: { handle: 'a', gramps_id: 'I0001' } } };
   assert.equal(fa.canInitiateAttach({ tree: orphan, person: orphan.people.a, entry: { tree_id: 't_orphan' } }), false);
-  // 宗谱顶端的上层镜像仍可发起认祖（重认）
+  // 祖谱顶端的上层镜像仍可发起认祖（重认）
   const mirror = { handle: 'mir_mGu', gramps_id: 'I0001', external_mirror: 'true', external_tree: 'zhonghua', external_link_type: 'founder' };
   assert.equal(fa.canInitiateAttach({ tree: { tree_id: 'c', people: { mir_mGu: mirror } }, person: mirror, entry: { tree_id: 'c', kind: 'clan' }, treeId: 'c' }), true);
 });
@@ -272,7 +272,7 @@ test('无始祖家族树（gu_39038_01 形状）从任意节点认祖成功：�
   });
   assert.equal(r.ok, true);
   assert.equal(r.target_kind, 'clan');
-  assert.equal(r.relation_note, '顾清学（宗谱 · 第 12 世）');
+  assert.equal(r.relation_note, '顾清学（祖谱 · 第 12 世）');
   assert.equal(r.founder_registered, true, '无始祖态的认祖 = 指定始祖 → 本次应回写 meta');
 
   // ① tree-meta：该节点被登记为始祖，founder_state 删除
@@ -299,7 +299,7 @@ test('无始祖家族树（gu_39038_01 形状）从任意节点认祖成功：�
 
   // ③ 上层两棵树不得被改写
   assert.equal(treeFileMd5('zhonghua'), masterBefore, '总谱树 JSON 不得被改写');
-  assert.equal(treeFileMd5('gu_clan'), clanBefore, '认祖目标的宗谱树 JSON 不得被改写');
+  assert.equal(treeFileMd5('gu_clan'), clanBefore, '认祖目标的祖谱树 JSON 不得被改写');
 
   // ④ 始祖详情（称号等）随认祖清空（真身为准）
   const d = readDetailDoc('gu_family', 'h70');
@@ -388,7 +388,7 @@ test('路由 /admin/founder-request：无始祖树任意节点 200；有始祖�
   const notFounder = await post('/admin/founder-request', { tree_id: 'gu_family_reg', person_handle: 'h71', target_tree_id: 'gu_clan', target_handle: 'own_gu' }, stewardToken, 'gu_family_reg');
   assert.equal(notFounder.statusCode, 400);
   assert.match(json(notFounder).error, /始祖节点可发起认祖/);
-  // 已登记始祖的宗谱上，非始祖节点 → 400
+  // 已登记始祖的祖谱上，非始祖节点 → 400
   const clanNotFounder = await post('/admin/founder-request', { tree_id: 'gu_clan', person_handle: 'own_kid', target_tree_id: 'zhonghua', target_handle: 'mGu' }, stewardToken, 'gu_clan');
   assert.equal(clanNotFounder.statusCode, 400);
   assert.match(json(clanNotFounder).error, /始祖节点可发起认祖/);
@@ -421,7 +421,7 @@ test('路由 /admin/founder-request：无始祖树任意节点 200；有始祖�
   assert.equal(tree.people.h74.external_link_type, 'founder');
   assert.equal(tree.people.h74.external_tree, 'gu_clan');
   assert.equal(hasI0001(tree), false, '树内不得凭空出现 I0001');
-  // 读侧推导：该树现在可由宗谱 own_gu 节点反查出来
+  // 读侧推导：该树现在可由祖谱 own_gu 节点反查出来
   const attached = await fa.listAttachedTrees({ masterTreeId: 'gu_clan', meta: readMetaCopy() });
   const hit = attached.find((a) => a.tree_id === 'gu_family_r');
   assert.ok(hit, `该树应出现在 own_gu 的挂载树清单里：${JSON.stringify(attached)}`);
@@ -429,13 +429,13 @@ test('路由 /admin/founder-request：无始祖树任意节点 200；有始祖�
   assert.equal(hit.master_handle, 'own_gu');
 });
 
-test('路由：宗谱无始祖（重置后）任意节点认祖世本 → 通过后回写宗谱 meta 的始祖三字段', async () => {
+test('路由：祖谱无始祖（重置后）任意节点认祖世本 → 通过后回写祖谱 meta 的始祖三字段', async () => {
   const metaBefore = entryJsonOf('gu_clan_r');
 
-  // 重置后的宗谱：既有自有段（own_qx）又无始祖登记 → 从自有段入口发起认祖世本
+  // 重置后的祖谱：既有自有段（own_qx）又无始祖登记 → 从自有段入口发起认祖世本
   // （始祖唯一性按「世本节点 × 姓」：gu_clan 已认 mGu，这里认 mRoot）
   const req = await post('/admin/founder-request', { tree_id: 'gu_clan_r', person_handle: 'own_qx', target_tree_id: 'zhonghua', target_handle: 'mRoot' }, stewardToken, 'gu_clan_r');
-  assert.equal(req.statusCode, 200, `无始祖宗谱任意节点认祖世本必须放行：${req.body}`);
+  assert.equal(req.statusCode, 200, `无始祖祖谱任意节点认祖世本必须放行：${req.body}`);
   const rid = json(req).request_id;
 
   const decided = await post('/admin/decide-founder', { request_id: rid, approve: true }, chiefToken, 'zhonghua');
@@ -447,7 +447,7 @@ test('路由：宗谱无始祖（重置后）任意节点认祖世本 → 通过
   assert.equal(entry.founder_handle, 'own_qx');
   assert.equal(entry.founder_gramps_id, 'I0002');
   assert.equal(entry.founder_name, '顾清学');
-  assert.equal('founder_state' in entry, false, '宗谱认祖成功后回到「有始祖」态');
+  assert.equal('founder_state' in entry, false, '祖谱认祖成功后回到「有始祖」态');
   assert.equal(entry.master_tree_id, 'zhonghua');
   assert.equal(entry.master_handle, 'mRoot');
   assert.equal(entry.kind, 'clan');
@@ -461,14 +461,16 @@ test('路由：宗谱无始祖（重置后）任意节点认祖世本 → 通过
   assert.ok(tree.people.own_qx, '自有段必须保留');
   assert.equal(tree.people.own_qx.parent_family, 'cfam_own_gu_clan_r');
 
-  // 宗谱×世本读侧推导：该宗谱可由 mRoot 反查
+  // 祖谱×世本读侧推导：该祖谱可由 mRoot 反查
   const attached = await fa.listAttachedTrees({ masterTreeId: 'zhonghua', meta: readMetaCopy() });
   const hit = attached.find((a) => a.tree_id === 'gu_clan_r');
-  assert.ok(hit, `宗谱应出现在 mRoot 的挂载清单里：${JSON.stringify(attached)}`);
+  assert.ok(hit, `祖谱应出现在 mRoot 的挂载清单里：${JSON.stringify(attached)}`);
   assert.equal(hit.master_handle, 'mRoot');
   // 读侧清单里的 founder_name 取「始祖镜像节点」的姓名（以真身为准），而非 meta 的 founder_name
   assert.equal(hit.founder_name, '风伏羲');
-  assert.equal(hit.founder_gramps_id, 'I0001');
+  // 始祖镜像的编号 = 全站唯一铸号（docs/id-system.spec.md §3）：此处与树内该镜像节点一致
+  assert.equal(hit.founder_gramps_id, tree.people.mir_mRoot.gramps_id);
+  assert.match(hit.founder_gramps_id, /^I\d{6}$/);
 });
 
 // ============ 真实数据保护 ============

@@ -7,7 +7,7 @@
  *
  * 本文件断言：
  *  ① 沙箱（COMPAT_OUT_DIR / COMPAT_META_FILE / node --test）下 meta 读写根一律是副本；
- *  ② 跑完真实写路径（saveMeta + 路由 PUT /tree-meta + 宗谱认祖世本 clan.attachClanToMaster
+ *  ② 跑完真实写路径（saveMeta + 路由 PUT /tree-meta + 祖谱认祖世本 clan.attachClanToMaster
  *     + 树/详情/集合写入）后，真实 config/tree-meta.json 与 migrate-output/ 的**内容与 md5 逐字节未变**；
  *  ③ 子进程验证「漏配副本」或「把 COMPAT_META_FILE 指向真源」时**直接抛错**（宁可测试红，也不污染真源）；
  *  ④ 静态护栏：唯一允许出现 tree-meta 写路径的模块是 store.js。
@@ -72,13 +72,13 @@ function writeDetail(doc) {
   fs.writeFileSync(p, JSON.stringify(doc, null, 2));
 }
 
-/** 与事故现场同形的夹具（mt_* 家族树 + mc_* 宗谱） */
+/** 与事故现场同形的夹具（mt_* 家族树 + mc_* 祖谱） */
 function accidentFixture() {
   const trees = { zhonghua: { tree_id: 'zhonghua', kind: 'master', is_master: true, display_title: '中华世本' } };
   for (const tag of ['attach', 'once', 'n1', 'n2']) {
     trees[`mt_${tag}`] = { tree_id: `mt_${tag}`, kind: 'family', display_title: `季氏测试家族 ${tag}` };
   }
-  trees.mc_clan = { tree_id: 'mc_clan', kind: 'clan', surname: '季', display_title: '季氏宗谱' };
+  trees.mc_clan = { tree_id: 'mc_clan', kind: 'clan', surname: '季', display_title: '季氏祖谱' };
   return { _schema: '1.1', trees };
 }
 
@@ -145,7 +145,7 @@ test('路由 PUT /tree-meta（chief_editor）：改的是副本，真源照旧',
   assert.equal(md5(REAL_META), realMetaMd5, '真实 config/tree-meta.json 被改动了');
 });
 
-test('宗谱认祖世本（clan.attachClanToMaster，真实写路径）→ 只写副本，真源与 migrate-output 不变', async () => {
+test('祖谱认祖世本（clan.attachClanToMaster，真实写路径）→ 只写副本，真源与 migrate-output 不变', async () => {
   // 总谱副本：mRoot（原始）/ mX（第 12 世）+ 世系链
   writeTree({
     _schema: '1.0',
@@ -192,7 +192,7 @@ test('宗谱认祖世本（clan.attachClanToMaster，真实写路径）→ 只�
   const meta = readMetaCopy();
   meta.trees[CLAN_ID] = {
     tree_id: CLAN_ID, kind: 'clan', path_alias: `/z/${CLAN_ID}`, surname: '季', surname_char: '季',
-    display_title: '季氏宗谱（护栏测试）', founder_handle: 'own_ji', enable_custom_domain: false,
+    display_title: '季氏祖谱（护栏测试）', founder_handle: 'own_ji', enable_custom_domain: false,
   };
   await store.saveMeta(meta); // 经 store 写 → 缓存与副本同步（同进程内 attachClanToMaster 读的就是它）
 
@@ -204,7 +204,7 @@ test('宗谱认祖世本（clan.attachClanToMaster，真实写路径）→ 只�
     requestedBy: '16600000901',
   });
   assert.equal(r.ok, true);
-  assert.ok(r.mirror_count >= 1, '宗谱顶端应写入世本镜像段');
+  assert.ok(r.mirror_count >= 1, '祖谱顶端应写入世本镜像段');
 
   // 副本（meta + 树 + 详情）已更新；真源一步都没动
   assert.equal(readMetaCopy().trees[CLAN_ID].master_handle, 'mX', '副本 meta 记录认祖结果');

@@ -300,7 +300,7 @@ test('父为真人、母为镜像（娶入侧）：子女仍留本树，不产�
   assert.equal(readTree(loc).version, 4);
 });
 
-test('跨树家庭下挂接已有节点：节点整体搬到真身树（换 handle + 重分配编号），详情随迁', async () => {
+test('跨树家庭下挂接已有节点：节点整体搬到真身树（换 handle、**编号不变**），详情随迁', async () => {
   const { loc, far, h } = crossTreePair('attach');
   // 本树先有一个「未入谱」的节点（面板选人模式）
   const locBefore = readTree(loc);
@@ -331,7 +331,8 @@ test('跨树家庭下挂接已有节点：节点整体搬到真身树（换 hand
   const locAfter = readTree(loc);
   assert.equal(locAfter.people.orphan, undefined, '节点本体不得留在本树');
   assert.equal(farAfter.people[r.child_handle].name, '沈清昆');
-  assert.equal(farAfter.people[r.child_handle].gramps_id, 'I500006'); // 按真身树编号段重分配
+  // 编号终身不变（docs/id-system.spec.md §2）：只换 handle 与树归属，原编号随迁
+  assert.equal(farAfter.people[r.child_handle].gramps_id, 'I0010');
   assert.equal(farAfter.people[r.child_handle].parent_family, 'family_far');
   assert.deepEqual(farAfter.families.family_far.child_handles, [r.child_handle]);
   // 详情随迁到真身树，本树旧详情删除
@@ -462,15 +463,37 @@ test('路由 POST /admin/add-child：鉴权通过 → 跨树结果落两棵树�
 
 // ---- 真实数据副本（shen/ji）复现 §7-4 纠偏场景 ----
 
-test('真实数据副本：shen 侧「父 季志全(镜像)/母 沈伟」下加子女 → 落到 ji 的 F500020，shen 只留镜像', async () => {
+test('真实数据副本：shen 侧「父 季志全(镜像)/母 沈伟」下加子女 → 落到 ji 真身家族，shen 只留镜像', async () => {
   const pair = ['shen_27784_01', 'ji_23395_01'];
   for (const t of pair) {
     fs.copyFileSync(path.join(REAL_TREES, `${t}.json`), path.join(TMP, 'trees', `${t}.json`));
   }
   const jiBefore = readTree('ji_23395_01');
+  const shenBefore = readTree('shen_27784_01');
+
+  // 定位一律走「姓名 + handle 指针」，不写死 gramps_id：
+  // 编号会随「全站唯一编号」迁移整站变化（I500059 → I000254 之类），handle 与姓名才是不变量。
+  const mother = Object.values(shenBefore.people).find((p) => p.name === '沈伟' && !p.external_mirror);
+  assert.ok(mother, 'shen 副本应有真身「沈伟」（母）');
+  const shenFamBefore = shenBefore.families[mother.spouse_families[0]];
+  assert.ok(shenFamBefore, '「沈伟」应已有配偶家族');
+  const fatherMirror = shenBefore.people[shenFamBefore.father_handle];
+  assert.equal(fatherMirror.external_mirror, 'true', 'shen 侧的父亲应是镜像');
+  // 镜像父的 external 指针 → ji 的真身「季志全」；子女应落到 ji 中以他为父的家庭
+  const jiFather = jiBefore.people[fatherMirror.external_person_handle];
+  assert.ok(jiFather, '镜像父的 external_person_handle 应在 ji 副本里命中真身');
+  assert.equal(jiFather.name, '季志全');
+  const jiFamHandle = Object.keys(jiBefore.families).find(
+    (h) => jiBefore.families[h].father_handle === jiFather.handle,
+  );
+  assert.ok(jiFamHandle, 'ji 副本应有以「季志全」为父的家庭（真身家族）');
+  // 存量节点快照：加子女不得改动它（含编号）
+  const legacyChild = Object.values(jiBefore.people).find((p) => p.name === '季清昆');
+  assert.ok(legacyChild, 'ji 副本应已存在存量节点「季清昆」');
+
   const r = await addChildNode({
     treeId: 'shen_27784_01',
-    personHandle: '103f95b86f98dd5f705a545ce84', // 沈伟（shen 侧真身）
+    personHandle: mother.handle, // 沈伟（shen 侧真身）
     name: '清昆',
     gender: 'M',
   });
@@ -480,14 +503,14 @@ test('真实数据副本：shen 侧「父 季志全(镜像)/母 沈伟」下加�
   const jiAfter = readTree('ji_23395_01');
   const shenAfter = readTree('shen_27784_01');
   assert.deepEqual(
-    jiAfter.families['1305f76328532de23346f02b'].child_handles,
-    [...jiBefore.families['1305f76328532de23346f02b'].child_handles, r.child_handle],
-    '子女挂进 ji 的真实家族 F500020（父 季志全 / 母 沈伟 镜像）',
+    jiAfter.families[jiFamHandle].child_handles,
+    [...jiBefore.families[jiFamHandle].child_handles, r.child_handle],
+    '子女挂进 ji 的真实家庭（父 季志全 / 母 沈伟 镜像）',
   );
   assert.equal(jiAfter.people[r.child_handle].name, '季清昆');
   assert.equal(jiAfter.people[r.child_handle].surname, '季');
 
-  const shenFam = shenAfter.families['103f95b86f894010938638b4db34'];
+  const shenFam = shenAfter.families[shenFamBefore.handle];
   assert.ok(shenFam.child_handles.includes(r.mirror_handle), 'shen 侧新增的子女必须是镜像');
   assert.equal(
     Object.values(shenAfter.people).filter((x) => x.name === '季清昆' && !x.external_mirror).length,
@@ -497,9 +520,12 @@ test('真实数据副本：shen 侧「父 季志全(镜像)/母 沈伟」下加�
   assert.equal(shenAfter.people[r.mirror_handle].external_mirror, 'true');
   assert.equal(shenAfter.people[r.mirror_handle].external_tree, 'ji_23395_01');
   assert.equal(shenAfter.people[r.mirror_handle].external_person_handle, r.child_handle);
-  assert.equal(shenAfter.families[shenFam.handle].father_handle, '6fb875a1740942ae05e8b060', 'shen 侧镜像父仍在父位');
-  // 存量节点（手工迁移的 季清昆 I500059）不受影响
-  assert.equal(jiAfter.people['7146eadb86a0af696614b36d'].gramps_id, 'I500059');
+  assert.equal(shenFam.father_handle, fatherMirror.handle, 'shen 侧镜像父仍在父位');
+  // 存量节点（ji 里已有的 季清昆）不受影响：整条记录逐字段一致（编号随之原样不变）
+  assert.deepEqual(jiAfter.people[legacyChild.handle], legacyChild, '存量节点不允许被改动');
+  assert.equal(jiAfter.people[legacyChild.handle].gramps_id, legacyChild.gramps_id, '存量节点编号不变');
+  assert.equal(jiAfter.people[legacyChild.handle].parent_family, jiFamHandle, '存量节点仍挂在原家族');
+  assert.notEqual(r.child_handle, legacyChild.handle, '新子女是另一个节点');
 });
 
 test('测试全程未写 migrate-output 真实数据（md5 一致）', () => {

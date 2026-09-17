@@ -141,11 +141,16 @@ async function loadCol(col) {
   return map;
 }
 
-async function persistCol(col) {
+/**
+ * local 落盘（写整份集合文件）。**写路径一律「先落盘、成功后」**才更新进程内缓存
+ * （F3：原实现是先 `colCache.set` 再落盘，落盘失败（EACCES/ENOSPC…）会让缓存脏掉，
+ * 同进程后续 `colGet` 会读回「写成功」的幻影文档，而磁盘仍是旧值）。
+ * @param {Map<string, any>} map 待落盘的**新**集合内容（不读 colCache）
+ */
+async function persistColMap(col, map) {
   if (SOURCE !== 'local') return;
   const target = assertWriteAllowed(colFilePath(col));
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  const map = colCache.get(col) || new Map();
   const obj = {};
   for (const [id, doc] of map) obj[id] = doc;
   fs.writeFileSync(target, JSON.stringify(obj, null, 2));
@@ -159,22 +164,91 @@ export async function colGet(col, id) {
 export async function colSet(col, id, doc) {
   const map = await loadCol(col);
   const { _id, ...rest } = doc;
-  map.set(id, { _id: id, ...rest });
+  const value = { _id: id, ...rest };
   if (SOURCE === 'local') {
-    await persistCol(col);
+    // 先落盘、成功后才换缓存：失败时缓存保持旧值（抛错传播，绝不留幻影文档）
+    const pending = new Map(map);
+    pending.set(id, value);
+    await persistColMap(col, pending);
+    colCache.set(col, pending);
     return;
   }
   await sdkCall(() => getApp().database().collection(col).doc(id).set({ ...rest }));
+  map.set(id, value);
 }
 
 export async function colDelete(col, id) {
   const map = await loadCol(col);
-  map.delete(id);
   if (SOURCE === 'local') {
-    await persistCol(col);
+    // 同 colSet：先落盘、成功后才换缓存
+    const pending = new Map(map);
+    pending.delete(id);
+    await persistColMap(col, pending);
+    colCache.set(col, pending);
     return;
   }
   await sdkCall(() => getApp().database().collection(col).doc(id).remove());
+  map.delete(id);
+}
+
+/**
+ * 原子递增集合文档的数值字段（计数器用；docs/id-system.spec.md §3）。
+ * - 云端：`db.collection.doc.update({ [field]: _.inc(delta) })` 原子自增 → 读回新值 → 返回**递增前**的值
+ *   （sdkCall 互斥队列保证 inc+read 之间不被本进程其它调用插入；跨实例并发靠 inc 原子性绝不重号）
+ * - 本地：读-改-写（调用方持有写锁，见 id-seq.reserveIds）
+ * 文档不存在 → 以 delta 为初值创建，返回 0。
+ * @returns {Promise<number>} 递增前的值（新分配的号 = 返回值 + 1 … 返回值 + delta）
+ */
+export async function colAtomicNext(col, id, delta = 1, field = 'next') {
+  const step = Math.max(1, Math.floor(Number(delta) || 1));
+  const map = await loadCol(col);
+  if (SOURCE === 'local') {
+    const cur = Number(map.get(id)?.[field]);
+    const prev = Number.isFinite(cur) && cur > 0 ? cur : 0;
+    // 同 colSet：先落盘、成功后才换缓存（失败时缓存保持旧值，绝不留幻影计数）
+    const pending = new Map(map);
+    pending.set(id, { _id: id, [field]: prev + step });
+    await persistColMap(col, pending);
+    colCache.set(col, pending);
+    return prev;
+  }
+  return sdkCall(async () => {
+    const db = getApp().database();
+    const existing = map.get(id);
+    if (!existing) {
+      // 先写库、成功后才写缓存（SDK 失败不得污染进程内计数视图）
+      await db.collection(col).doc(id).set({ [field]: step });
+      map.set(id, { _id: id, [field]: step });
+      return 0;
+    }
+    try {
+      await db.collection(col).doc(id).update({ [field]: db.command.inc(step) });
+    } catch (e) {
+      // SDK/服务端不支持 inc 时不静默重号：直接抛出，由调用方决策
+      throw new Error(`计数器原子递增失败（${col}.${id}）: ${e?.message || e}`);
+    }
+    const r = await db.collection(col).doc(id).get();
+    const d = r?.data;
+    const doc = Array.isArray(d) ? d[0] : d;
+    const value = Number(doc?.[field]);
+    const prev = Number.isFinite(value) ? value - step : 0;
+    map.set(id, { _id: id, [field]: Number.isFinite(value) ? value : step });
+    return Math.max(0, prev);
+  });
+}
+
+/**
+ * 铸号（docs/id-system.spec.md §3）：返回全站唯一的人读编号。
+ * 全部创建路径必须走这里，不再按「树内序号」自增。
+ */
+export async function nextPersonId() {
+  const { nextPersonId: next } = await import('./id-seq.js');
+  return next();
+}
+
+export async function nextFamilyId() {
+  const { nextFamilyId: next } = await import('./id-seq.js');
+  return next();
 }
 
 export async function colAll(col) {
@@ -211,15 +285,17 @@ export async function getMeta() {
 }
 
 export async function saveMeta(meta) {
-  metaCache = meta;
   if (SOURCE === 'local') {
     // 写入目标：非沙箱 = config/tree-meta.json 真源；沙箱 = 副本（COMPAT_META_FILE / COMPAT_OUT_DIR）
     const target = assertWriteAllowed(META_FILE);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, JSON.stringify(meta, null, 2) + '\n');
+    // 先落盘、成功后才更新缓存（失败时 metaCache 保持旧值，不留幻影 meta）
+    metaCache = meta;
     return;
   }
   await sdkCall(() => getApp().database().collection('jiazu_tree_meta').doc('global').set(meta));
+  metaCache = meta;
 }
 
 // ---- 树 JSON（结构真源） ----
@@ -288,6 +364,37 @@ export async function createTreeFile(tree) {
 }
 
 /**
+ * 删除树 JSON（与 `createTreeFile` / `saveTree` 对称的删除路径）：
+ * - local：删 `trees/<tree_id>.json` 文件
+ * - cloud：删云存储文件（fileID 取自 tree-meta.storage_files）并移除该 storage_files 条目
+ * 写序：**先落盘（删除）成功、再更新进程内缓存 / 写 meta**（与 colSet / saveTree 同口径）；
+ * 缓存未命中视为已删（幂等，不抛错）。
+ * 注：tree-meta 的 `trees[tree_id]` 条目由调用方按业务语义另行 `saveMeta` 处理（本函数不越权改注册表）。
+ */
+export async function deleteTree(treeId) {
+  const id = String(treeId || '');
+  if (!id) return;
+  if (SOURCE === 'local') {
+    const p = assertWriteAllowed(path.join(OUT, 'trees', `${id}.json`));
+    if (fs.existsSync(p)) fs.unlinkSync(p); // 先删除落盘成功 …
+    treeCache.delete(id); // … 再失效缓存
+    eventIndexCache.delete(id);
+    return;
+  }
+  const meta = await getMeta();
+  const fileId = meta?.storage_files?.[id];
+  if (fileId) {
+    await sdkCall(() => getApp().deleteFile({ fileID: fileId }));
+    if (meta.storage_files && id in meta.storage_files) {
+      delete meta.storage_files[id];
+      await saveMeta(meta); // 先删云文件成功，再从注册表摘掉 storage_files 条目
+    }
+  }
+  treeCache.delete(id);
+  eventIndexCache.delete(id);
+}
+
+/**
  * 全部家族树 tree_id（始祖挂载等需要遍历所有树的读侧推导用）：
  * tree-meta 注册 + 云存储登记文件 +（local 模式）trees 目录实际文件
  */
@@ -329,7 +436,8 @@ export async function updateTree(treeId, fn) {
 /**
  * 跨树事务写入（嫁娶/婚姻结束这类需要同时改两棵树的操作）：
  * ① 按 id 顺序加锁 → ② 取两侧树 + 深拷贝快照 → ③ 在内存里整体应用 fn({treeId: tree})
- * → ④ 顺序持久化；中途失败 → 用快照回滚已写的一侧（local：文件写，回滚可靠）。
+ * → ④ 顺序持久化；中途失败 → 已落盘的一侧写回快照、**未落盘的一侧失效进程内缓存**
+ * （两者都不留「盘上没有、缓存里有」的幻影结构；local：文件写，回滚可靠）。
  * ⚠️ cloud 模式是两次上传，极端情况下仍可能一侧写入失败 —— 用 reconcile 补一致性。
  *
  * @param {string[]} treeIds
@@ -353,14 +461,24 @@ export async function updateTrees(treeIds, fn) {
         written.push(id);
       }
     } catch (e) {
-      for (const id of written) {
-        try {
-          const snap = snapshots[id];
-          const cur = await getTree(id);
-          snap.version = cur?.version ?? snap.version; // 用当前版本通过乐观锁校验
-          await saveTree(snap, snap.version);
-        } catch {
-          /* best-effort 回滚 */
+      // 失败回滚：**对全部 ids 复原**，不只复原已落盘的一侧。
+      // - 已落盘（written）：写回快照（版本号对齐当前值以通过乐观锁）；
+      // - 未落盘：fn 已**就地改脏**进程内缓存对象（磁盘仍是旧内容）→ 失效缓存，
+      //   否则同进程后续 getTree 会读到盘上不存在的「幻影结构」（婚姻 / 跨树加子女 /
+      //   立支 / 汇宗等所有跨树事务共用本函数）。
+      for (const id of ids) {
+        if (written.includes(id)) {
+          try {
+            const snap = snapshots[id];
+            const cur = await getTree(id);
+            snap.version = cur?.version ?? snap.version; // 用当前版本通过乐观锁校验
+            await saveTree(snap, snap.version);
+          } catch {
+            /* best-effort 回滚 */
+          }
+        } else {
+          treeCache.delete(id); // 先失效缓存…
+          eventIndexCache.delete(id); // …事件索引同步失效（与 deleteTree / saveTree 同口径）
         }
       }
       throw e;

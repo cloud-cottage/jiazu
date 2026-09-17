@@ -1,13 +1,14 @@
 /**
- * 宗谱（Clan Tree）— 逻辑层
+ * 祖谱（Clan Tree）— 逻辑层
+ * 内部代号 clan = 产品术语【祖谱】（标识符 / 文件名 / 路由 / 集合名 / kind 值保持不变）
  *
  * 设计见 docs/clan-tree.spec.md。层级：
- *   中华世本（kind='master'） → 宗谱（kind='clan'） → 普通家族树（kind='family'）
+ *   中华世本（kind='master'） → 祖谱（kind='clan'） → 普通家族树（kind='family'）
  *
  * 关键约定：
- * - 宗谱顶端 = **世本世系链的镜像段**：首个节点 `external_link_type='founder'`（宗谱始祖），
+ * - 祖谱顶端 = **世本世系链的镜像段**：首个节点 `external_link_type='founder'`（祖谱始祖），
  *   其下链路节点 `'chain'`；镜像节点在本层内**整节点只读**（真身为准，读侧推导，不写反指针）。
- * - 宗谱**自有段**是真实数据（`external_*` 为空），可编辑、可续编、可被普通树认祖。
+ * - 祖谱**自有段**是真实数据（`external_*` 为空），可编辑、可续编、可被普通树认祖。
  * - 建谱 = 申请制：该姓现有树 steward/chief 发起 → chief_editor 审批 → 建树。
  * - 硬口径：始祖唯一性按「世本节点 × 姓」；不同姓可共享同一世本节点。
  *
@@ -39,9 +40,11 @@ import {
   isUpperMirror,
   isFounderMissing,
   planFounderRegister,
+  resolveFounderHandle,
   listAttachedTrees,
 } from './founder-attach.js';
 import { nextGrampsId, surnamePinyin } from './tree-write.js';
+import { idAllocator, reserveFamilyIds, reservePersonIds } from './id-seq.js';
 
 /** 建谱申请集合（新建集合 → docs/PENDING_DEPLOY.md） */
 export const CLAN_REQUEST_COLLECTION = 'jiazu_clan_requests';
@@ -53,8 +56,8 @@ export const MAX_CHAIN_DEPTH = 12;
 /** 建谱申请重复提示 */
 export const PENDING_CLAN_MESSAGE = '该姓已有待审批的建谱申请，请等待总编审批';
 
-/** 宗谱未认祖世本时的页面提示（docs/clan-tree.spec.md §5） */
-export const NO_MASTER_MESSAGE = '该宗谱未认祖世本';
+/** 祖谱未认祖世本时的页面提示（docs/clan-tree.spec.md §5） */
+export const NO_MASTER_MESSAGE = '该祖谱未认祖世本';
 
 function genHandle() {
   return crypto.randomBytes(14).toString('hex');
@@ -79,23 +82,23 @@ export function entryOf(meta, treeId) {
   return meta.trees[treeId] || Object.values(meta.trees).find((t) => t?.tree_id === treeId) || null;
 }
 
-/** 是否宗谱条目 */
+/** 是否祖谱条目 */
 export function isClanEntry(entry) {
   return treeKindOf(entry) === TREE_KIND.CLAN;
 }
 
-/** 宗谱姓氏（新字段 surname 优先，兼容旧 surname_char） */
+/** 祖谱姓氏（新字段 surname 优先，兼容旧 surname_char） */
 export function clanSurnameOf(entry) {
   return String(entry?.surname || entry?.surname_char || '').trim();
 }
 
 /**
- * 宗谱 tree_id：`<姓拼音缩写>_<十进制码点>`（例 ji_23395）；冲突追加 _01/_02…
+ * 祖谱 tree_id：`<姓拼音缩写>_<十进制码点>`（例 ji_23395）；冲突追加 _01/_02…
  * docs/clan-tree.spec.md §6
  */
 export function genClanTreeId(meta, surnameChar) {
   const char = String(surnameChar || '').trim();
-  if (!char) throw badRequest('缺少姓氏，无法生成宗谱编号');
+  if (!char) throw badRequest('缺少姓氏，无法生成祖谱编号');
   const base = `${surnamePinyin(char)}_${char.codePointAt(0)}`;
   const used = new Set(Object.values(meta?.trees || {}).map((t) => t?.tree_id).filter(Boolean));
   if (!used.has(base)) return base;
@@ -103,12 +106,12 @@ export function genClanTreeId(meta, surnameChar) {
     const candidate = `${base}_${String(i).padStart(2, '0')}`;
     if (!used.has(candidate)) return candidate;
   }
-  throw badRequest(`姓氏「${char}」的宗谱编号已用尽（≥99）`);
+  throw badRequest(`姓氏「${char}」的祖谱编号已用尽（≥99）`);
 }
 
 /**
  * 硬口径 1（Kevin 2026-09-15）：始祖唯一性按「世本节点 × 姓」——
- * 同一世本节点在同姓宗谱中只能被一支认作始祖；不同姓宗谱可共享（赐姓/改姓）。
+ * 同一世本节点在同姓祖谱中只能被一支认作始祖；不同姓祖谱可共享（赐姓/改姓）。
  * 违反 → 400（docs/clan-tree.spec.md §3-3）。
  */
 export function assertClanFounderUnique({ entries, surname, masterTreeId, masterHandle, excludeTreeId = '' }) {
@@ -121,7 +124,7 @@ export function assertClanFounderUnique({ entries, surname, masterTreeId, master
     if (String(e.master_tree_id || '') !== String(masterTreeId || '')) continue;
     if (String(e.master_handle || '') !== String(masterHandle)) continue;
     throw badRequest(
-      `「${e.display_title || e.tree_id}」已认该世本节点为始祖（同姓宗谱唯一），请先解除挂载或改认其他节点`,
+      `「${e.display_title || e.tree_id}」已认该世本节点为始祖（同姓祖谱唯一），请先解除挂载或改认其他节点`,
     );
   }
   return null;
@@ -140,7 +143,7 @@ export function clanMirrorNodes(tree) {
     .sort((a, b) => String(a.gramps_id || '').localeCompare(String(b.gramps_id || '')));
 }
 
-/** 宗谱自有段（真实数据：非上层镜像） */
+/** 祖谱自有段（真实数据：非上层镜像） */
 export function clanOwnNodes(tree) {
   if (!tree?.people) return [];
   return Object.values(tree.people)
@@ -149,8 +152,8 @@ export function clanOwnNodes(tree) {
 }
 
 /**
- * 统计口径（docs/clan-tree.spec.md §3-6）：宗谱自有段人数与顶端镜像数**分列**，
- * 镜像不计入本宗人数；宗谱人数不计入世本（世本人数只来自世本自己的树 JSON）。
+ * 统计口径（docs/clan-tree.spec.md §3-6）：祖谱自有段人数与顶端镜像数**分列**，
+ * 镜像不计入本宗人数；祖谱人数不计入世本（世本人数只来自世本自己的树 JSON）。
  */
 export function clanStats(tree) {
   const own = clanOwnNodes(tree).length;
@@ -222,7 +225,7 @@ export function planClanMirrorPerson({ handle, grampsId, masterPerson, masterTre
 }
 
 /**
- * 清空宗谱顶端镜像段（纯函数：只改传入的 tree 对象）
+ * 清空祖谱顶端镜像段（纯函数：只改传入的 tree 对象）
  * - 删除镜像节点、指向镜像的家族；自有段节点被「解挂」为根（保留）
  * 返回 {removed_handles, removed_families}
  */
@@ -266,9 +269,9 @@ export function freeGrampsId(tree, prefer = '') {
 }
 
 /**
- * 在宗谱树上应用顶端镜像段（纯函数，供 store.updateTrees 事务内调用）
+ * 在祖谱树上应用顶端镜像段（纯函数，供 store.updateTrees 事务内调用）
  * - 幂等：先清空既有镜像段再重建（重复认祖不产生孤儿节点）
- * - ownRootHandle：宗谱自有段的支系入口节点，挂到最深镜像之下（链路下端点）
+ * - ownRootHandle：祖谱自有段的支系入口节点，挂到最深镜像之下（链路下端点）
  */
 export function applyClanTopMirror({
   tree,
@@ -279,16 +282,22 @@ export function applyClanTopMirror({
   ownRootHandle = '',
   requestedBy = '',
   layerLabel = KIND_LABEL.master,
+  // 铸号器（全站唯一编号；缺省退回树内序号兜底 → 纯函数单测不受影响）
+  allocPersonId = null,
+  allocFamilyId = null,
 }) {
-  if (!tree?.people) throw badRequest('宗谱树数据不可用');
+  if (!tree?.people) throw badRequest('祖谱树数据不可用');
   const masters = planClanTopMirrors({ masterTree, masterHandle, depth });
   clearClanTopMirror(tree);
 
+  const newPersonId = typeof allocPersonId === 'function' ? allocPersonId : null;
+  const newFamilyId = (typeof allocFamilyId === 'function' && allocFamilyId) || (() => '');
   let prevHandle = '';
   let founderMirror = '';
   let index = 0;
   for (const m of masters) {
-    const grampsId = freeGrampsId(tree, index === 0 ? 'I0001' : '');
+    // 镜像节点是全站节点（人读编号全站唯一）→ 有铸号器时用全局号，没有才退回树内序号
+    const grampsId = newPersonId ? newPersonId() : freeGrampsId(tree, index === 0 ? 'I0001' : '');
     const mirror = planClanMirrorPerson({
       handle: m.handle,
       grampsId,
@@ -304,7 +313,7 @@ export function applyClanTopMirror({
       const famHandle = `cfam_${m.handle}`;
       tree.families[famHandle] = {
         handle: famHandle,
-        gramps_id: nextGrampsId(tree, 'F'),
+        gramps_id: newFamilyId() || nextGrampsId(tree, 'F'),
         father_handle: prevHandle,
         mother_handle: '',
         child_handles: [m.handle],
@@ -318,12 +327,12 @@ export function applyClanTopMirror({
     index += 1;
   }
 
-  // 自有段支系入口：挂到最深镜像之下（其下即宗谱自有真实数据）
+  // 自有段支系入口：挂到最深镜像之下（其下即祖谱自有真实数据）
   if (ownRootHandle && tree.people[ownRootHandle] && prevHandle) {
     const famHandle = `cfam_own_${tree.tree_id || ''}`;
     tree.families[famHandle] = {
       handle: famHandle,
-      gramps_id: nextGrampsId(tree, 'F'),
+      gramps_id: newFamilyId() || nextGrampsId(tree, 'F'),
       father_handle: prevHandle,
       mother_handle: '',
       child_handles: [ownRootHandle],
@@ -332,7 +341,10 @@ export function applyClanTopMirror({
     tree.people[prevHandle].spouse_families = [...(tree.people[prevHandle].spouse_families || []), famHandle];
   }
 
-  tree.founder_gramps_id = founderMirror ? 'I0001' : tree.founder_gramps_id || 'I0001';
+  // 始祖位编号 = 顶端镜像节点的实际编号（全站唯一；无铸号器时的旧数据仍为 I0001）
+  tree.founder_gramps_id = founderMirror
+    ? String(tree.people[founderMirror]?.gramps_id || '')
+    : tree.founder_gramps_id || '';
   return {
     founder_mirror_handle: founderMirror,
     deepest_mirror_handle: prevHandle,
@@ -402,27 +414,84 @@ async function safeTree(getTreeFn, treeId) {
 }
 
 /**
- * 认某宗谱为祖的普通家族树（支系入口列表，读侧推导：其始祖 external_tree = 本宗谱）
+ * 认某祖谱为祖的普通家族树（支系入口列表，读侧推导：其始祖 external_tree = 本祖谱）
+ *
+ * 推导扩展（docs/branch-clan-ops.spec.md §6-1-6 / §13-6）：【立支】后原树始祖是 N **真身**（无跨树指针），
+ * 因此新增一条判定 —— **祖谱自有段里 `external_link_type='founder'` 的登记镜像，按其 `external_tree`
+ * 计入支系入口**（一条登记 = 一个入口；立支写 2 条 → 原树与新树各 1 个入口）。
+ * 同一 tree_id 同时命中两条推导时以「登记镜像」为准（立支后旧始祖镜像指针可能仍留在原树）。
  * @returns {Promise<Array>} [{tree_id, tree_title, kind, founder_name, person_count, relation_note}]
  */
 export async function listClanBranches({ clanTreeId, meta = null, getTreeFn = getTree, listIdsFn = listTreeIds } = {}) {
   const m = meta || (await safeMeta());
   const attachments = await listAttachedTrees({ masterTreeId: clanTreeId, meta: m, getTreeFn, listIdsFn });
   const out = [];
+  const seen = new Set();
+  const push = (row) => {
+    if (!row?.tree_id || seen.has(row.tree_id)) return;
+    seen.add(row.tree_id);
+    out.push(row);
+  };
+  // ① 立支登记镜像（宗谱自有段）→ 按其 external_tree 计入入口（一条登记 = 一个入口）
+  const clanTree = await safeTree(getTreeFn, clanTreeId);
+  for (const reg of clanBranchRegistrations(clanTree, clanTreeId, m)) {
+    const entry = reg.entry;
+    const t = await safeTree(getTreeFn, reg.tree_id);
+    const founderHandle = resolveFounderHandle(t, entry);
+    const founder = founderHandle ? t?.people?.[founderHandle] : null;
+    push({
+      tree_id: reg.tree_id,
+      kind: treeKindOf(entry),
+      tree_title: entry.display_title || reg.tree_id,
+      surname_char: entry.surname_char || (founder?.surname || '').slice(0, 1),
+      founder_handle: founderHandle || '',
+      founder_gramps_id: founder?.gramps_id || entry.founder_gramps_id || '',
+      founder_name: founder?.name || entry.founder_name || reg.name || '',
+      master_handle: String(reg.person?.external_person_handle || ''),
+      relation_note: reg.person?.external_relation_note || '',
+      person_count: t?.people ? Object.keys(t.people).length : 0,
+      via: 'branch_register',
+    });
+  }
+  // ② 既有推导：普通树始祖镜像的 external_tree = 本祖谱（同 tree_id 已被登记命中时以登记为准）
   for (const a of attachments) {
+    if (seen.has(a.tree_id)) continue;
     const entry = entryOf(m, a.tree_id) || { tree_id: a.tree_id };
     const t = await safeTree(getTreeFn, a.tree_id);
-    out.push({
+    push({
       ...a,
       kind: treeKindOf(entry),
       tree_title: entry.display_title || a.tree_title || a.tree_id,
       person_count: t?.people ? Object.keys(t.people).length : 0,
     });
   }
+  out.sort((a, b) => String(a.tree_id).localeCompare(String(b.tree_id)));
   return out;
 }
 
-/** 宗谱条目清单（读侧推导 master_handle：meta 优先 → 顶端 founder 镜像的 external_person_handle） */
+/**
+ * 祖谱自有段的「立支登记镜像」清单（纯函数，docs/branch-clan-ops.spec.md §6-1-6）：
+ * `external_mirror='true'` + `external_link_type='founder'` + `external_tree` 指向一棵 **普通家族树**
+ * （总谱 / 祖谱自身的挂载镜像不算支系入口）；同一 tree_id 只算一条入口。
+ * @returns {Array<{tree_id:string, handle:string, name:string, person:object, entry:object}>}
+ */
+export function clanBranchRegistrations(tree, clanTreeId, meta = null) {
+  const out = [];
+  const seen = new Set();
+  for (const p of Object.values(tree?.people || {})) {
+    if (String(p?.external_mirror || '') !== 'true') continue;
+    if (p.external_link_type !== FOUNDER_LINK_TYPE) continue;
+    const tid = String(p.external_tree || '');
+    if (!tid || tid === clanTreeId || seen.has(tid)) continue;
+    const entry = entryOf(meta, tid);
+    if (!entry || treeKindOf(entry) !== TREE_KIND.FAMILY) continue; // 只认普通家族树
+    seen.add(tid);
+    out.push({ tree_id: tid, handle: p.handle, name: p.name || '', person: p, entry });
+  }
+  return out;
+}
+
+/** 祖谱条目清单（读侧推导 master_handle：meta 优先 → 顶端 founder 镜像的 external_person_handle） */
 export async function listClans({ meta = null, getTreeFn = getTree, listIdsFn = listTreeIds } = {}) {
   const m = meta || (await safeMeta());
   const entries = Object.values(m?.trees || {}).filter((e) => isClanEntry(e));
@@ -447,7 +516,7 @@ export async function listClans({ meta = null, getTreeFn = getTree, listIdsFn = 
   return out;
 }
 
-/** 宗谱页面数据（P4 三段版式：顶端镜像链 / 自有世代统计 / 支系入口列表） */
+/** 祖谱页面数据（P4 三段版式：顶端镜像链 / 自有世代统计 / 支系入口列表） */
 export async function clanInfo({ treeId, meta = null, getTreeFn = getTree, listIdsFn = listTreeIds } = {}) {
   const m = meta || (await safeMeta());
   const entry = entryOf(m, treeId) || { tree_id: treeId };
@@ -499,10 +568,10 @@ export async function clanInfo({ treeId, meta = null, getTreeFn = getTree, listI
 // ---- 写路径 ----
 
 /**
- * 新建宗谱（chief_editor 审批通过后调用，docs/clan-tree.spec.md §5）：
+ * 新建祖谱（chief_editor 审批通过后调用，docs/clan-tree.spec.md §5）：
  * 树 JSON + 顶端世本镜像段 + tree-meta 注册（kind='clan'）
  * - onBeforeWrite：全部校验通过后、落库前调用
- * - ownRootName：可选的宗谱自有支系入口节点（缺省留空，允许后续续编）
+ * - ownRootName：可选的祖谱自有支系入口节点（缺省留空，允许后续续编）
  */
 export async function createClanTree({
   surname,
@@ -524,7 +593,7 @@ export async function createClanTree({
 
   const meta = await getMeta();
   const masterEntry = entryOf(meta, masterTreeId);
-  if (treeKindOf(masterEntry) !== TREE_KIND.MASTER) throw badRequest('宗谱始祖必须指向中华世本（总谱）节点');
+  if (treeKindOf(masterEntry) !== TREE_KIND.MASTER) throw badRequest('祖谱始祖必须指向中华世本（总谱）节点');
   // 硬口径 1：同姓同世本节点唯一
   assertClanFounderUnique({ entries: meta.trees, surname: char, masterTreeId, masterHandle });
 
@@ -540,7 +609,7 @@ export async function createClanTree({
     _schema: '1.0',
     tree_id: treeId,
     kind: TREE_KIND.CLAN,
-    founder_gramps_id: 'I0001',
+    founder_gramps_id: '', // 由 applyClanTopMirror 落为始祖镜像的全站唯一编号
     version: 1,
     updated_at: now,
     people: {},
@@ -572,6 +641,12 @@ export async function createClanTree({
     };
   }
 
+  // 铸号：镜像段人数 = 计划镜像数；自有支系入口 +1（全站唯一编号，docs/id-system.spec.md §3）
+  const mirrorPlan = planClanTopMirrors({ masterTree, masterHandle, depth: chainDepth });
+  const personIds = await reservePersonIds(mirrorPlan.length + (ownRootHandle ? 1 : 0));
+  const familyIds = await reserveFamilyIds(mirrorPlan.length + 1);
+  const allocPersonId = idAllocator(personIds);
+  const allocFamilyId = idAllocator(familyIds);
   const applied = applyClanTopMirror({
     tree,
     masterTree,
@@ -580,10 +655,12 @@ export async function createClanTree({
     depth: chainDepth,
     ownRootHandle,
     requestedBy: initiatorPhone,
+    allocPersonId,
+    allocFamilyId,
   });
-  // 自有支系入口的执行号在镜像段之后分配（I0001 归顶端始祖镜像）
+  // 自有支系入口的执行号在镜像段之后分配
   if (ownRootHandle && tree.people[ownRootHandle]) {
-    tree.people[ownRootHandle].gramps_id = freeGrampsId(tree, '');
+    tree.people[ownRootHandle].gramps_id = allocPersonId() || freeGrampsId(tree, '');
   }
 
   await createTreeFile(tree);
@@ -591,7 +668,7 @@ export async function createClanTree({
     await saveDetail({
       tree_id: treeId,
       handle: applied.founder_mirror_handle,
-      gramps_id: 'I0001',
+      gramps_id: tree.people[applied.founder_mirror_handle]?.gramps_id || '',
       name: masterPerson.name || '',
       events: [],
       media: [],
@@ -610,12 +687,12 @@ export async function createClanTree({
     path_alias: `/z/${treeId}`,
     surname: char,
     surname_char: char,
-    display_title: String(clanTitle || '').trim() || `${char}氏宗谱`,
-    genealogy_name: String(genealogyName || '').trim() || `${char}氏宗谱`,
+    display_title: String(clanTitle || '').trim() || `${char}氏祖谱`,
+    genealogy_name: String(genealogyName || '').trim() || `${char}氏祖谱`,
     archive_url: '',
     hall_name: String(hallName || '').trim() || `${char}氏宗祠`,
     origin: String(origin || '').trim(),
-    description: String(description || '').trim() || `新建宗谱，始祖：${masterPerson.name || ''}（${kindLabel(TREE_KIND.MASTER)}）`,
+    description: String(description || '').trim() || `新建祖谱，始祖：${masterPerson.name || ''}（${kindLabel(TREE_KIND.MASTER)}）`,
     master_tree_id: masterTreeId,
     master_handle: masterHandle,
     master_name: masterPerson.name || '',
@@ -644,7 +721,7 @@ export async function createClanTree({
 }
 
 /**
- * 宗谱认祖世本（P2）：写入顶端镜像段（founder + chain），自有段保留（可选重挂支系入口）
+ * 祖谱认祖世本（P2）：写入顶端镜像段（founder + chain），自有段保留（可选重挂支系入口）
  * 幂等：重复认祖先清空既有镜像段再重建。
  */
 export async function attachClanToMaster({
@@ -660,9 +737,9 @@ export async function attachClanToMaster({
   const meta = await getMeta();
   const clanEntry = entryOf(meta, treeId);
   if (!clanEntry) throw notFound(`tree-meta 中找不到树: ${treeId}`);
-  if (!isClanEntry(clanEntry)) throw badRequest('仅宗谱可认祖到中华世本（总谱）');
+  if (!isClanEntry(clanEntry)) throw badRequest('仅祖谱可认祖到中华世本（总谱）');
   const masterEntry = entryOf(meta, masterTreeId);
-  if (treeKindOf(masterEntry) !== TREE_KIND.MASTER) throw badRequest('宗谱只能认祖到中华世本（总谱）');
+  if (treeKindOf(masterEntry) !== TREE_KIND.MASTER) throw badRequest('祖谱只能认祖到中华世本（总谱）');
 
   const surname = clanSurnameOf(clanEntry);
   // 硬口径 1：同姓同世本节点唯一（异姓可共享）
@@ -673,8 +750,11 @@ export async function attachClanToMaster({
   if (!masterPerson) throw notFound('所选中华世本节点不存在');
 
   const rootHandle = String(ownRootHandle || clanEntry.founder_handle || '').trim();
-  // 无始祖态（重置后）的宗谱：认祖 = 指定始祖 → 成功后要把被指定节点回写为 meta 的始祖
+  // 无始祖态（重置后）的祖谱：认祖 = 指定始祖 → 成功后要把被指定节点回写为 meta 的始祖
   const founderMissing = isFounderMissing(clanEntry);
+  const mirrorPlan = planClanTopMirrors({ masterTree, masterHandle, depth: chainDepth });
+  const personIds = await reservePersonIds(mirrorPlan.length);
+  const familyIds = await reserveFamilyIds(mirrorPlan.length + 1);
   const applied = await updateTrees([treeId], (trees) =>
     applyClanTopMirror({
       tree: trees[treeId],
@@ -684,6 +764,8 @@ export async function attachClanToMaster({
       depth: chainDepth,
       ownRootHandle: rootHandle,
       requestedBy,
+      allocPersonId: idAllocator(personIds),
+      allocFamilyId: idAllocator(familyIds),
     }),
   );
 
@@ -712,22 +794,22 @@ export async function attachClanToMaster({
     master_name: masterPerson.name || '',
     founder_mirror_handle: applied.founder_mirror_handle,
     mirror_count: applied.mirror_count,
-    // 无始祖态的认祖 = 指定始祖：true 表示本次已把该节点回写为宗谱 meta 的始祖
+    // 无始祖态的认祖 = 指定始祖：true 表示本次已把该节点回写为祖谱 meta 的始祖
     founder_registered: !!registered,
     founder_handle: rootHandle,
-    message: `已认祖：宗谱 ${treeId} 顶端镜像段挂载至${kindLabel(TREE_KIND.MASTER)}「${masterPerson.name || ''}」`,
+    message: `已认祖：祖谱 ${treeId} 顶端镜像段挂载至${kindLabel(TREE_KIND.MASTER)}「${masterPerson.name || ''}」`,
   };
 }
 
 /**
- * 宗谱与世本解除挂载（P2）：清空顶端镜像段、**保留自有段**（docs/clan-tree.spec.md §5/§9）
+ * 祖谱与世本解除挂载（P2）：清空顶端镜像段、**保留自有段**（docs/clan-tree.spec.md §5/§9）
  */
 export async function detachClanFromMaster({ treeId }) {
   if (!treeId) throw badRequest('缺少 tree_id');
   const meta = await getMeta();
   const entry = entryOf(meta, treeId);
   if (!entry) throw notFound(`tree-meta 中找不到树: ${treeId}`);
-  if (!isClanEntry(entry)) throw badRequest('该家族树不是宗谱');
+  if (!isClanEntry(entry)) throw badRequest('该家族树不是祖谱');
   const tree0 = await getTree(treeId);
   if (!tree0) throw notFound(`树不存在: ${treeId}`);
   const mirrors = clanMirrorNodes(tree0);
@@ -755,7 +837,7 @@ export async function detachClanFromMaster({ treeId }) {
     removed_mirrors: removed.removed_handles.length,
     kept_own: stats.own_count,
     notice: NO_MASTER_MESSAGE,
-    message: `已解除：宗谱顶端镜像段已清空（自有世代 ${stats.own_count} 人保留）；${NO_MASTER_MESSAGE}`,
+    message: `已解除：祖谱顶端镜像段已清空（自有世代 ${stats.own_count} 人保留）；${NO_MASTER_MESSAGE}`,
   };
 }
 

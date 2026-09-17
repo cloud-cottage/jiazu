@@ -9,6 +9,7 @@
  */
 import crypto from 'node:crypto';
 import { nextGrampsId, spouseSlots } from './tree-write.js';
+import { idAllocator } from './id-seq.js';
 
 /** 婚姻相关的结构层字段（与 tree-write.EXTERNAL_KEYS 合并使用） */
 export const MARRIAGE_KEYS = [
@@ -92,15 +93,24 @@ export function findMarriageSide(tree, person, marriageId) {
   return null;
 }
 
-/** 找/建「本人在自己槽位、对方槽位空着」的家族；没有则新建（与 add-spouse 同策略） */
-function ensureFamily(tree, person, selfSlot, otherHandle) {
+/**
+ * 找/建「本人在自己槽位、对方槽位空着」的家族；没有则新建（与 add-spouse 同策略）。
+ * famGrampsId：新建家族时用的全站唯一编号（docs/id-system.spec.md §3；缺省退回树内序号兜底）
+ */
+function ensureFamily(tree, person, selfSlot, otherHandle, famGrampsId = '') {
   const selfKey = selfSlot === 'father' ? 'father_handle' : 'mother_handle';
   const otherKey = selfSlot === 'father' ? 'mother_handle' : 'father_handle';
   if (!Array.isArray(person.spouse_families)) person.spouse_families = [];
   const fams = person.spouse_families.map((h) => tree.families[h]).filter(Boolean);
   let fam = fams.find((f) => f[selfKey] === person.handle && !f[otherKey]) || null;
   if (!fam) {
-    fam = { handle: genHandle(), gramps_id: nextGrampsId(tree, 'F'), father_handle: '', mother_handle: '', child_handles: [] };
+    fam = {
+      handle: genHandle(),
+      gramps_id: famGrampsId || nextGrampsId(tree, 'F'),
+      father_handle: '',
+      mother_handle: '',
+      child_handles: [],
+    };
     tree.families[fam.handle] = fam;
     person.spouse_families.push(fam.handle);
   }
@@ -124,10 +134,10 @@ function dropFamilyIfChildless(tree, fam) {
 }
 
 /** 构造对方树里的「镜像节点」（代表真身 srcPerson，属于 fromTreeId） */
-export function buildMirror(tree, srcPerson, fromTreeId, marriageId, noOfSrc) {
+export function buildMirror(tree, srcPerson, fromTreeId, marriageId, noOfSrc, grampsId = '') {
   return {
     handle: genHandle(),
-    gramps_id: nextGrampsId(tree, 'I'),
+    gramps_id: grampsId || nextGrampsId(tree, 'I'),
     name: srcPerson.name || '',
     surname: srcPerson.surname || '',
     given: srcPerson.given || '',
@@ -162,7 +172,21 @@ export function buildMirror(tree, srcPerson, fromTreeId, marriageId, noOfSrc) {
  * @param {string} [p.marriageId] 指定配对 id（申请审批时由申请单带入）
  * @returns {{marriage_id, no_a, no_b, family_a, family_b, mirror_a, mirror_b, date, label_a, label_b}}
  */
-export function applyMarriage({ treeA, treeB, handleA, handleB, direction, marriageDate = '', createdBy = '', marriageId = '' }) {
+export function applyMarriage({
+  treeA,
+  treeB,
+  handleA,
+  handleB,
+  direction,
+  marriageDate = '',
+  createdBy = '',
+  marriageId = '',
+  // 铸号器（全站唯一编号；缺省退回树内序号兜底 → 纯函数单测不受影响）
+  allocPersonId = null,
+  allocFamilyId = null,
+}) {
+  const nextPid = typeof allocPersonId === 'function' ? allocPersonId : () => '';
+  const nextFid = typeof allocFamilyId === 'function' ? allocFamilyId : () => '';
   const A = treeA.people?.[handleA];
   const B = treeB.people?.[handleB];
   if (!A) throw new Error('发起方节点不存在');
@@ -182,17 +206,17 @@ export function applyMarriage({ treeA, treeB, handleA, handleB, direction, marri
   const noB = nextMarriageNo(B);
 
   // A 侧：镜像（代表 B）+ 家族
-  const mirrorB = buildMirror(treeA, B, treeB.tree_id, mid, noB);
+  const mirrorB = buildMirror(treeA, B, treeB.tree_id, mid, noB, nextPid());
   treeA.people[mirrorB.handle] = mirrorB;
   const slotsA = slotsFor(A.gender, B.gender);
-  const famA = ensureFamily(treeA, A, slotsA.selfSlot, mirrorB.handle);
+  const famA = ensureFamily(treeA, A, slotsA.selfSlot, mirrorB.handle, nextFid());
   mirrorB.spouse_families = [famA.handle];
 
   // B 侧：镜像（代表 A）+ 家族
-  const mirrorA = buildMirror(treeB, A, treeA.tree_id, mid, noA);
+  const mirrorA = buildMirror(treeB, A, treeA.tree_id, mid, noA, nextPid());
   treeB.people[mirrorA.handle] = mirrorA;
   const slotsB = slotsFor(B.gender, A.gender);
-  const famB = ensureFamily(treeB, B, slotsB.selfSlot, mirrorA.handle);
+  const famB = ensureFamily(treeB, B, slotsB.selfSlot, mirrorA.handle, nextFid());
   mirrorA.spouse_families = [famB.handle];
 
   // 两侧指针字段（含序号、可选日期、留痕）

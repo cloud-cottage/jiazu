@@ -21,7 +21,6 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parse as parseUrl } from 'node:url';
 import { splitTree } from './split-tree.js';
-import { promoteToMaster } from './promote-tree.js';
 import * as wallet from './wallet.js';
 import * as scope from './scope.js';
 import * as treeAccess from './tree-access.js';
@@ -1260,34 +1259,6 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true });
       } catch (e) {
         return json(res, 502, { error: `操作失败: ${e.message}` });
-      }
-    }
-
-    // ---- 晋宗：节点以上并入中华世本（仅 chief_editor） ----
-    if (urlPath === '/api/admin/promote' && req.method === 'POST') {
-      const u = authUser(req);
-      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
-      if (u.role !== 'chief_editor') return json(res, 403, { error: '晋宗操作需要总编辑权限' });
-      const body = await readBody(req);
-      const treeId = String(body.tree_id || '').trim();
-      const nodeHandle = String(body.node_handle || '').trim();
-      const attachHandle = String(body.attach_handle || '').trim();
-      if (!treeId || !nodeHandle || !attachHandle) {
-        return json(res, 400, { error: '参数错误：tree_id + node_handle + attach_handle 必填' });
-      }
-      try {
-        const result = await promoteToMaster({
-          treeId,
-          nodeHandle,
-          attachHandle,
-          getToken: getGrampsTokenFor,
-          grampsBase: GRAMPS_BASE,
-          masterTreeId: MASTER_TREE_ID,
-        });
-        return json(res, 200, result);
-      } catch (e) {
-        console.error('[promote] 失败:', e.message);
-        return json(res, 500, { error: `晋宗失败: ${e.message}` });
       }
     }
 

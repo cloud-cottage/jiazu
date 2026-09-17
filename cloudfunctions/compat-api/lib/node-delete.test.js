@@ -472,6 +472,19 @@ test('路由 POST /admin/delete-node：鉴权/权限/成功删除/dry-run/跨树
   );
   const f = familyFixture('nd_route');
   writeTree(f.tree);
+  // P1 竹片闸门：路由扣费前账上须有竹片（本用例删 4 人 = 12 片，预置 100 片）
+  const { mutateAssets } = await import('./economy-ledger.js');
+  await mutateAssets(phone, (u) => {
+    u.bamboos = [
+      {
+        id: 'bl_nd_route',
+        qty: 100,
+        expires_at: new Date(Date.now() + 100 * 86400000).toISOString(),
+        source: 'admin',
+        created_at: new Date().toISOString(),
+      },
+    ];
+  });
   const token = signJwt({ sub: phone, phone, role: 'tree_steward' }, 3600);
   const call = (body, headers) =>
     handleRequest({ path: '/admin/delete-node', httpMethod: 'POST', headers: headers || {}, body: JSON.stringify(body) });
@@ -494,6 +507,8 @@ test('路由 POST /admin/delete-node：鉴权/权限/成功删除/dry-run/跨树
   const dryBody = JSON.parse(dry.body);
   assert.equal(dryBody.dry_run, true);
   assert.equal(dryBody.people_count, 4);
+  assert.equal(dryBody.fee.pieces, 12, 'P1：dry_run 免费但须带 fee（3 片 × 4 人）供前端拼确认文案');
+  assert.equal(dryBody.fee.unit, 'bamboos');
   assert.ok(readTree('nd_route').people[f.h.son], 'dry-run 不写');
 
   // 正式删除（confirm_count 匹配）→ 200
@@ -504,6 +519,8 @@ test('路由 POST /admin/delete-node：鉴权/权限/成功删除/dry-run/跨树
   assert.equal(ok.statusCode, 200);
   const body = JSON.parse(ok.body);
   assert.equal(body.people_count, 4);
+  assert.equal(body.fee.pieces, 12, 'P1：正式提交扣 3 片 × 4 人 = 12 片');
+  assert.equal(body.fee.balance_after, 88, 'P1：fee.balance_after = 扣后余量');
   assert.equal(readTree('nd_route').people[f.h.son], undefined);
 
   // 跨树引用 → 409（带上涉及树与节点名）

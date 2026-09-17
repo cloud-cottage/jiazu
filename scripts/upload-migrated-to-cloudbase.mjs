@@ -36,6 +36,13 @@ const COLLECTIONS = [
   'jiazu_anchors',
   'jiazu_leave_requests',
   'jiazu_sms_codes',
+  // P3 已实现的三个集合
+  'jiazu_assets',
+  'jiazu_spirit',
+  'jiazu_market',
+  // P4 新增：站内消息 / 运营审计（docs/economy-ops.spec.md §5.3）
+  'jiazu_messages',
+  'jiazu_ops_logs',
 ];
 
 const app = cloudbase.init({ env: ENV, accessKey: KEY });

@@ -10,29 +10,48 @@
  *   GET  /auth/me
  *   GET  /wallet/balance | /wallet/tree-balance
  *   POST /wallet/recharge | /wallet/transfer
+ *   GET  /assets/summary | /assets/expiring（资产账本 · docs/economy.spec.md §6-1）
+ *   POST /assets/synthesize-jade | /assets/decompose-jade（石榴籽玉合成 / 分解）
+ *   GET  /spirit | POST /spirit/mount-jade | /spirit/charge（时流子域 · docs/spirit-domain.spec.md §6 / §7）
+ *   GET  /market/listings（guest 可读）| GET /market/my | POST /market/list | /market/cancel | /market/buy |
+ *   /market/official-buy（市集 + 官方竹简每日限量发售 · docs/economy-market.spec.md §6 / §7；挂单与家族树无关 K7）
+ *   POST /assets/signin（签到：北京时间自然日各 1 碎片；同日重复 409「今日已签到」，§6-2）
+ *   GET  /messages | POST /messages/read（站内信中心：四类预警惰性生成 + 已读，docs/economy-ops.spec.md §4）
+ *   POST /admin/assets/grant | GET /admin/assets/logs | /admin/assets/user（资产运维 · 仅 chief_editor，§5）
+ *   POST /account/delete（账号注销：注销前置挂单检查 → 清空四类资产 + account_clear 流水，§7 / K10）
  *   PUT  /admin/wallet-fee | /tree-meta
  *   GET  /admin/users | /admin/get-anchor | /admin/leave-requests
  *   POST /admin/set-role | /admin/set-anchor | /admin/approve-leave
- *   POST /admin/split-tree | /admin/promote | /admin/remove-branch-link
+ *   POST /admin/split-tree | /admin/remove-branch-link
  *   POST /admin/delete-node（删除节点：连同全部后代 / 仅本节点·子女上提一级；跨树引用 → 409 拒绝）
+ *   POST /admin/establish-branch（立支：祖先链并入宗谱 + 新建家族树；9999 颗石榴籽 · docs/branch-clan-ops.spec.md）
+ *   POST /admin/converge-clan（汇宗：源树整体并入他树普通节点；0 片 0 籽 + 灵气折损并入）
  *   POST /admin/add-spouse | /admin/add-child（跨树婚姻家庭的子女自动归到真身树）
  *   POST /admin/founder-request | /admin/decide-founder | /admin/attach-founder | /admin/detach-founder
  *   POST /admin/reset-founder（重置始祖：清空本树始祖登记 → 「无始祖」态）
  *   GET  /admin/founder-requests（始祖挂载 / 认祖，docs/founder-attach.spec.md）
  *   POST /admin/clan-request | /admin/decide-clan
- *   GET  /admin/clan-requests | /admin/clans | /admin/clan-info（宗谱，docs/clan-tree.spec.md）
+ *   GET  /admin/clan-requests | /admin/clans | /admin/clan-info（祖谱，docs/clan-tree.spec.md）
  *   POST /join | /leave-request
  *   POST /people/ | PUT /people/<handle> | POST /families/ | PUT /families/<handle>
  */
 import { getMeta, saveMeta, getTree, getAllDetails, getDetail, getEventIndex, colGet, colAll, colSet, updateTrees } from './lib/store.js';
 import { signJwt, verifyJwt, authUser, requestCode, verifyCode, findOrCreateUser, ROLE_LEVEL } from './lib/auth.js';
 import * as wallet from './lib/wallet.js';
+import * as ledger from './lib/economy-ledger.js';
+import * as eco from './lib/economy-fee.js';
+import * as spirit from './lib/economy-spirit.js';
+import * as market from './lib/economy-market.js';
+import * as ops from './lib/economy-ops.js';
 import { getAnchor, setAnchor, clearAnchor, canEditPerson } from './lib/scope.js';
 import * as tw from './lib/tree-write.js';
 import * as mr from './lib/marriage.js';
 import * as cw from './lib/child-write.js';
 import * as fa from './lib/founder-attach.js';
 import * as clan from './lib/clan.js';
+import * as bco from './lib/branch-clan-ops.js';
+import { resolveNode } from './lib/id-resolve.js';
+import { idAllocator, reserveFamilyIds, reservePersonIds } from './lib/id-seq.js';
 import { computeAccess, isHiddenFamily, accessToPayload, computePersonDepth } from './lib/tree-access.js';
 
 const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
@@ -204,10 +223,42 @@ async function requireWriteUser(headers, treeId, pathname, targetHandle, isAddNo
     const tree = await getTree(treeId);
     const { totalGenerations } = computeTreeDepth(tree, null);
     if (totalGenerations >= MAX_DEPTH) {
-      throw httpError(403, `该家族树已到 ${MAX_DEPTH} 世深度上限，新增节点请联系总编辑（晋宗或扩容）`);
+      throw httpError(403, `该家族树已到 ${MAX_DEPTH} 世深度上限，新增节点请联系总编辑（扩容或调整深度上限）`);
     }
   }
   return u;
+}
+
+// ---- 竹片扣费闸门（P1 · docs/economy-fee.spec.md §4-3）----
+
+/**
+ * 落库失败 → 冲正（best-effort）：冲正本身失败**绝不掩盖**原始落库错误（§4-3 ⑥）。
+ * @returns {Promise<boolean>} 是否已返还
+ */
+async function refundQuietly(phone, charged, reason = '落库失败') {
+  if (!charged || !charged.charged) return false;
+  try {
+    const r = await eco.refundCharged(phone, charged, reason);
+    return !!r.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 写路由透传给 `tw.*` 的闸门回调对（charge / refund）：
+ * 单价一律由 `lib/economy-fee.js` 的 `feeOf` 决定，路由不判价（§5-2）。
+ */
+function feeGate(phone, op) {
+  // `refunded` 记录本次闸门是否真的发生过冲正 → 四条计费路由的 catch 统一带 `fee_refunded:true`
+  // （口径与 PUT /people、/admin/create-tree 一致；未扣费 / 冲正失败一律不带该字段）
+  const gate = { charge: eco.charger(phone, op), refunded: false };
+  gate.refund = async (charged) => {
+    const ok = await refundQuietly(phone, charged, '落库失败，已原路返还');
+    if (ok) gate.refunded = true;
+    return ok;
+  };
+  return gate;
 }
 
 // ---- 路由（统一返回 {statusCode, headers, body}） ----
@@ -220,6 +271,51 @@ const CORS_HEADERS = {
 
 function send(statusCode, obj) {
   return { statusCode, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(obj) };
+}
+
+// ---- catch 统一出口：系统级失败 = 500 + 通用文案（业务错误不得被通用句覆盖）----
+// 背景：`send(e.status || 400, { error: e.message })` 在 EACCES / ENOENT 时会**把本机绝对路径吐给前端**
+// （实测：`EACCES: permission denied, open '/private/var/folders/…/trees/xx.json'`），
+// 与 docs/branch-clan-ops.spec.md §7（两条新路由的 500 口径）不一致。
+// 口径（与 lib/economy-fee.js 的 `errorPayload` 同向，但**不误吞业务裸异常**）：
+//   - 带 `status` 的业务错误（lib `fail(msg, 4xx)` / `httpError(4xx, msg)`）→ 沿用自身 status 与业务文案；
+//   - 系统级失败（errno 类 code/name：EACCES / ENOENT / EPERM / EEXIST …，或异常文本里出现本机绝对路径）
+//     → `500` + `eco.INTERNAL_ERROR_TEXT`，**绝不回显 e.message / e.stack / 路径**；
+//   - 其余无 `status` 的裸异常 = lib 层历史业务拒绝（lib/child-write.js / lib/wallet.js 用裸 Error 表达）
+//     → 沿用旧语义（`fallbackStatus` + 业务文案）。
+const SYSTEM_ERRNO = new Set([
+  'EACCES',
+  'EPERM',
+  'ENOENT',
+  'EEXIST',
+  'EISDIR',
+  'ENOTDIR',
+  'EROFS',
+  'EIO',
+  'ENOSPC',
+  'ENOTEMPTY',
+  'EBUSY',
+  'ELOOP',
+  'EMFILE',
+  'ENFILE',
+  'ENAMETOOLONG',
+]);
+/** 异常文本里出现本机文件系统绝对路径（/Users、/tmp、/var、/private…）→ 一律按系统级失败处理 */
+const LOCAL_PATH_RE = /\/(?:Users|tmp|var|private|home|opt|etc|usr)\//;
+
+/**
+ * @param {Error} e 捕获到的异常
+ * @param {number} [fallbackStatus=400] 旧语义下的缺省状态码（普通路由 400；外层兜底 / 拆分类 500）
+ * @param {string} [prefix=''] 仅业务错误保留的文案前缀（如旧文案里的「拆分失败: 」）
+ */
+function safeError(e, fallbackStatus = 400, prefix = '') {
+  const err = e || {};
+  const status = Number(err.status);
+  const errno = String(err.code || err.name || '');
+  const system = SYSTEM_ERRNO.has(errno) || LOCAL_PATH_RE.test(String(err.message || ''));
+  if (system) return send(500, { error: eco.INTERNAL_ERROR_TEXT, status: 500 });
+  const text = String(err.message || '');
+  return send(Number.isFinite(status) ? status : fallbackStatus, { error: prefix ? `${prefix}: ${text}` : text });
 }
 
 /**
@@ -380,7 +476,7 @@ async function handleRequest(event) {
         const balance = await wallet.recharge(u.phone, Math.round(amount * 100));
         return send(200, { ok: true, balance_yuan: (balance / 100).toFixed(2), payment: 'mock' });
       } catch (e) {
-        return send(400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -400,7 +496,7 @@ async function handleRequest(event) {
         const r = await wallet.transferToTree(u.phone, targetTree, Math.round(amount * 100));
         return send(200, { ok: true, user_balance_yuan: (r.user_balance / 100).toFixed(2), tree_balance_yuan: (r.tree_balance / 100).toFixed(2) });
       } catch (e) {
-        return send(400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -410,13 +506,301 @@ async function handleRequest(event) {
       return send(200, { tree_id: targetTree, balance_yuan: ((await wallet.getTreeBalance(targetTree)) / 100).toFixed(2) });
     }
 
+    // 后台费用设置（治理路由，沿用既有入口；docs/branch-clan-ops.spec.md §5-4 / §13-13）：
+    // - `fee`：建树费（¥，既有键 —— 行为与出参 `tree_create_fee_yuan` 保持原样、不得改）
+    // - `branch_fee_seeds`：立支费（颗完整石榴籽，默认 9999）
+    // - `converge_spirit_ratio`：汇宗灵气折损比例（0–1，默认 0.5）
     if (pathname === '/admin/wallet-fee' && method === 'PUT') {
       const u = await authUser(headers);
       if (!u || u.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
-      const fee = Number(parseBody(event).fee);
-      if (!fee || fee <= 0) return send(400, { error: '请输入正确的费用' });
-      const cents = await wallet.setTreeCreateFeeCents(Math.round(fee * 100));
-      return send(200, { ok: true, tree_create_fee_yuan: (cents / 100).toFixed(2) });
+      const body = parseBody(event);
+      const has = (k) => body[k] !== undefined && body[k] !== null && String(body[k]).trim() !== '';
+      const out = { ok: true };
+      if (has('fee')) {
+        const fee = Number(body.fee);
+        if (!fee || fee <= 0) return send(400, { error: '请输入正确的费用' });
+        const cents = await wallet.setTreeCreateFeeCents(Math.round(fee * 100));
+        out.tree_create_fee_yuan = (cents / 100).toFixed(2);
+      }
+      if (has('branch_fee_seeds')) {
+        const seeds = Number(body.branch_fee_seeds);
+        if (!Number.isFinite(seeds) || seeds <= 0 || Math.floor(seeds) !== seeds) {
+          return send(400, { error: '请输入正确的立支费用（正整数，颗石榴籽）' });
+        }
+        out.branch_fee_seeds = await wallet.setBranchFeeSeeds(seeds);
+      }
+      if (has('converge_spirit_ratio')) {
+        const ratio = Number(body.converge_spirit_ratio);
+        if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+          return send(400, { error: '请输入正确的折损比例（0–1）' });
+        }
+        out.converge_spirit_ratio = await wallet.setConvergeSpiritRatio(ratio);
+      }
+      if (Object.keys(out).length === 1) return send(400, { error: '请输入正确的费用' });
+      return send(200, out);
+    }
+
+    // ================= 资产账本（docs/economy.spec.md §6-1 / §6-2 · P0） =================
+    // 权限：任何已登录用户（只读 / 写本人资产）；未登录 401。P0 不接写权校验与竹片扣费闸门（P1）。
+    if (pathname === '/assets/summary' && method === 'GET') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      const now = new Date();
+      const summary = await ledger.mutateAssets(u.phone, (user) => {
+        ledger.sweep(user, now); // 任何资产入口先惰性结算（§5-4-1）
+        return ledger.summarize(user, now);
+      });
+      return send(200, summary);
+    }
+
+    if (pathname === '/assets/expiring' && method === 'GET') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      const now = new Date();
+      const rawDays = query.days;
+      const days = rawDays === undefined || String(rawDays).trim() === '' ? ledger.EXPIRING_DEFAULT_DAYS : Number(rawDays);
+      const window = Number.isFinite(days) && days >= 0 ? days : ledger.EXPIRING_DEFAULT_DAYS;
+      const items = await ledger.mutateAssets(u.phone, (user) => {
+        ledger.sweep(user, now);
+        return ledger.expiringItems(user, now, window);
+      });
+      return send(200, { items });
+    }
+
+    if (pathname === '/assets/signin' && method === 'POST') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      const now = new Date();
+      const today = ledger.beijingDate(now); // 北京时间（UTC+8）自然日
+      const r = await ledger.mutateAssets(u.phone, (user) => {
+        ledger.sweep(user, now);
+        if (user.signin_date === today) throw httpError(409, '今日已签到'); // 同日重复 → 整单不写（资产不变）
+        user.signin_date = today;
+        ledger.recordTx(user, { type: 'signin', delta: { fragments: 1 }, desc: '每日签到 +1 碎片' }, now);
+        const added = ledger.addFragments(user, 1, now); // 满 10 立即合成（§5-1）
+        return { fragments: added.fragments, synthesized: added.synthesized, seed_lot: added.seed_lots[0] || null, signin_date: today };
+      });
+      return send(200, { ok: true, ...r });
+    }
+
+    // ================= 时流子域（docs/spirit-domain.spec.md §6 / §7 · P2 第二段） =================
+    // 鉴权（K1 定稿 · Kevin 2026-09-16 拍板）：灌注 / 镶嵌 = **任何已登录用户**（未登录 401，
+    // 不设 403 档、不判树写权、不接竹片扣费闸门）；`GET /spirit` = guest 可读**摘要**（`tree_id` 必填，
+    // 取 `X-Tree-Id` 头或 `?tree_id`），灌注流水仅该树成员可见（§7-2）。
+    // 错误体统一走 `eco.errorPayload`（仅回显域名码，绝不透传系统错误文本）。
+    if (pathname === '/spirit' && method === 'GET') {
+      try {
+        const u = await authUser(headers);
+        return send(200, await spirit.spiritInfo(treeId, u ? { phone: u.phone, role: u.role } : null, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/spirit/mount-jade' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        const body = parseBody(event);
+        return send(200, await spirit.mountJade(u.phone, body.tree_id || treeId, body.jade_id, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/spirit/charge' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        const body = parseBody(event);
+        return send(200, await spirit.chargeSpirit(u.phone, body.tree_id || treeId, body.plan, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/assets/synthesize-jade' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '未登录或登录已过期');
+        return send(200, await spirit.synthesizeJade(u.phone, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/assets/decompose-jade' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '未登录或登录已过期');
+        return send(200, await spirit.decomposeJade(u.phone, parseBody(event).jade_id, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    // ================= 市集 + 官方竹简每日限量发售（docs/economy-market.spec.md · P3） =================
+    // 鉴权（§8）：`GET /market/listings` = **guest 可读**；其余需登录 401；`PUT /admin/market/official-stock`
+    // = `chief_editor`（403）。挂单与**家族树无关（K7）**：不传、不派生、不校验家族树字段（`Listing` 无 tree_id）。
+    // 本段**必须注册在树编辑闸门之前**（总册 §12-2：与 /assets/* /spirit/* 同段，闸门会拦 `缺少 X-Tree-Id`）。
+    // 错误体统一走 `eco.errorPayload`（只回域名码，绝不透传系统错误文本）。
+    if (pathname === '/market/listings' && method === 'GET') {
+      try {
+        const rawStatus = query.status;
+        const status = rawStatus === undefined || String(rawStatus).trim() === '' ? undefined : String(rawStatus).trim();
+        return send(200, await market.marketListings(status, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/market/my' && method === 'GET') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '未登录或登录已过期');
+        const rawStatus = query.status;
+        const status = rawStatus === undefined || String(rawStatus).trim() === '' ? undefined : String(rawStatus).trim();
+        return send(200, await market.myMarket(u.phone, status, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/market/list' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        const body = parseBody(event);
+        // 入参只认 `{ bundles, price_seeds }`（**无家族树字段**；pieces = bundles × 100 由服务端派生）
+        return send(200, await market.listBamboo(u.phone, { bundles: body.bundles, price_seeds: body.price_seeds }, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/market/cancel' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        return send(200, await market.cancelListing(u.phone, parseBody(event).listing_id, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/market/buy' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        return send(200, await market.buyListing(u.phone, parseBody(event).listing_id, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/market/official-buy' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        return send(200, await market.officialPurchase(u.phone, { bundles: parseBody(event).bundles }, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/admin/market/official-stock' && method === 'PUT') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '未登录或登录已过期');
+        if (u.role !== 'chief_editor') throw httpError(403, '需要总编辑权限');
+        const body = parseBody(event);
+        return send(200, await market.setOfficialStock(body.daily_stock, body.price_fen, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    // ================= 运营侧（docs/economy-ops.spec.md · P4） =================
+    // 站内信（§4.3）：`GET /messages`（登录，惰性补齐预警 + 未读计数）、`POST /messages/read`（登录，缺省全部已读）。
+    // 后台资产运维（§5，**仅 `chief_editor`**）：`POST /admin/assets/grant`（`reason` 必填 + 逐笔留痕 + 用户流水）、
+    // `GET /admin/assets/logs`（`operator?` / `phone?` / `limit?` 默认 50 上限 200）、`GET /admin/assets/user`（资产快照）。
+    // 账号注销（§7，K10）：`POST /account/delete` → 先 `openListingGuard`（有 open 挂单 → 409「请先撤销未成交挂单」，
+    // 不自动撤单）→ 清空四类资产 + 写 `account_clear` 流水（**保留流水审计 / jiazu_users / jiazu_anchors**）。
+    // 本段**必须注册在树编辑闸门之前**（§10.1：闸门会先拦 `缺少 X-Tree-Id`）；
+    // 错误体统一走 `eco.errorPayload`（只回域名码，绝不透传系统错误文本）。
+    if (pathname === '/messages' && method === 'GET') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, ops.ERR_NOT_LOGGED_IN);
+        const unreadFlag = query.unread;
+        const unreadOnly = unreadFlag !== undefined && ['1', 'true', 'yes'].includes(String(unreadFlag).trim().toLowerCase());
+        return send(200, await ops.messagesOf(u, new Date(), { unreadOnly }));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/messages/read' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, ops.ERR_NOT_LOGGED_IN);
+        const body = parseBody(event);
+        return send(200, await ops.readMessages(u.phone, body.ids, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/admin/assets/grant' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, ops.ERR_NOT_LOGGED_IN);
+        if (u.role !== 'chief_editor') throw httpError(403, ops.ERR_CHIEF_ONLY);
+        const body = parseBody(event);
+        return send(
+          200,
+          await ops.grantAssets(u.phone, {
+            target_phone: body.target_phone,
+            delta: body.delta,
+            reason: body.reason,
+            evidence: body.evidence,
+          }),
+        );
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/admin/assets/logs' && method === 'GET') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, ops.ERR_NOT_LOGGED_IN);
+        if (u.role !== 'chief_editor') throw httpError(403, ops.ERR_CHIEF_ONLY);
+        return send(200, await ops.opsLogs({ operator: query.operator, phone: query.phone, limit: query.limit }));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/admin/assets/user' && method === 'GET') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, ops.ERR_NOT_LOGGED_IN);
+        if (u.role !== 'chief_editor') throw httpError(403, ops.ERR_CHIEF_ONLY);
+        return send(200, await ops.adminUserAssets(query.phone, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
+    }
+
+    if (pathname === '/account/delete' && method === 'POST') {
+      try {
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, ops.ERR_NOT_LOGGED_IN);
+        return send(200, await ops.deleteAccount(u.phone, new Date()));
+      } catch (e) {
+        return send(e.status || 400, eco.errorPayload(e));
+      }
     }
 
     // ================= 角色 / 锚点 / 用户 =================
@@ -672,7 +1056,7 @@ async function handleRequest(event) {
         });
         return send(200, result);
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -698,7 +1082,7 @@ async function handleRequest(event) {
         });
         return send(200, result);
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -719,9 +1103,15 @@ async function handleRequest(event) {
         const note = String(body.note || '').slice(0, 200);
 
         if (body.action !== 'divorce') {
-          const toTree = String(body.spouse_tree_id || '').trim();
-          const toHandle = String(body.spouse_handle || '').trim();
-          if (!toTree || !toHandle) return send(400, { error: '请选择对方家族树与配偶节点' });
+          // 对方节点：全局编号（自动识别所属树）/ handle / 树内旧号；spouse_tree_id 仍可显式限定（兼容）
+          const spouseRef = String(body.spouse_handle || body.spouse_ref || '').trim();
+          if (!spouseRef) return send(400, { error: '请填写配偶的全局编号（如 000052）或 handle' });
+          const spouseHit = await resolveNode(spouseRef, '', {
+            targetTreeId: String(body.spouse_tree_id || '').trim(),
+          });
+          if (!spouseHit) return send(404, { error: `找不到编号/句柄为「${spouseRef}」的配偶节点` });
+          const toTree = spouseHit.tree_id;
+          const toHandle = spouseHit.handle;
           if (toTree === fromTree) return send(400, { error: '同树婚配请用档案里的「＋ 添加配偶」' });
           const otherTree = await getTree(toTree);
           const other = otherTree.people[toHandle];
@@ -786,7 +1176,7 @@ async function handleRequest(event) {
         await colSet('jiazu_marriage_requests', rid, request);
         return send(200, { ok: true, request_id: rid, status: 'pending', to_tree: toTree, to_person_name: other.name });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -835,6 +1225,8 @@ async function handleRequest(event) {
         }
         const from = request.from_tree;
         const to = request.to_tree;
+        const marryPersonIds = request.action === 'marry' ? await reservePersonIds(2) : [];
+        const marryFamilyIds = request.action === 'marry' ? await reserveFamilyIds(2) : [];
         const result =
           request.action === 'marry'
             ? await updateTrees([from, to], (trees) =>
@@ -847,6 +1239,8 @@ async function handleRequest(event) {
                   marriageDate: request.marriage_date,
                   createdBy: request.requested_by,
                   marriageId: request.marriage_id,
+                  allocPersonId: idAllocator(marryPersonIds),
+                  allocFamilyId: idAllocator(marryFamilyIds),
                 }),
               )
             : await updateTrees([from, to], (trees) =>
@@ -870,7 +1264,7 @@ async function handleRequest(event) {
         });
         return send(200, { ok: true, status: 'approved', result });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -923,14 +1317,14 @@ async function handleRequest(event) {
             );
         return send(200, { ok: true, kind: '绝婚', result });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
     // ---- 始祖挂载（认祖 / Founders Attach，docs/founder-attach.spec.md + docs/clan-tree.spec.md）----
     // 方式 A：本层树在自己的始祖节点发起「认祖」申请 → **上层树** chief_editor 审批
-    // - 普通家族树 → target 必须是宗谱（kind='clan'，硬口径 2：不得直挂世本）
-    // - 宗谱 → target 必须是中华世本（kind='master'）
+    // - 普通家族树 → target 必须是祖谱（kind='clan'，硬口径 2：不得直挂世本）
+    // - 祖谱 → target 必须是中华世本（kind='master'）
     if (pathname === '/admin/founder-request' && method === 'POST') {
       const body = parseBody(event);
       const reqTree = body.tree_id || treeId;
@@ -945,10 +1339,14 @@ async function handleRequest(event) {
         const targetTreeId = String(
           body.target_tree_id || body.master_tree_id || (reqKind === fa.TREE_KIND.CLAN ? MASTER_TREE_ID : ''),
         ).trim();
-        if (!targetTreeId) return send(400, { error: '请选择认祖目标（宗谱 / 中华世本）' });
+        if (!targetTreeId) return send(400, { error: '请选择认祖目标（祖谱 / 中华世本）' });
         const targetEntry = clan.entryOf(meta, targetTreeId);
-        const masterHandle = String(body.target_handle || body.master_handle || '').trim();
-        if (!masterHandle) return send(400, { error: '请选择目标树中的真身节点' });
+        const masterRef = String(body.target_handle || body.master_handle || body.target_ref || '').trim();
+        if (!masterRef) return send(400, { error: '请选择目标树中的真身节点' });
+        // 全局编号 / handle / 树内旧号 → 统一解析（限定在认祖目标树内）
+        const masterHit = await resolveNode(masterRef, targetTreeId, { targetTreeId });
+        if (!masterHit) return send(404, { error: `目标树 ${targetTreeId} 中找不到编号/句柄为「${masterRef}」的节点` });
+        const masterHandle = masterHit.handle;
         const tree = await getTree(reqTree);
         if (!tree) return send(404, { error: `树不存在: ${reqTree}` });
         const founder = tree.people[body.person_handle];
@@ -956,10 +1354,10 @@ async function handleRequest(event) {
         // 认祖入口守卫（前后端同口径 fa.canInitiateAttach）：
         // - 无始祖态（meta.founder_state='none'，重置后）→ **该树任意节点**可发起（认祖 = 指定始祖）
         // - 已有登记的始祖 → 仅始祖位置节点（meta.founder_handle → founder_gramps_id → 树 JSON）
-        //   与宗谱顶端的上层镜像（founder / chain）
+        //   与祖谱顶端的上层镜像（founder / chain）
         // 注：不再兜底 'I0001'（未登记始祖的树不得把 I0001 当始祖）
         if (!fa.canInitiateAttach({ tree, person: founder, entry, treeId: reqTree })) {
-          return send(400, { error: '仅本家族树/宗谱的始祖节点可发起认祖' });
+          return send(400, { error: '仅本家族树/祖谱的始祖节点可发起认祖' });
         }
         fa.assertOneAttachPerTree(founder);
         fa.assertAttachTarget({ sourceTreeId: reqTree, sourceEntry: entry, targetTreeId, targetEntry });
@@ -993,7 +1391,7 @@ async function handleRequest(event) {
           message: `认祖申请已提交，等待${fa.kindLabel(targetKind)}总编审批（${masterPerson.name || ''}）`,
         });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -1012,12 +1410,12 @@ async function handleRequest(event) {
       const attachments = masterHandle
         ? fa.attachedTreesOf(await fa.listAttachedTrees({ masterTreeId: MASTER_TREE_ID }), masterHandle)
         : [];
-      // 宗谱（认祖世本的一层）单列：统计不计入世本人数/世数（docs/clan-tree.spec.md §3-6）
+      // 祖谱（认祖世本的一层）单列：统计不计入世本人数/世数（docs/clan-tree.spec.md §3-6）
       const clans = chief ? await clan.listClans() : [];
       return send(200, { list, can_approve_all: chief, my_tree: myTree, attachments, clans });
     }
 
-    // 认祖审批：通过 → 建立挂载（普通树→宗谱：attachFounder；宗谱→世本：attachClanToMaster）；
+    // 认祖审批：通过 → 建立挂载（普通树→祖谱：attachFounder；祖谱→世本：attachClanToMaster）；
     // 驳回 → 只写驳回理由，不改任何数据。审批人 = 目标树（上层树）写权（世本仅 chief_editor）
     if (pathname === '/admin/decide-founder' && method === 'POST') {
       const body = parseBody(event);
@@ -1053,7 +1451,7 @@ async function handleRequest(event) {
                 masterTreeId: targetTreeId,
                 masterHandle: request.master_handle,
                 chainDepth: body.chain_depth,
-                // 被指定为宗谱始祖的节点：审批请求显式给出 → 否则用发起认祖的那个节点
+                // 被指定为祖谱始祖的节点：审批请求显式给出 → 否则用发起认祖的那个节点
                 // （无始祖态重置后 meta.founder_handle 已被清空，必须由发起节点接手）
                 ownRootHandle: body.founder_handle || request.founder_handle,
                 requestedBy: request.requested_by,
@@ -1076,20 +1474,23 @@ async function handleRequest(event) {
         });
         return send(200, { ok: true, status: 'approved', result });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
     // 方式 B：上层树的总编辑/主理人在真身节点上直接选树挂载（无需申请）
     // - 目标树 = 要被挂载的下层树（tree_id）；target_tree_id = 上层树（缺省 = 本请求树 / 世本）
-    // - 普通家族树 → 只能挂到宗谱；宗谱 → 只能挂到世本（硬口径 2）
+    // - 普通家族树 → 只能挂到祖谱；祖谱 → 只能挂到世本（硬口径 2）
     if (pathname === '/admin/attach-founder' && method === 'POST') {
       const body = parseBody(event);
       const attachTree = String(body.tree_id || '').trim();
       const targetTreeId = String(body.target_tree_id || treeId || MASTER_TREE_ID).trim();
-      const masterHandle = String(body.target_handle || body.master_handle || '').trim();
-      if (!attachTree) return send(400, { error: '请选择要挂载的下层树（宗谱 / 家族树）' });
-      if (!masterHandle) return send(400, { error: '缺少 target_handle' });
+      const masterRef = String(body.target_handle || body.master_handle || body.target_ref || '').trim();
+      if (!attachTree) return send(400, { error: '请选择要挂载的下层树（祖谱 / 家族树）' });
+      if (!masterRef) return send(400, { error: '缺少 target_handle' });
+      const masterHit = await resolveNode(masterRef, targetTreeId, { targetTreeId });
+      if (!masterHit) return send(404, { error: `目标树 ${targetTreeId} 中找不到编号/句柄为「${masterRef}」的节点` });
+      const masterHandle = masterHit.handle;
       try {
         const u = await requireWriteUser(headers, targetTreeId, pathname, masterHandle, false);
         const meta = await getMeta();
@@ -1110,7 +1511,11 @@ async function handleRequest(event) {
             requestedBy: u.phone,
           });
         } else {
-          const explicit = String(body.founder_handle || '').trim();
+          // 指定为始祖的节点也收全局编号（树内旧号亦可）
+          const explicitHit = String(body.founder_handle || body.founder_ref || '').trim()
+            ? await resolveNode(String(body.founder_handle || body.founder_ref).trim(), attachTree)
+            : null;
+          const explicit = explicitHit ? explicitHit.handle : '';
           const founderHandle = explicit || fa.resolveFounderHandle(tree, srcEntry);
           // 无始祖态（重置后）的树须显式指定要登记为始祖的节点（认祖 = 指定始祖）
           if (!founderHandle && fa.isFounderMissing(srcEntry)) {
@@ -1142,12 +1547,12 @@ async function handleRequest(event) {
         }
         return send(200, result);
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
     // 解除始祖挂载（双方均可发起，无需申请，立即生效）
-    // - 下层树侧：传始祖节点 person_handle（本树 steward / chief）；宗谱 → 清顶端镜像段、留自有段
+    // - 下层树侧：传始祖节点 person_handle（本树 steward / chief）；祖谱 → 清顶端镜像段、留自有段
     // - 上层树侧：传 master_handle / target_handle（+ attached_tree_id 指定具体挂载树；仅一个时可省略）
     if (pathname === '/admin/detach-founder' && method === 'POST') {
       const body = parseBody(event);
@@ -1159,8 +1564,14 @@ async function handleRequest(event) {
         const fromKind = fa.treeKindOf(fromEntry);
         const isMasterSide = fromKind === fa.TREE_KIND.MASTER || fromTree === MASTER_TREE_ID;
         if (isMasterSide) {
-          const masterHandle = String(body.master_handle || body.target_handle || body.person_handle || '').trim();
-          if (!masterHandle) return send(400, { error: '缺少 master_handle' });
+          const masterRef = String(body.master_handle || body.target_handle || body.person_handle || '').trim();
+          if (!masterRef) return send(400, { error: '缺少 master_handle' });
+          const masterHit = await resolveNode(masterRef, MASTER_TREE_ID);
+          if (masterHit && masterHit.tree_id !== MASTER_TREE_ID) {
+            return send(404, { error: `编号/句柄「${masterRef}」属于家族树 ${masterHit.tree_id}，不在总谱` });
+          }
+          // 解析不到（未知节点）→ 原样透传，由下游「未挂载任何树」等语义决定状态码
+          const masterHandle = masterHit ? masterHit.handle : masterRef;
           await requireWriteUser(headers, MASTER_TREE_ID, pathname, masterHandle, false);
           const attachments = fa.attachedTreesOf(
             await fa.listAttachedTrees({ masterTreeId: MASTER_TREE_ID }),
@@ -1189,22 +1600,24 @@ async function handleRequest(event) {
           }));
         }
         if (fromKind === fa.TREE_KIND.CLAN) {
-          // 宗谱侧：清空顶端镜像段，自有段保留（docs/clan-tree.spec.md §5）
+          // 祖谱侧：清空顶端镜像段，自有段保留（docs/clan-tree.spec.md §5）
           const handle = String(body.person_handle || body.founder_handle || '').trim();
           await requireWriteUser(headers, fromTree, pathname, handle, false);
           return send(200, await clan.detachClanFromMaster({ treeId: fromTree }));
         }
         if (!body.person_handle) return send(400, { error: '缺少 person_handle' });
-        await requireWriteUser(headers, fromTree, pathname, body.person_handle, false);
+        const detachHit = await resolveNode(String(body.person_handle).trim(), fromTree);
+        if (!detachHit) return send(404, { error: `找不到编号/句柄为「${body.person_handle}」的节点` });
+        await requireWriteUser(headers, fromTree, pathname, detachHit.handle, false);
         const tree = await getTree(fromTree);
-        const founder = tree?.people?.[body.person_handle];
+        const founder = tree?.people?.[detachHit.handle];
         return send(200, await fa.detachFounder({
           treeId: fromTree,
-          founderHandle: body.person_handle,
+          founderHandle: detachHit.handle,
           masterTreeId: founder?.external_tree || '',
         }));
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -1229,12 +1642,12 @@ async function handleRequest(event) {
         await requireWriteUser(headers, reqTree, pathname, personHandle, false);
         return send(200, await fa.resetFounder({ treeId: reqTree, meta }));
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
-    // ---- 宗谱（docs/clan-tree.spec.md）----
-    // 认祖目标选择器数据：宗谱清单（按姓过滤）+ 各宗谱的自有支系入口
+    // ---- 祖谱（docs/clan-tree.spec.md）----
+    // 认祖目标选择器数据：祖谱清单（按姓过滤）+ 各祖谱的自有支系入口
     if (pathname === '/admin/clans' && method === 'GET') {
       const surname = String(query.surname || '').trim();
       const all = await clan.listClans();
@@ -1242,12 +1655,12 @@ async function handleRequest(event) {
       return send(200, { ok: true, list });
     }
 
-    // 宗谱页面数据（P4 三段版式）：顶端镜像链 / 自有世代 / 支系入口列表 + 统计口径
+    // 祖谱页面数据（P4 三段版式）：顶端镜像链 / 自有世代 / 支系入口列表 + 统计口径
     if (pathname === '/admin/clan-info' && method === 'GET') {
       const want = String(query.tree_id || treeId || '').trim();
       if (!want) return send(400, { error: '缺少 tree_id' });
       const info = await clan.clanInfo({ treeId: want });
-      if (info.kind !== fa.TREE_KIND.CLAN) return send(400, { error: `该树不是宗谱: ${want}` });
+      if (info.kind !== fa.TREE_KIND.CLAN) return send(400, { error: `该树不是祖谱: ${want}` });
       return send(200, { ok: true, ...info });
     }
 
@@ -1262,18 +1675,20 @@ async function handleRequest(event) {
         const anchorEntry =
           (reqTree ? clan.entryOf(meta, reqTree) : null) ||
           Object.values(meta.trees || {}).find((t) => clan.clanSurnameOf(t) === String(body.surname || '').trim());
-        if (!anchorEntry) return send(400, { error: '未找到该姓的现有家族树，请先建立家族树再申请宗谱' });
+        if (!anchorEntry) return send(400, { error: '未找到该姓的现有家族树，请先建立家族树再申请祖谱' });
         const surname = String(body.surname || '').trim() || clan.clanSurnameOf(anchorEntry);
         if (!/^[\u4e00-\u9fa5]$/.test(surname)) return send(400, { error: '请填写单个汉字姓氏' });
         if (clan.clanSurnameOf(anchorEntry) && clan.clanSurnameOf(anchorEntry) !== surname) {
           return send(400, { error: `所选家族树不属于「${surname}」姓` });
         }
         await requireWriteUser(headers, anchorEntry.tree_id, pathname, '', false);
-        const masterHandle = String(body.master_handle || body.target_handle || '').trim();
-        if (!masterHandle) return send(400, { error: '请选择中华世本（总谱）的始祖节点' });
+        const masterRef = String(body.master_handle || body.target_handle || body.master_ref || '').trim();
+        if (!masterRef) return send(400, { error: '请选择中华世本（总谱）的始祖节点' });
+        const masterHit = await resolveNode(masterRef, MASTER_TREE_ID, { targetTreeId: MASTER_TREE_ID });
         const masterTree = await getTree(MASTER_TREE_ID);
-        const masterPerson = masterTree?.people?.[masterHandle];
+        const masterPerson = masterHit ? masterTree?.people?.[masterHit.handle] : null;
         if (!masterPerson) return send(404, { error: '所选中华世本节点不存在' });
+        const masterHandle = masterHit.handle;
         const clauses = await colAll(clan.CLAN_REQUEST_COLLECTION);
         if (clauses.some((r) => r.status === 'pending' && r.surname === surname && r.master_handle === masterHandle)) {
           return send(400, { error: clan.PENDING_CLAN_MESSAGE });
@@ -1312,7 +1727,7 @@ async function handleRequest(event) {
           message: `建谱申请已提交，等待总编辑审批（始祖：${masterPerson.name || ''}）`,
         });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -1332,7 +1747,7 @@ async function handleRequest(event) {
       return send(200, { ok: true, list, can_approve_all: chief, my_tree: anchor?.tree_id || '' });
     }
 
-    // 建谱审批（仅 chief_editor，硬口径 3）：通过 → 唯一性校验 + 建宗谱树；驳回 → 只写理由
+    // 建谱审批（仅 chief_editor，硬口径 3）：通过 → 唯一性校验 + 建祖谱树；驳回 → 只写理由
     if (pathname === '/admin/decide-clan' && method === 'POST') {
       const body = parseBody(event);
       const rid = String(body.request_id || '').trim();
@@ -1378,7 +1793,7 @@ async function handleRequest(event) {
         });
         return send(200, { ok: true, status: 'approved', result });
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -1390,11 +1805,14 @@ async function handleRequest(event) {
       if (!body.person_handle) return send(400, { error: '缺少 person_handle' });
       if (!String(body.new_parent_id || '').trim()) return send(400, { error: '请填写新父节点编号' });
       const reparentTreeId = body.tree_id || treeId || MASTER_TREE_ID;
+      let gate = null; // 闸门（冲正标记随 catch 回显：fee_refunded）
       try {
         // 跨树迁移的发起人需对**源树**有写权（目标树按现有跨树写入口径不额外要求写权）
-        await requireWriteUser(headers, reparentTreeId, pathname, body.person_handle, false);
-        // 始祖镜像节点：父/母结构只读（docs/founder-attach.spec.md §5）
+        const u = await requireWriteUser(headers, reparentTreeId, pathname, body.person_handle, false);
+        // 始祖镜像节点：父/母结构只读（docs/founder-attach.spec.md §5）→ 403 且不扣费
         await fa.assertFounderEditable(await getTree(reparentTreeId), body.person_handle, MASTER_TREE_ID);
+        // P1 闸门：同树改父 1 片 / 跨树迁移 9 片（**单价由 feeOf 决定，与带多少后代无关**）
+        gate = feeGate(u.phone, 'reparent');
         const result = await tw.reparentNode({
           treeId: reparentTreeId,
           personHandle: body.person_handle,
@@ -1403,10 +1821,12 @@ async function handleRequest(event) {
           targetTreeId: String(body.new_parent_tree_id || '').trim(),
           maxDepth: MAX_DEPTH,
           depthOf: (t) => computeTreeDepth(t, null).totalGenerations,
+          charge: gate.charge,
+          refund: gate.refund,
         });
         return send(200, result);
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return send(e.status || 400, eco.errorPayload(e, gate?.refunded ? { fee_refunded: true } : {}));
       }
     }
 
@@ -1418,30 +1838,111 @@ async function handleRequest(event) {
       if (!body.person_handle) return send(400, { error: '缺少 person_handle' });
       const delTreeId = body.tree_id || treeId || '';
       if (!delTreeId) return send(400, { error: '缺少 tree_id' });
+      let gate = null; // 闸门（冲正标记随 catch 回显：fee_refunded）
       try {
-        await requireWriteUser(headers, delTreeId, pathname, body.person_handle, false);
-        await fa.assertFounderEditable(await getTree(delTreeId), body.person_handle, MASTER_TREE_ID);
+        // 统一解析：全局编号（I000052 / 000052）/ handle / 树内旧号 都收（docs/id-system.spec.md §5）
+        const delHit = await resolveNode(String(body.person_handle).trim(), delTreeId);
+        if (!delHit) return send(404, { error: `找不到编号/句柄为「${body.person_handle}」的节点` });
+        if (delHit.tree_id !== delTreeId) {
+          return send(400, { error: `「${body.person_handle}」属于家族树 ${delHit.tree_id}，请在该树内删除` });
+        }
+        const delHandle = delHit.handle;
+        const u = await requireWriteUser(headers, delTreeId, pathname, delHandle, false);
+        await fa.assertFounderEditable(await getTree(delTreeId), delHandle, MASTER_TREE_ID);
+        // P1 闸门：dry_run / 确认数不符 = 0 片；正式提交 3 片 × 本次删除节点数（subtree）/ 3 片（promote）
+        gate = feeGate(u.phone, 'delete_node');
         const result = await tw.deleteNode({
           treeId: delTreeId,
-          personHandle: body.person_handle,
+          personHandle: delHandle,
           mode: body.mode === tw.DELETE_MODE_PROMOTE ? tw.DELETE_MODE_PROMOTE : tw.DELETE_MODE_SUBTREE,
           masterTreeId: MASTER_TREE_ID,
           dryRun: body.dry_run === true,
           confirmCount: body.confirm_count === undefined || body.confirm_count === null ? null : Number(body.confirm_count),
+          charge: gate.charge,
+          refund: gate.refund,
         });
         return send(200, result);
       } catch (e) {
-        return send(e.status || 400, { error: e.message });
+        return send(e.status || 400, eco.errorPayload(e, gate?.refunded ? { fee_refunded: true } : {}));
       }
     }
 
-    // 新建家族树（chief_editor）：校验通过 → 扣建树费 → 写树 JSON + 始祖 + tree-meta
+    // ================= 立支 / 汇宗（docs/branch-clan-ops.spec.md · P5） =================
+    // 权限：立支 = 本树 `tree_steward` / `chief_editor`（费用扣**发起人个人**资产）；汇宗 = 仅 `chief_editor`。
+    // 树上下文一律取 **body 的 `tree_id`**（不依赖 `X-Tree-Id`），因此**必须注册在树编辑闸门之前**（§8 / §13-14）。
+    // 错误体统一走 `eco.errorPayload`（只回域名码：`ASSET_INSUFFICIENT` / `DELETE_SCOPE_CHANGED`）。
+    if (pathname === '/admin/establish-branch' && method === 'POST') {
+      let gate = null; // 闸门（冲正标记随 catch 回显：fee_refunded）
+      try {
+        const body = parseBody(event);
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        const reqUser = await colGet('jiazu_users', u.phone);
+        if (!reqUser) throw httpError(401, '用户不存在');
+        if (reqUser.role === 'guest') throw httpError(403, '游客无编辑权限，请注册后编辑');
+        if (reqUser.role !== 'chief_editor' && reqUser.role !== 'tree_steward') {
+          throw httpError(403, '立支需要本家族树主理人（tree_steward）或总编辑（chief_editor）权限');
+        }
+        if (!body.tree_id) throw httpError(400, '缺少 tree_id');
+        if (!String(body.person_handle || '').trim()) throw httpError(400, '缺少 person_handle');
+        // 立支费（颗石榴籽；默认 9999，后台 `config.branch_fee_seeds` 可覆盖）
+        const feeSeeds = await wallet.getBranchFeeSeeds();
+        gate = feeGate(u.phone, 'establish_branch');
+        return send(
+          200,
+          await bco.establishBranch({
+            treeId: body.tree_id,
+            personRef: body.person_handle,
+            phone: u.phone,
+            feeSeeds,
+            charge: gate.charge,
+            refund: gate.refund,
+          }),
+        );
+      } catch (e) {
+        const payload = eco.errorPayload(e);
+        if (gate && gate.refunded) payload.fee_refunded = true;
+        // §7-1：业务错误沿用自身 status；**系统级失败（EACCES / ENOENT… 无 status）一律 500 + 通用文案**
+        return send(e.status || payload.status || 500, payload);
+      }
+    }
+
+    // 汇宗（并入他树）：源树全部真实节点整体迁到目标节点 X 之下，源树条目与树 JSON 删除（**不可逆**）。
+    // **0 片 + 0 籽**（不接扣费闸门）；源树灵气剩余有效期按比例折损后累加到目标树（未镶嵌玉 → 只提示）。
+    // body: { tree_id, target_person_id, confirm_people }（`target_person_id` = 全局编号 / handle，走 resolveNode）
+    if (pathname === '/admin/converge-clan' && method === 'POST') {
+      try {
+        const body = parseBody(event);
+        const u = await authUser(headers);
+        if (!u) throw httpError(401, '请先登录后再进行编辑操作');
+        const reqUser = await colGet('jiazu_users', u.phone);
+        if (!reqUser || reqUser.role !== 'chief_editor') throw httpError(403, '需要总编辑权限');
+        const ratio = await wallet.getConvergeSpiritRatio();
+        return send(
+          200,
+          await bco.convergeClan({
+            treeId: body.tree_id,
+            targetRef: body.target_person_id,
+            confirmPeople: body.confirm_people,
+            ratio,
+          }),
+        );
+      } catch (e) {
+        // §7-2：业务错误沿用自身 status；系统级失败（无 status）一律 500 + 通用文案
+        const payload = eco.errorPayload(e);
+        return send(e.status || payload.status || 500, payload);
+      }
+    }
+
+    // 新建家族树（chief_editor）：校验通过 → 扣 9 颗完整石榴籽 → 写树 JSON + 始祖 + tree-meta
+    // （P1：原 ¥9.90 `wallet.deductTreeCreateFee` 钩子废弃 → 资产侧扣籽；删树不退）
     if (pathname === '/admin/create-tree' && method === 'POST') {
       const u = await authUser(headers);
       if (!u) return send(401, { error: '未登录或登录已过期' });
       const user = await colGet('jiazu_users', u.phone);
       if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
       const body = parseBody(event);
+      let charged = null;
       try {
         const result = await tw.createTree({
           surnameChar: body.surname_char,
@@ -1453,11 +1954,18 @@ async function handleRequest(event) {
           origin: body.origin,
           description: body.description,
           initiatorPhone: u.phone,
-          onBeforeWrite: () => wallet.deductTreeCreateFee(u.phone),
+          // 校验全部通过后、落库前扣 9 颗完整石榴籽（不足 409 → 不建树、不扣籽）
+          onBeforeWrite: async (plannedTreeId) => {
+            charged = await eco.chargeSeeds(u.phone, eco.FEE.tree_create_seeds, {
+              op: 'tree_create',
+              tree_id: plannedTreeId,
+            });
+          },
         });
         return send(200, result);
       } catch (e) {
-        return send(400, { error: e.message });
+        const refunded = await refundQuietly(u.phone, charged, '建树落库失败，已原路返还');
+        return send(e.status || 400, eco.errorPayload(e, refunded ? { fee_refunded: true } : {}));
       }
     }
 
@@ -1477,29 +1985,7 @@ async function handleRequest(event) {
         });
         return send(200, result);
       } catch (e) {
-        return send(500, { error: `拆分失败: ${e.message}` });
-      }
-    }
-
-    if (pathname === '/admin/promote' && method === 'POST') {
-      const u = await authUser(headers);
-      if (!u) return send(401, { error: '未登录或登录已过期' });
-      const user = await colGet('jiazu_users', u.phone);
-      if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
-      const body = parseBody(event);
-      if (!body.tree_id || !body.node_handle || !body.attach_handle) {
-        return send(400, { error: '缺少 tree_id / node_handle / attach_handle' });
-      }
-      try {
-        const result = await tw.promoteTree({
-          treeId: body.tree_id,
-          nodeHandle: body.node_handle,
-          attachHandle: body.attach_handle,
-          masterTreeId: MASTER_TREE_ID,
-        });
-        return send(200, result);
-      } catch (e) {
-        return send(500, { error: `晋宗失败: ${e.message}` });
+        return safeError(e, 500, '拆分失败');
       }
     }
 
@@ -1527,7 +2013,7 @@ async function handleRequest(event) {
         });
         return send(200, result);
       } catch (e) {
-        return send(400, { error: e.message });
+        return safeError(e);
       }
     }
 
@@ -1555,13 +2041,32 @@ async function handleRequest(event) {
       return send(201, [{ handle: r.handle }]);
     }
 
-    // PUT /people/<handle>（保存）
+    // PUT /people/<handle>（保存）— P1 闸门：成功一次 = 1 片竹片（含总谱，无豁免通道）
     const peMatch = pathname.match(/^\/people\/([^/]+)$/);
     if (peMatch && method === 'PUT') {
-      await requireWriteUser(headers, treeId, pathname, peMatch[1], false);
+      const u = await requireWriteUser(headers, treeId, pathname, peMatch[1], false);
       const body = parseBody(event);
-      await tw.updatePerson(treeId, peMatch[1], body, { masterTreeId: MASTER_TREE_ID });
-      return send(200, { ok: true });
+      // ② 只读预检（始祖 / 上层镜像 → 403，不扣费）；请求体无可修改字段 → 无效请求，不扣费
+      const putTree = await getTree(treeId);
+      await fa.assertFounderEditable(putTree, peMatch[1], MASTER_TREE_ID);
+      if (!eco.hasPersonChanges(body)) {
+        return send(400, { error: '请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号）' });
+      }
+      let charged = null;
+      try {
+        // ③④ 余额预检 + 扣费（整单拒绝 409 → 一字节不写）；⑤ 落库；⑥ 落库失败 → 冲正
+        charged = await eco.chargeBamboo(u.phone, eco.FEE.person_update, {
+          op: 'person_update',
+          tree_id: treeId,
+          person_handle: peMatch[1],
+          person_name: putTree?.people?.[peMatch[1]]?.name || '',
+        });
+        await tw.updatePerson(treeId, peMatch[1], body, { masterTreeId: MASTER_TREE_ID });
+      } catch (e) {
+        const refunded = await refundQuietly(u.phone, charged, '保存落库失败，已原路返还');
+        return send(e.status || 400, eco.errorPayload(e, refunded ? { fee_refunded: true } : {}));
+      }
+      return send(200, { ok: true, fee: eco.feeResponse(charged) });
     }
 
     // POST /families/（新建）
@@ -1642,8 +2147,16 @@ async function handleRequest(event) {
       const details = await getAllDetails(treeId);
       const detailMap = new Map(details.map((d) => [d.handle, d]));
       const matched = [];
+      // 编号 / 句柄检索（docs/id-system.spec.md §5：搜索也是「选节点」入口）：
+      // 全局编号（I000052 / 000052）/ handle / 树内旧号命中本树 → 置顶返回
+      const refHit = await resolveNode(String(query.query || '').trim(), treeId);
+      if (refHit && refHit.tree_id === treeId && tree.people[refHit.handle] && !readAccess.isHiddenPerson(refHit.handle)) {
+        const p = tree.people[refHit.handle];
+        matched.push({ handle: p.handle, object: toRawPerson(tree, p, detailMap.get(p.handle)) });
+      }
       for (const p of Object.values(tree.people)) {
         if (readAccess.isHiddenPerson(p.handle)) continue;
+        if (matched.some((m) => m.handle === p.handle)) continue;
         const hay = `${p.name}${p.surname}${p.given}`.toLowerCase();
         if (hay.includes(q)) {
           matched.push({ handle: p.handle, object: toRawPerson(tree, p, detailMap.get(p.handle)) });
@@ -1655,7 +2168,7 @@ async function handleRequest(event) {
 
     return send(404, { error: `未知路径: ${pathname}` });
   } catch (e) {
-    return send(e.status || 500, { error: e.message || 'internal error' });
+    return safeError(e, 500);
   }
 }
 

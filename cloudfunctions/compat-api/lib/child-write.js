@@ -9,7 +9,7 @@
  * 两侧写入统一走 store.updateTrees()：按 tree_id 顺序加锁 + 深拷贝快照 + 中途失败回滚。
  */
 import crypto from 'node:crypto';
-import { getTree, updateTrees, saveDetail, getDetail, deleteDetail } from './store.js';
+import { getTree, updateTrees, saveDetail, getDetail, deleteDetail, nextPersonId, nextFamilyId } from './store.js';
 import { nextGrampsId, inheritedSurname, parentSlot } from './tree-write.js';
 import { findMarriageSide } from './marriage.js';
 
@@ -161,7 +161,7 @@ export async function addChildNode({
     if (maxDepth && typeof depthOf === 'function') {
       const total = Number(depthOf(remote0)) || 0;
       if (total >= maxDepth) {
-        const err = new Error(`真身家族树 ${remoteTreeId} 已到 ${maxDepth} 世深度上限，新增节点请联系总编辑（晋宗或扩容）`);
+        const err = new Error(`真身家族树 ${remoteTreeId} 已到 ${maxDepth} 世深度上限，新增节点请联系总编辑（扩容或调整深度上限）`);
         err.status = 403;
         throw err;
       }
@@ -196,7 +196,7 @@ export async function addChildNode({
       const fh = genHandle();
       tree.families[fh] = {
         handle: fh,
-        gramps_id: nextGrampsId(tree, 'F'),
+        gramps_id: await nextFamilyId(),
         father_handle: slot === 'father' ? personHandle : '',
         mother_handle: slot === 'mother' ? personHandle : '',
         child_handles: [],
@@ -213,7 +213,7 @@ export async function addChildNode({
         const childSurname = surnameClean || inheritedSurname(tree, personHandle);
         const child = newPerson({
           handle: childKey,
-          grampsId: nextGrampsId(tree, 'I'),
+          grampsId: await nextPersonId(),
           name: `${childSurname}${given}` || '未知',
           surname: childSurname,
           given,
@@ -250,7 +250,8 @@ export async function addChildNode({
     if (attach) {
       const moved = tree.people[attach];
       realKey = genHandle();
-      const real = { ...moved, handle: realKey, gramps_id: nextGrampsId(remote, 'I'), parent_family: remoteFam.handle };
+      // 编号终身不变（docs/id-system.spec.md §2）：跨树挂接只换 handle/树归属，原编号随迁
+      const real = { ...moved, handle: realKey, parent_family: remoteFam.handle };
       for (const k of ['external_tree', 'external_person_handle', 'external_link_type', 'external_mirror']) delete real[k];
       remote.people[realKey] = real;
       delete tree.people[attach];
@@ -275,7 +276,7 @@ export async function addChildNode({
       const childSurname = surnameClean || inheritedSurname(remote, realParentRef);
       const real = newPerson({
         handle: realKey,
-        grampsId: nextGrampsId(remote, 'I'),
+        grampsId: await nextPersonId(),
         name: `${childSurname}${given}` || '未知',
         surname: childSurname,
         given,
@@ -305,7 +306,7 @@ export async function addChildNode({
     const mirrorKey = genHandle();
     tree.people[mirrorKey] = {
       handle: mirrorKey,
-      gramps_id: nextGrampsId(tree, 'I'),
+      gramps_id: await nextPersonId(),
       name: realPerson.name,
       surname: realPerson.surname,
       given: realPerson.given,

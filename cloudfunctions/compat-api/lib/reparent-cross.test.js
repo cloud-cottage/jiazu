@@ -6,7 +6,7 @@
  * - 模态框「父节点编号」填的编号属于**别的家族树** → 该节点及其全部子节点整体迁移到目标家族树，
  *   挂到目标父节点之下（槽位按目标父性别：女 → 母亲位）
  * - 单事务 store.updateTrees([源树, 目标树])，失败双侧回滚（快照）
- * - handle 沿用（24 位随机 handle 全局唯一 → 外部镜像指针不悬空）；gramps_id 按目标树编号段重分配
+ * - handle 沿用（24 位随机 handle 全局唯一 → 外部镜像指针不悬空）；**gramps_id 不重编号**（全站唯一、终身不变）
  * - 连接子孙的家族随迁（编号重分配）；留在源树的配偶：家族随迁、槽位清空
  * - 目标树中指向迁入节点的镜像：真身已在本树 → 删除（有本树婚姻家庭的只清指针）
  * - 拒绝：源/目标是总谱、迁移范围含始祖/镜像、世代上限
@@ -190,13 +190,21 @@ function simpleTree(id, people) {
 
 // ================= 纯函数 =================
 
-test('moveLineage（纯函数）：handle 沿用 + 目标树编号重分配 + 双侧清理 + 目标树镜像处理', () => {
+test('moveLineage（纯函数）：handle 与编号都沿用（跨树不重编号）+ 双侧清理 + 目标树镜像处理', () => {
   const s = srcFamily('rc_src');
   const d = dstTree('rc_dst', { base: 9000, mirrorChildOf: 'rc_src-son', mirrorSpouseOf: 'rc_src-kid1' });
   const numOf = (id) => parseInt(String(id || '').replace(/^\D+/, ''), 10);
   // 基址捕获：编号段按前缀各自独立（人与家族不共享序号），故分别取操作前的同前缀最大编号
   const baseI = Math.max(...Object.values(d.tree.people).map((o) => numOf(o.gramps_id)));
   const baseF = Math.max(...Object.values(d.tree.families).map((o) => numOf(o.gramps_id)));
+  // 迁移前的编号基线（跨树迁移不重编号 → 逐个比对）
+  const idBefore = Object.fromEntries(
+    [s.h.son, s.h.kid1, s.h.kid2, s.h.gk].map((h) => [h, s.tree.people[h].gramps_id]),
+  );
+  const famIdBefore = {
+    [s.fam.son]: s.tree.families[s.fam.son].gramps_id,
+    [s.fam.kid2]: s.tree.families[s.fam.kid2].gramps_id,
+  };
   const r = tw.moveLineage({
     src: s.tree,
     dst: d.tree,
@@ -208,13 +216,11 @@ test('moveLineage（纯函数）：handle 沿用 + 目标树编号重分配 + �
   assert.deepEqual(r.moved_people, [s.h.son, s.h.kid1, s.h.kid2, s.h.gk], 'BFS 顺序：本人 → 逐代');
   assert.equal(r.moved_families_count, 2, '连接子孙的两个家族随迁');
 
-  // handle 沿用 + 编号重分配：从「操作前同前缀最大编号 + 1」起按 BFS 连号（已删镜像的旧号不复用）
-  const movedIds = [s.h.son, s.h.kid1, s.h.kid2, s.h.gk].map((h) => numOf(d.tree.people[h].gramps_id));
-  assert.deepEqual(
-    movedIds,
-    [baseI + 1, baseI + 2, baseI + 3, baseI + 4],
-    `迁入节点应从 I${baseI + 1} 起连号（I${baseI} 为操作前最大编号）`,
-  );
+  // handle 与编号都沿用：编号全站唯一且终身不变（docs/id-system.spec.md §2/§8-4）
+  for (const h of [s.h.son, s.h.kid1, s.h.kid2, s.h.gk]) {
+    assert.equal(d.tree.people[h].gramps_id, idBefore[h], `${h} 编号不因跨树迁移而变（${idBefore[h]}）`);
+  }
+  assert.deepEqual(r.gramps_id_map, idBefore, '编号映射表 = 恒等映射（形状不变，供既有调用方消费）');
   assert.equal(r.gramps_id_map[s.h.gk], d.tree.people[s.h.gk].gramps_id, '编号映射与树内一致');
   assert.equal(d.tree.people[s.h.son].handle, s.h.son, 'handle 沿用（外部镜像指针不悬空）');
 
@@ -224,10 +230,11 @@ test('moveLineage（纯函数）：handle 沿用 + 目标树编号重分配 + �
   assert.deepEqual(d.tree.families[r.family_handle].child_handles, [s.h.son]);
   assert.equal(d.tree.families[r.family_handle].father_handle, d.h.p);
 
-  // 随迁家族：编号重分配（家族段独立于人员段；基址 = 操作前最大 F 编号）
+  // 重建的父家族：moveLineage 未传 newFamilyIds → 退回树内序号兜底（基址 = 操作前最大 F 编号）
   assert.equal(numOf(d.tree.families[r.family_handle].gramps_id), baseF + 1, '重建的父家族 F{baseF+1}');
-  assert.equal(numOf(d.tree.families[s.fam.son].gramps_id), baseF + 2, '随迁家族依次连号');
-  assert.equal(numOf(d.tree.families[s.fam.kid2].gramps_id), baseF + 3);
+  // 随迁家族：编号同样不变（编号终身不变）
+  assert.equal(d.tree.families[s.fam.son].gramps_id, famIdBefore[s.fam.son], '随迁家族编号不变');
+  assert.equal(d.tree.families[s.fam.kid2].gramps_id, famIdBefore[s.fam.kid2]);
   assert.equal(d.tree.families[s.fam.son].father_handle, s.h.son, '迁入的家长保留');
   assert.equal(d.tree.families[s.fam.son].mother_handle, '', '留在源树的配偶槽位清空');
   assert.deepEqual(d.tree.families[s.fam.son].child_handles, [s.h.kid1, s.h.kid2]);
@@ -533,6 +540,19 @@ test('路由 POST /admin/reparent（跨树）：200 + 双树落库；未登录 4
   const d = mkDst('route');
   writeTree(s.tree);
   writeTree(d.tree);
+  // P1 竹片闸门：路由扣费前账上须有竹片（本用例跨树 9 片 + 同树 1 片，预置 100 片）
+  const { mutateAssets } = await import('./economy-ledger.js');
+  await mutateAssets(phone, (u) => {
+    u.bamboos = [
+      {
+        id: 'bl_rc_route',
+        qty: 100,
+        expires_at: new Date(Date.now() + 100 * 86400000).toISOString(),
+        source: 'admin',
+        created_at: new Date().toISOString(),
+      },
+    ];
+  });
   const token = signJwt({ sub: phone, phone, role: 'tree_steward' }, 3600);
   const refId = `I${9000 + dstSeq * 100}`;
 
@@ -552,6 +572,8 @@ test('路由 POST /admin/reparent（跨树）：200 + 双树落库；未登录 4
   assert.equal(body.cross_tree, true);
   assert.equal(body.target_tree_id, d.id);
   assert.equal(body.moved_people, 4);
+  assert.equal(body.fee.pieces, 9, 'P1：跨树迁移 9 片 / 次（迁 4 人也是 9 片，绝不 9 × 人数）');
+  assert.equal(body.fee.balance_after, 91);
   assert.equal(readTree('rc_route_src').people[s.h.son], undefined);
   assert.ok(readTree(d.id).people[s.h.son], '目标树已落库');
   assert.equal(readTree('rc_route_src').version, 4);
@@ -564,7 +586,10 @@ test('路由 POST /admin/reparent（跨树）：200 + 双树落库；未登录 4
     body: JSON.stringify({ tree_id: 'rc_route_src', person_handle: s.h.wife, new_parent_id: s.h.gp }),
   });
   assert.equal(same.statusCode, 200);
-  assert.equal(JSON.parse(same.body).cross_tree, false);
+  const sameBody = JSON.parse(same.body);
+  assert.equal(sameBody.cross_tree, false);
+  assert.equal(sameBody.fee.pieces, 1, 'P1：同树改父 1 片 / 节点');
+  assert.equal(sameBody.fee.balance_after, 90);
 });
 
 // ================= 真实数据副本 =================
@@ -578,13 +603,28 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
       fs.copyFileSync(path.join(REAL_DETAILS, f), path.join(TMP, 'details', f));
     }
   }
-  const YQ = '103f95b876413b7835fdaa325fc5'; // 沈云琴 I0009（母）
-  const QS = '103f95b876f8707f0386a907eb0b'; // 纪青森 I0011（子）
-  const FAM_YQ = '103f95b876443dfbb3877d6712b'; // F0004：母 沈云琴 → 子 纪青森
-  const FAM_QS = '103f95b876fe2713641471ed4f05'; // F0015：父 纪青森（无子女）
+  const YQ = '103f95b876413b7835fdaa325fc5'; // 沈云琴（母，shen 侧真身）
+  const QS = '103f95b876f8707f0386a907eb0b'; // 纪青森（子）
+  const FAM_YQ = '103f95b876443dfbb3877d6712b'; // 沈云琴 → 纪青森 的家庭
+  const FAM_QS = '103f95b876fe2713641471ed4f05'; // 纪青森留下的无子女家庭
   const jiBefore = readTree('ji_23395_01');
-  const jiTarget = Object.values(jiBefore.people).find((p) => p.gramps_id === 'I0001'); // 季志全（男，已有家族 F500020）
-  const jiFam = '1305f76328532de23346f02b'; // F500020
+  const shenBefore = readTree('shen_27784_01');
+
+  // 定位一律按姓名/性别 + handle，不写死 gramps_id：编号会随「全站唯一编号」迁移整站变化。
+  const jiTarget = Object.values(jiBefore.people).find(
+    (p) => p.name === '季志全' && p.gender === 'M' && !p.external_mirror,
+  );
+  assert.ok(jiTarget, 'ji 副本应有真身「季志全」（目标父）');
+  const jiFam = Object.keys(jiBefore.families).find(
+    (h) => jiBefore.families[h].father_handle === jiTarget.handle,
+  );
+  assert.ok(jiFam, '「季志全」应已有家庭（本次迁移复用，不新建）');
+  // 迁移前编号快照：编号终身不变 ⇒ 迁移后必须逐字等于迁移前，而不是等于某个写死的旧号
+  const yqIdBefore = shenBefore.people[YQ].gramps_id;
+  const qsIdBefore = shenBefore.people[QS].gramps_id;
+  const famIdBefore = shenBefore.families[FAM_YQ].gramps_id;
+  assert.ok(yqIdBefore && qsIdBefore && famIdBefore, '迁出侧节点/家族都应带编号');
+  assert.equal(shenBefore.families[FAM_YQ].mother_handle, YQ);
 
   const r = await tw.reparentNode({
     treeId: 'shen_27784_01',
@@ -600,7 +640,7 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
   assert.equal(r.moved_people, 2, '沈云琴 + 纪青森');
   assert.equal(r.moved_families, 1, 'F0004 随迁');
   assert.equal(r.parent_handle, jiTarget.handle);
-  assert.equal(r.created_family, false, '复用季志全已有的家族 F500020');
+  assert.equal(r.created_family, false, '复用季志全已有的家族');
 
   const shenAfter = readTree('shen_27784_01');
   const jiAfter = readTree('ji_23395_01');
@@ -610,11 +650,12 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
   assert.equal(shenAfter.families[FAM_QS], undefined, '纪青森留下的无子女家族一并清理');
   assert.ok(shenAfter.people['103f95b87734468f47e53dde8c70'], '其余节点不受影响');
 
-  assert.equal(jiAfter.people[YQ].gramps_id, 'I500060', '按目标树编号段重分配（原 I0009）');
-  assert.equal(jiAfter.people[QS].gramps_id, 'I500061');
+  // 跨树迁移不再重编号（docs/id-system.spec.md §8-4）：编号随节点原样迁到目标树
+  assert.equal(jiAfter.people[YQ].gramps_id, yqIdBefore, '编号终身不变（迁出侧编号原样保留）');
+  assert.equal(jiAfter.people[QS].gramps_id, qsIdBefore);
   assert.equal(jiAfter.people[YQ].parent_family, jiFam, '挂到目标父「季志全」的家族下');
   assert.ok(jiAfter.families[jiFam].child_handles.includes(YQ));
-  assert.equal(jiAfter.families[FAM_YQ].gramps_id, 'F500021', '随迁家族编号重分配');
+  assert.equal(jiAfter.families[FAM_YQ].gramps_id, famIdBefore, '随迁家族编号不变（原编号原样保留）');
   assert.equal(jiAfter.families[FAM_YQ].mother_handle, YQ);
   assert.deepEqual(jiAfter.families[FAM_YQ].child_handles, [QS]);
   assert.deepEqual(tw.checkTreeIntegrity(jiAfter), []);
@@ -622,7 +663,7 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
 
   // 详情随迁
   const d1 = readDetail('ji_23395_01', YQ);
-  assert.ok(d1 && d1.tree_id === 'ji_23395_01' && d1.gramps_id === 'I500060', '沈云琴详情迁到 ji');
+  assert.ok(d1 && d1.tree_id === 'ji_23395_01' && d1.gramps_id === yqIdBefore, '沈云琴详情迁到 ji（编号不变）');
   assert.ok(readDetail('ji_23395_01', QS), '纪青森详情迁到 ji');
   assert.equal(readDetail('shen_27784_01', YQ), null, 'shen 侧旧详情删除');
 

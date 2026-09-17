@@ -1,5 +1,5 @@
 /**
- * 树写路径：人物/家族编辑、拆分、晋宗、删除跨树链接
+ * 树写路径：人物/家族编辑、拆分、删除跨树链接
  *
  * 写模型（docs/data-model.md §7）：
  * - 结构字段（姓名/性别/生卒/关系/跨树软关联）→ 树 JSON（version 乐观锁）
@@ -20,8 +20,12 @@ import {
   getMeta,
   saveMeta,
   listTreeIds,
+  nextPersonId,
+  nextFamilyId,
 } from './store.js';
 import { founderLockMessage, metaEntryOf, isFounderMirror, isUpperMirror, upperMirrorLockMessage, MIRROR_LOCK_MESSAGE, treeKindOf, resolveFounderHandle, TREE_KIND } from './founder-attach.js';
+import { idAllocator, reserveFamilyIds } from './id-seq.js';
+import { resolveNode } from './id-resolve.js';
 
 export const EXTERNAL_KEYS = [
   'external_tree',
@@ -61,6 +65,10 @@ function genderToNum(g) {
   return { M: 1, F: 2, U: 0 }[g] ?? 0;
 }
 
+/**
+ * 树内序号（**已废弃的口径，仅作纯函数兜底**）：docs/id-system.spec.md §6 —— 树内局部序号不再作为标识。
+ * 新节点一律走 store.nextPersonId()/nextFamilyId()（全站唯一编号）；本函数仅在没有铸号器可用时兜底。
+ */
 export function nextGrampsId(tree, prefix) {
   const re = new RegExp(`^${prefix}(\\d+)$`);
   let max = -1;
@@ -133,7 +141,7 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
     if (!person) throw new Error('person not found');
 
     // 上层镜像只读（docs/founder-attach.spec.md §5 / docs/clan-tree.spec.md §3-7）：
-    // - 任一上层树的镜像节点（始祖 founder / 宗谱顶端链 chain）→ 403，需到真身所在层修改
+    // - 任一上层树的镜像节点（始祖 founder / 祖谱顶端链 chain）→ 403，需到真身所在层修改
     // - 始祖位置的空白占位态 → 403「请先认祖」（不允许自行填写身份数据）
     if (opts.masterTreeId && treeId !== opts.masterTreeId) {
       const mirrorLock = await upperMirrorLockMessage(person, treeId);
@@ -199,7 +207,7 @@ export async function createPerson(treeId, body) {
     }
     const person = {
       handle,
-      gramps_id: nextGrampsId(tree, 'I'),
+      gramps_id: await nextPersonId(),
       name,
       surname,
       given,
@@ -248,7 +256,7 @@ export function inheritedSurname(tree, parentHandle) {
 }
 
 /**
- * 家族写路径上的镜像只读校验：父/母/子女槽位含上层镜像节点（始祖 founder / 宗谱顶端链 chain）→ 403
+ * 家族写路径上的镜像只读校验：父/母/子女槽位含上层镜像节点（始祖 founder / 祖谱顶端链 chain）→ 403
  * docs/founder-attach.spec.md §5 · docs/clan-tree.spec.md §3-7
  */
 function assertNotFounderMirror(tree, handles, masterTreeId) {
@@ -275,7 +283,7 @@ export async function createFamily(treeId, body, opts = {}) {
     assertNotFounderMirror(tree, [father, mother, ...children], opts.masterTreeId);
     tree.families[handle] = {
       handle,
-      gramps_id: nextGrampsId(tree, 'F'),
+      gramps_id: await nextFamilyId(),
       father_handle: father,
       mother_handle: mother,
       child_handles: children,
@@ -446,7 +454,7 @@ export async function appendChainNode({
       const given = String(name || '').trim();
       tree.people[h] = {
         handle: h,
-        gramps_id: nextGrampsId(tree, 'I'),
+        gramps_id: await nextPersonId(),
         name: `${sn}${given}` || '未知',
         surname: sn,
         given,
@@ -512,7 +520,7 @@ export async function appendChainNode({
       const parentIsMother = tree.people[parentHandle].gender === 'F';
       tree.families[fh] = {
         handle: fh,
-        gramps_id: nextGrampsId(tree, 'F'),
+        gramps_id: await nextFamilyId(),
         father_handle: parentIsMother ? '' : parentHandle,
         mother_handle: parentIsMother ? parentHandle : '',
         child_handles: [h],
@@ -607,7 +615,9 @@ export function nextTreeId(meta, surnameChar) {
 /**
  * 新建家族树（chief_editor）：写树 JSON + 始祖节点 + tree-meta 注册
  * - 树 JSON 首写入走 createTreeFile（cloud 模式需先建云存储文件并登记 fileID，此后 saveTree 才可用）
- * - onBeforeWrite：全部校验通过后、落库前调用（建树费扣款挂这里 → 校验不过不扣款）
+ * - onBeforeWrite：全部校验通过后、落库前调用（建树扣费挂这里 → 校验不过不扣款）；
+ *   入参 = 已生成的 tree_id（P1：`docs/economy-fee.spec.md` §5-2 扣籽时写 `ref.tree_id`；
+ *   原零参回调不受影响，契约向后兼容）
  */
 export async function createTree({
   surnameChar,
@@ -630,21 +640,22 @@ export async function createTree({
   const meta = await getMeta();
   const treeId = nextTreeId(meta, char);
   const handle = genHandle();
+  const founderGrampsId = await nextPersonId(); // 全站唯一编号（创建前先铸号，落库前失败只损失一个号）
   const founderFullName = `${char}${given}`;
   const now = new Date().toISOString();
 
-  if (onBeforeWrite) await onBeforeWrite();
+  if (onBeforeWrite) await onBeforeWrite(treeId);
 
   const tree = {
     _schema: '1.0',
     tree_id: treeId,
-    founder_gramps_id: 'I0001',
+    founder_gramps_id: founderGrampsId,
     version: 1,
     updated_at: now,
     people: {
       [handle]: {
         handle,
-        gramps_id: 'I0001',
+        gramps_id: founderGrampsId,
         name: founderFullName,
         surname: char,
         given,
@@ -666,7 +677,7 @@ export async function createTree({
   await saveDetail({
     tree_id: treeId,
     handle,
-    gramps_id: 'I0001',
+    gramps_id: founderGrampsId,
     name: founderFullName,
     events: [],
     media: [],
@@ -696,7 +707,7 @@ export async function createTree({
     ok: true,
     tree_id: treeId,
     founder_handle: handle,
-    founder_gramps_id: 'I0001',
+    founder_gramps_id: founderGrampsId,
     surname_char: char,
     display_title: meta.trees[treeId].display_title,
     message: `已创建「${meta.trees[treeId].display_title}」（${treeId}）`,
@@ -789,139 +800,6 @@ export async function splitTree({ treeId, ancestorHandle, ancestorName = '', ini
   };
 }
 
-/**
- * 晋宗（chief_editor）：nodeHandle 以上祖先链并入 zhonghua（external_chain_gen 续编），原树移除
- */
-export async function promoteTree({ treeId, nodeHandle, attachHandle, masterTreeId }) {
-  if (treeId === masterTreeId) throw new Error('总谱本身不可晋宗');
-  const master = await getTree(masterTreeId);
-  const attach = master.people[attachHandle];
-  if (!attach) throw new Error('挂接节点不存在于中华世本');
-
-  // 挂接世代号：挂接点 external_chain_gen 或 zhonghua 最大世数
-  let attachGen = 0;
-  const attachDetail = await getDetail(masterTreeId, attachHandle);
-  for (const a of attachDetail?.attributes || []) {
-    if (a.key === 'external_chain_gen') attachGen = parseInt(a.value, 10) || 0;
-  }
-  if (!attachGen) {
-    for (const p of Object.values(master.people)) {
-      const d = await getDetail(masterTreeId, p.handle);
-      const g = d?.attributes?.find((a) => a.key === 'external_chain_gen');
-      if (g) attachGen = Math.max(attachGen, parseInt(g.value, 10) || 0);
-    }
-  }
-
-  let movedPeople = 0;
-  let movedFamilies = 0;
-  let chainGens = '';
-  let masterNode = null;
-
-  // 原树：收集祖先链（node → 始祖）
-  const chain = []; // 从 node 向上
-  await updateTree(treeId, async (tree) => {
-    let cur = nodeHandle;
-    const chainPeople = [];
-    const chainFamilies = [];
-    while (true) {
-      const person = tree.people[cur];
-      if (!person) throw new Error(`节点不存在: ${cur}`);
-      chainPeople.push(person.handle);
-      const pf = person.parent_family;
-      if (!pf || !tree.families[pf]) break;
-      chainFamilies.push(pf);
-      const fam = tree.families[pf];
-      const parent = fam.father_handle || fam.mother_handle;
-      if (!parent) break;
-      cur = parent;
-    }
-    if (chainPeople.length <= 1) {
-      throw new Error('节点已是原树始祖（无祖先可并入）');
-    }
-    // 链顺序：始祖 → ... → node
-    const ascChain = [...chainPeople].reverse();
-    chainGens = `${attachGen + 1}-${attachGen + ascChain.length}`;
-
-    // zhonghua 建链：每代建 person（external_chain_gen 从 attachGen+1 续编）+ family 挂接
-    let parentHandle = attachHandle;
-    let gen = attachGen;
-    for (const h of ascChain) {
-      gen++;
-      const p = tree.people[h];
-      const mh = genHandle();
-      master.people[mh] = {
-        handle: mh,
-        gramps_id: `I${gen}`,
-        name: p.name,
-        surname: p.surname,
-        given: p.given,
-        gender: p.gender,
-        birth_date: p.birth_date,
-        death_date: p.death_date,
-        birth_place: p.birth_place,
-        death_place: p.death_place,
-        parent_family: '',
-        spouse_families: [],
-        external_tree: '',
-        external_person_handle: '',
-        external_link_type: '',
-      };
-      await saveDetail({
-        tree_id: masterTreeId,
-        handle: mh,
-        gramps_id: `I${gen}`,
-        name: p.name,
-        events: [],
-        media: [],
-        citations: [],
-        notes: [],
-        attributes: [
-          { key: 'external_chain_gen', value: String(gen), type: 'external_chain_gen' },
-          { key: 'external_chain_from', value: treeId, type: 'external_chain_from' },
-        ],
-        updated_at: new Date().toISOString(),
-      });
-      // 家族：父(parentHandle) - 子(mh)
-      const fh = genHandle();
-      master.families[fh] = {
-        handle: fh,
-        gramps_id: `F${gen}`,
-        father_handle: parentHandle,
-        mother_handle: '',
-        child_handles: [mh],
-      };
-      if (master.people[parentHandle]) master.people[parentHandle].spouse_families.push(fh);
-      parentHandle = mh;
-      if (h === nodeHandle) masterNode = { handle: mh, name: p.name };
-    }
-
-    // 原树移除链上节点 + 家族
-    for (const h of chainPeople) {
-      delete tree.people[h];
-      await deleteDetail(treeId, h);
-    }
-    for (const fh of chainFamilies) delete tree.families[fh];
-    movedPeople = chainPeople.length;
-    movedFamilies = chainFamilies.length;
-
-    await saveTree(master);
-    return { ok: true };
-  });
-
-  return {
-    ok: true,
-    treeId,
-    nodeHandle,
-    nodeName: masterNode?.name || '',
-    movedPeople,
-    movedFamilies,
-    attach: { handle: attachHandle, name: attach.name, gen: attachGen },
-    chainGens,
-    masterNode: masterNode || { handle: attachHandle, name: attach.name },
-    message: `已将 ${movedPeople} 人并入中华世本（第 ${attachGen + 1} 世起）`,
-  };
-}
-
 // ---- 添加配偶（同树） ----
 
 /**
@@ -990,7 +868,7 @@ export async function addSpouseNode({
       const given = String(name || '').trim();
       tree.people[spouseHandle] = {
         handle: spouseHandle,
-        gramps_id: nextGrampsId(tree, 'I'),
+        gramps_id: await nextPersonId(),
         name: `${sn}${given}` || '未知',
         surname: sn,
         given,
@@ -1042,7 +920,7 @@ export async function addSpouseNode({
       famHandle = genHandle();
       tree.families[famHandle] = {
         handle: famHandle,
-        gramps_id: nextGrampsId(tree, 'F'),
+        gramps_id: await nextFamilyId(),
         father_handle: selfSlot === 'father' ? personHandle : spouseHandle,
         mother_handle: selfSlot === 'mother' ? personHandle : spouseHandle,
         child_handles: [],
@@ -1089,29 +967,35 @@ export async function reparentNode({
   maxDepth = 0,
   depthOf = null,
   listIdsFn = listTreeIds,
+  charge = null,
+  refund = null,
 }) {
   const tree0 = await getTree(treeId);
   const person = tree0.people[personHandle];
   if (!person) throw new Error('节点不存在');
 
   const refText = String(newParentRef || '').trim();
-  const parentHandle = resolvePersonRef(tree0, refText);
-  if (!parentHandle) {
-    // 本树找不到 → 该编号属于别的家族树：跨树改父 = 节点及其全部后代整体迁到目标树
-    const hit = await resolveCrossTreeParent({ sourceTreeId: treeId, ref: refText, targetTreeId, listIdsFn });
-    if (hit) {
-      return reparentAcrossTrees({
-        treeId,
-        personHandle,
-        targetTreeId: hit.tree_id,
-        targetHandle: hit.handle,
-        masterTreeId,
-        maxDepth,
-        depthOf,
-      });
-    }
+  // 统一解析（docs/id-system.spec.md §5）：全局编号 / handle / 树内旧号（带 tree_id）
+  const hit = await resolveNode(refText, treeId, { targetTreeId, listIdsFn });
+  if (!hit) {
+    if (targetTreeId) throw new Error(`目标家族树 ${targetTreeId} 中找不到编号为「${refText}」的节点`);
     throw new Error(`找不到编号为「${refText}」的节点`);
   }
+  if (hit.tree_id !== treeId) {
+    // 编号属于别的家族树 → 跨树改父 = 节点及其全部后代整体迁到目标树（换树不换号）
+    return reparentAcrossTrees({
+      treeId,
+      personHandle,
+      targetTreeId: hit.tree_id,
+      targetHandle: hit.handle,
+      masterTreeId,
+      maxDepth,
+      depthOf,
+      charge,
+      refund,
+    });
+  }
+  const parentHandle = hit.handle;
   if (parentHandle === personHandle) throw new Error('不能把节点设为自己的父节点');
   const parent = tree0.people[parentHandle];
   if (descendantsOf(tree0, personHandle).has(parentHandle)) {
@@ -1134,32 +1018,58 @@ export async function reparentNode({
   // 受影响集合（本人 + 链上下代）在改动前算好：改父不改动本人的下代结构
   const affected = new Set([personHandle, ...descendantsOf(tree0, personHandle)]);
 
-  const moved = await updateTree(treeId, async (tree) => {
-    const p = tree.people[personHandle];
-    let removedFamily = false;
+  // P1 闸门（docs/economy-fee.spec.md §4-3）：同树改父 = 1 片；扣费在 updateTree 闭包**首步**
+  // （扣费失败 409 → updateTree 直接抛错、不写树；saveTree 失败 → 冲正 fee_refund）
+  let charged = null;
+  let moved;
+  try {
+    moved = await updateTree(treeId, async (tree) => {
+      if (charge) {
+        charged = await charge({
+          cross_tree: false,
+          dry_run: false,
+          tree_id: treeId,
+          person_handle: personHandle,
+          person_name: person.name || '',
+        });
+      }
+      const p = tree.people[personHandle];
+      let removedFamily = false;
 
-    // 1) 从原父母家族摘除
-    if (p.parent_family && tree.families[p.parent_family]) {
-      const of = tree.families[p.parent_family];
-      of.child_handles = (of.child_handles || []).filter((h) => h !== personHandle);
-      if (!of.father_handle && !of.mother_handle && of.child_handles.length === 0) {
-        delete tree.families[of.handle];
-        removedFamily = true;
+      // 1) 从原父母家族摘除
+      if (p.parent_family && tree.families[p.parent_family]) {
+        const of = tree.families[p.parent_family];
+        of.child_handles = (of.child_handles || []).filter((h) => h !== personHandle);
+        if (!of.father_handle && !of.mother_handle && of.child_handles.length === 0) {
+          delete tree.families[of.handle];
+          removedFamily = true;
+        }
+      }
+      p.parent_family = '';
+
+      // 2) 找 / 建新父节点的家族（新建才铸号：编号全站唯一）
+      const needFamily = !reusableParentFamily(tree, parentHandle);
+      const famId = needFamily ? await nextFamilyId() : '';
+      const { family: target, created: createdFamily } = ensureParentFamily(tree, parentHandle, famId);
+      if (!target.child_handles.includes(personHandle)) target.child_handles.push(personHandle);
+      p.parent_family = target.handle;
+
+      return {
+        family_handle: target.handle,
+        created_family: createdFamily,
+        removed_family: removedFamily,
+      };
+    });
+  } catch (e) {
+    if (refund && charged) {
+      try {
+        await refund(charged);
+      } catch {
+        /* 冲正 best-effort：绝不掩盖原始落库错误 */
       }
     }
-    p.parent_family = '';
-
-    // 2) 找 / 建新父节点的家族
-    const { family: target, created: createdFamily } = ensureParentFamily(tree, parentHandle);
-    if (!target.child_handles.includes(personHandle)) target.child_handles.push(personHandle);
-    p.parent_family = target.handle;
-
-    return {
-      family_handle: target.handle,
-      created_family: createdFamily,
-      removed_family: removedFamily,
-    };
-  });
+    throw e;
+  }
 
   // 3) 源流链世数平移（本人 + 链上下代；只动带 external_chain_gen 的节点）
   let chainShift = null;
@@ -1198,6 +1108,7 @@ export async function reparentNode({
     created_family: moved.created_family,
     removed_family: moved.removed_family,
     chain_shift: chainShift,
+    fee: charged ? charged.fee : null,
   };
 }
 
@@ -1286,17 +1197,17 @@ function fail(message, status = 400) {
   return e;
 }
 
-/** 外树链接类型中文名（拒绝文案用） */
-const LINK_LABEL = {
+/** 外树链接类型中文名（拒绝文案用；立支 / 汇宗 复用于跨树引用体检的拒绝文案） */
+export const LINK_LABEL = {
   founder: '始祖挂载',
-  chain: '宗谱世系链',
+  chain: '祖谱世系链',
   marriage: '跨树婚姻镜像',
   child: '跨树子女镜像',
   branch: '分迁登记',
 };
 
-/** tree-meta 条目 → 可读树名（拒绝文案定位用） */
-function treeLabelOf(meta, treeId) {
+/** tree-meta 条目 → 可读树名（拒绝文案定位用；立支 / 汇宗 拒绝文案复用） */
+export function treeLabelOf(meta, treeId) {
   const entry = Object.values(meta?.trees || {}).find((t) => t?.tree_id === treeId);
   return entry?.display_title ? `${entry.display_title}（${treeId}）` : treeId;
 }
@@ -1315,7 +1226,24 @@ async function treeLabelFor(treeId) {
  * 同槽位家族 → 都没有则新建（编号取 nextGrampsId(tree,'F')）。
  * 口径与 reparentNode 一致（本函数即其抽出）。
  */
-export function ensureParentFamily(tree, parentHandle) {
+export function reusableParentFamily(tree, parentHandle) {
+  const par = tree.people[parentHandle];
+  if (!par) return '';
+  const slot = parentSlot(par.gender);
+  const slotKey = slot === 'father' ? 'father_handle' : 'mother_handle';
+  const otherKey = slot === 'father' ? 'mother_handle' : 'father_handle';
+  const fams = (par.spouse_families || []).map((h) => tree.families[h]).filter(Boolean);
+  const target = fams.find((f) => f[slotKey] === parentHandle && !f[otherKey]) || fams.find((f) => f[slotKey] === parentHandle);
+  return target ? target.handle : '';
+}
+
+/**
+ * 目标父节点的家族（纯函数）：复用「本人在对应槽位、另一半空着」的家族 →
+ * 同槽位家族 → 都没有则新建。
+ * 新建家族的编号：优先用 allocFamilyId（铸号器给的全站唯一号，见 id-seq.idAllocator），
+ * 没给才退回 nextGrampsId(tree,'F')（纯函数单测兜底）。
+ */
+export function ensureParentFamily(tree, parentHandle, allocFamilyId = null) {
   const par = tree.people[parentHandle];
   if (!par) throw fail('父节点不存在');
   const slot = parentSlot(par.gender);
@@ -1329,7 +1257,7 @@ export function ensureParentFamily(tree, parentHandle) {
   const fh = genHandle();
   tree.families[fh] = {
     handle: fh,
-    gramps_id: nextGrampsId(tree, 'F'),
+    gramps_id: (typeof allocFamilyId === 'function' ? allocFamilyId() : allocFamilyId) || nextGrampsId(tree, 'F'),
     father_handle: slot === 'father' ? parentHandle : '',
     mother_handle: slot === 'mother' ? parentHandle : '',
     child_handles: [],
@@ -1544,7 +1472,7 @@ export function promoteChildrenUp(tree, nodeHandle) {
  * （external_person_handle 命中；含镜像节点与 tree-meta 的始祖登记兜底）。
  * @returns {Promise<Array<{tree_id,handle,name,link_type,mirror}>>}
  */
-async function scanExternalRefs({ treeId, handles, listIdsFn = listTreeIds, meta = null }) {
+export async function scanExternalRefs({ treeId, handles, listIdsFn = listTreeIds, meta = null }) {
   const hits = new Map();
   const ids = (await listIdsFn()).filter((id) => id && id !== treeId);
   for (const id of ids) {
@@ -1635,6 +1563,8 @@ export async function deleteNode({
   dryRun = false,
   listIdsFn = listTreeIds,
   meta = null,
+  charge = null,
+  refund = null,
 } = {}) {
   if (!treeId || !personHandle) throw fail('缺少 tree_id 或 person_handle');
   const tree0 = await getTree(treeId);
@@ -1717,8 +1647,22 @@ export async function deleteNode({
   };
 
   if (dryRun) {
+    // P1 闸门（§3-1 #6）：预演 = 0 片（只读报价，不写资产、不写树）；响应带 fee 供前端拼确认文案
+    let dryFee = null;
+    if (charge) {
+      const c = await charge({
+        dry_run: true,
+        tree_id: treeId,
+        person_handle: personHandle,
+        person_name: report.person_name,
+        people_count: deleted.size,
+        mode: modeNorm,
+      });
+      dryFee = c.fee;
+    }
     return {
       ...report,
+      fee: dryFee,
       message:
         modeNorm === DELETE_MODE_PROMOTE
           ? `将删除「${report.person_name}」1 人；${
@@ -1731,19 +1675,47 @@ export async function deleteNode({
   }
 
   if (confirmCount !== null && confirmCount !== undefined && Number(confirmCount) !== deleted.size) {
-    throw fail(`删除范围已变化（当前 ${deleted.size} 人，确认时 ${Number(confirmCount)} 人），请重新确认`, 409);
+    // §3-1 #7：确认数不符 → 409，**校验先于扣费**（此处尚未扣费，天然 0 片）
+    const scopeErr = fail(`删除范围已变化（当前 ${deleted.size} 人，确认时 ${Number(confirmCount)} 人），请重新确认`, 409);
+    scopeErr.code = 'DELETE_SCOPE_CHANGED';
+    throw scopeErr;
   }
 
-  const applied = await updateTrees([treeId], (trees) => {
-    const tree = trees[treeId];
-    const res =
-      modeNorm === DELETE_MODE_PROMOTE
-        ? { ...promoteChildrenUp(tree, personHandle), removed_families: [] }
-        : removePeopleFromTree(tree, deleted);
-    const problems = checkTreeIntegrity(tree);
-    if (problems.length) throw fail(`删除后结构校验失败：${problems.slice(0, 3).join('；')}`, 500);
-    return res;
-  });
+  // P1 闸门（§4-3）：正式提交的扣费在 updateTrees([treeId], …) 闭包**首步**（removePeopleFromTree 之前）
+  // —— 扣费失败 409 → 闭包抛错 → 树不写；落库失败 → 冲正 fee_refund
+  let charged = null;
+  let applied;
+  try {
+    applied = await updateTrees([treeId], async (trees) => {
+      const tree = trees[treeId];
+      if (charge) {
+        charged = await charge({
+          dry_run: false,
+          tree_id: treeId,
+          person_handle: personHandle,
+          person_name: report.person_name,
+          people_count: deleted.size,
+          mode: modeNorm,
+        });
+      }
+      const res =
+        modeNorm === DELETE_MODE_PROMOTE
+          ? { ...promoteChildrenUp(tree, personHandle), removed_families: [] }
+          : removePeopleFromTree(tree, deleted);
+      const problems = checkTreeIntegrity(tree);
+      if (problems.length) throw fail(`删除后结构校验失败：${problems.slice(0, 3).join('；')}`, 500);
+      return res;
+    });
+  } catch (e) {
+    if (refund && charged) {
+      try {
+        await refund(charged);
+      } catch {
+        /* 冲正 best-effort：绝不掩盖原始落库错误 */
+      }
+    }
+    throw e;
+  }
 
   // 详情文档随删（树 JSON 已落库；详情删除 best-effort，孤儿详情由清理脚本兜底）
   const detailRemoved = [];
@@ -1758,6 +1730,7 @@ export async function deleteNode({
 
   return {
     ...report,
+    fee: charged ? charged.fee : null,
     deleted_people: [...deleted].map(nameOf),
     removed_families: applied.removed_families || [],
     detail_removed: detailRemoved.length,
@@ -1810,15 +1783,22 @@ export async function resolveCrossTreeParent({ sourceTreeId, ref, targetTreeId =
  * 跨家族树迁移（纯函数）：把 src 中 rootHandle 及其全部后代整体迁到 dst，
  * 挂到 dst 的 targetParentHandle 之下（槽位按目标父性别）。
  *
- * 口径：
+ * 口径（docs/id-system.spec.md §8-4）：
  * - handle 沿用（24 位随机 handle 全局唯一：外部镜像指针 external_person_handle 不悬空）
- * - gramps_id 按目标树现有编号段重分配（BFS 顺序：本人 → 逐代），家族编号同理
- * - 连接子孙的家族随迁（编号重分配）；留在源树的配偶：家族随迁、其槽位清空
+ * - **gramps_id 不再重编号**：编号全站唯一且终身不变，跨树迁移只换树归属；
+ *   映射表仍返回（恒等映射，兼容既有调用方形状）
+ * - 连接子孙的家族随迁（编号同样不变）；留在源树的配偶：家族随迁、其槽位清空
  * - 无子女的配偶家族（仅婚姻记录）不随迁，源树侧按空家族清理
  * - 目标树中指向迁入节点的镜像节点：真身已在本树 → 删除（有本树婚姻家庭的只清指针）
+ * @param {object} p
+ * @param {object} p.src 源树（会被就地修改）
+ * @param {object} p.dst 目标树（会被就地修改）
+ * @param {string} p.rootHandle
+ * @param {string} p.targetParentHandle
+ * @param {Array<string>} [p.newFamilyIds] 预铸家族编号（重建目标父家族时用；缺省退回树内序号）
  * @returns {object} 迁移报告
  */
-export function moveLineage({ src, dst, rootHandle, targetParentHandle }) {
+export function moveLineage({ src, dst, rootHandle, targetParentHandle, newFamilyIds = [] }) {
   const root = src.people[rootHandle];
   if (!root) throw fail('节点不存在于源家族树');
   if (!dst.people[targetParentHandle]) throw fail('目标父节点不存在于目标家族树');
@@ -1849,25 +1829,28 @@ export function moveLineage({ src, dst, rootHandle, targetParentHandle }) {
     }
   }
 
-  // 1) 目标父的家族（复用「对应槽位空着」的家族 → 同槽位家族 → 新建）
-  const { family: targetFamily, created: createdFamily } = ensureParentFamily(dst, targetParentHandle);
+  // 1) 目标父的家族（复用「对应槽位空着」的家族 → 同槽位家族 → 新建；只有新建才铸号）
+  const { family: targetFamily, created: createdFamily } = ensureParentFamily(
+    dst,
+    targetParentHandle,
+    idAllocator(newFamilyIds),
+  );
 
-  // 2) 迁入人物（沿用 handle；重分配 gramps_id）
+  // 2) 迁入人物（沿用 handle **与 gramps_id**：全站编号终身不变）
   const grampsIdMap = {};
   for (const h of order) {
     const p = { ...src.people[h] };
     delete src.people[h];
     dst.people[h] = p;
-    p.gramps_id = nextGrampsId(dst, 'I');
-    grampsIdMap[h] = p.gramps_id;
+    grampsIdMap[h] = p.gramps_id || '';
   }
 
-  // 3) 迁入家族（重分配编号；留在源树的配偶槽位清空）
+  // 3) 迁入家族（编号同样不变；留在源树的配偶槽位清空）
   const familyIdMap = {};
   for (const fh of familyHandles) {
     const f = { ...src.families[fh] };
     delete src.families[fh];
-    f.gramps_id = nextGrampsId(dst, 'F');
+    familyIdMap[fh] = f.gramps_id || '';
     if (f.father_handle && !moving.has(f.father_handle)) f.father_handle = '';
     if (f.mother_handle && !moving.has(f.mother_handle)) f.mother_handle = '';
     f.child_handles = (f.child_handles || []).filter((c) => dst.people[c]);
@@ -1918,11 +1901,13 @@ export async function reparentAcrossTrees({
   masterTreeId = '',
   maxDepth = 0,
   depthOf = null,
+  charge = null,
+  refund = null,
 } = {}) {
   if (!targetTreeId) throw fail('缺少目标家族树');
   if (treeId === targetTreeId) throw fail('目标家族树与当前家族树相同：同树改父请直接填新父节点编号');
   if (treeId === masterTreeId) throw fail('中华世本（总谱）节点不可迁出：请在本树内改挂父节点', 403);
-  if (targetTreeId === masterTreeId) throw fail('不可把节点迁入中华世本（总谱）：总谱由晋宗/续编维护', 403);
+  if (targetTreeId === masterTreeId) throw fail('不可把节点迁入中华世本（总谱）：总谱由总编辑「续编」维护', 403);
 
   const src0 = await getTree(treeId);
   if (!src0) throw fail(`树不存在: ${treeId}`);
@@ -1959,26 +1944,55 @@ export async function reparentAcrossTrees({
     const projected = Math.max(base, generationOf(dst0, targetHandle) - 1 + subtreeHeight(src0, personHandle));
     if (projected > maxDepth) {
       throw fail(
-        `目标家族树已达 ${maxDepth} 世深度上限（迁入后约 ${projected} 世），请联系总编辑（晋宗或扩容）`,
+        `目标家族树已达 ${maxDepth} 世深度上限（迁入后约 ${projected} 世），请联系总编辑（扩容或调整深度上限）`,
         403,
       );
     }
   }
 
-  const moved = await updateTrees([treeId, targetTreeId], (trees) => {
-    const res = moveLineage({
-      src: trees[treeId],
-      dst: trees[targetTreeId],
-      rootHandle: personHandle,
-      targetParentHandle: targetHandle,
+  // 预铸 1 个家族号（「重建目标父家族」时用；未用到则留缺号，宁缺号不重号）
+  const newFamilyIds = await reserveFamilyIds(1);
+  // P1 闸门（§4-3）：跨树迁移 = **9 片 / 次（与带多少后代无关）**；扣费在 updateTrees
+  // 闭包**首步**（moveLineage 之前）—— 扣费失败 409 → 两棵树都不写；落库失败 → 冲正 fee_refund
+  let charged = null;
+  let moved;
+  try {
+    moved = await updateTrees([treeId, targetTreeId], async (trees) => {
+      if (charge) {
+        charged = await charge({
+          cross_tree: true,
+          dry_run: false,
+          tree_id: treeId,
+          target_tree_id: targetTreeId,
+          person_handle: personHandle,
+          person_name: person.name || '',
+          moving_count: moving.size,
+        });
+      }
+      const res = moveLineage({
+        src: trees[treeId],
+        dst: trees[targetTreeId],
+        rootHandle: personHandle,
+        targetParentHandle: targetHandle,
+        newFamilyIds,
+      });
+      const problems = [
+        ...checkTreeIntegrity(trees[treeId]).map((p) => `${treeId}: ${p}`),
+        ...checkTreeIntegrity(trees[targetTreeId]).map((p) => `${targetTreeId}: ${p}`),
+      ];
+      if (problems.length) throw fail(`跨树迁移后结构校验失败：${problems.slice(0, 3).join('；')}`, 500);
+      return res;
     });
-    const problems = [
-      ...checkTreeIntegrity(trees[treeId]).map((p) => `${treeId}: ${p}`),
-      ...checkTreeIntegrity(trees[targetTreeId]).map((p) => `${targetTreeId}: ${p}`),
-    ];
-    if (problems.length) throw fail(`跨树迁移后结构校验失败：${problems.slice(0, 3).join('；')}`, 500);
-    return res;
-  });
+  } catch (e) {
+    if (refund && charged) {
+      try {
+        await refund(charged);
+      } catch {
+        /* 冲正 best-effort：绝不掩盖原始落库错误 */
+      }
+    }
+    throw e;
+  }
 
   // 详情文档随迁（文件名含 tree_id → 目标树新 key；旧 key 删除）
   const dstAfter = await getTree(targetTreeId);
@@ -2032,6 +2046,7 @@ export async function reparentAcrossTrees({
     trimmed_mirrors: moved.trimmed_mirrors,
     meta_stats_refreshed: statsRefreshed,
     chain_shift: null,
+    fee: charged ? charged.fee : null,
     message: `已将「${person.name}」及其后代共 ${moved.moved_people_count} 人迁移到 ${await treeLabelFor(
       targetTreeId,
     )}，挂到「${targetParent.name}」之下`,

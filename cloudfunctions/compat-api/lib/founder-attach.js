@@ -23,22 +23,22 @@ import { getMeta, getTree, getDetail, updateTrees, saveDetail, saveMeta, listTre
 
 /** 始祖挂载的跨树链接类型（区别于 marriage / branch / child） */
 export const FOUNDER_LINK_TYPE = 'founder';
-/** 宗谱顶端「世系链」镜像的链接类型（docs/clan-tree.spec.md §4-1：其下链路节点） */
+/** 祖谱顶端「世系链」镜像的链接类型（docs/clan-tree.spec.md §4-1：其下链路节点） */
 export const CHAIN_LINK_TYPE = 'chain';
 /** 认祖申请集合（新建集合 → docs/PENDING_DEPLOY.md） */
 export const FOUNDER_REQUEST_COLLECTION = 'jiazu_founder_requests';
 
-/** 层级 kind（tree-meta.trees[*].kind；master=中华世本 / clan=宗谱 / family=普通树） */
+/** 层级 kind（tree-meta.trees[*].kind；master=中华世本 / clan=祖谱 / family=普通树） */
 export const TREE_KIND = { MASTER: 'master', CLAN: 'clan', FAMILY: 'family' };
 
 /** 层级中文名（文案统一来源） */
-export const KIND_LABEL = { master: '中华世本', clan: '宗谱', family: '家族树' };
+export const KIND_LABEL = { master: '中华世本', clan: '祖谱', family: '家族树' };
 
 /** 始祖镜像节点在本树内的只读提示（后端 403 / UI 只读态同一文案） */
 export const MIRROR_LOCK_MESSAGE = '始祖节点信息需在中华世本（总谱）中修改';
-/** 始祖镜像指向的是**宗谱**节点时的只读提示（docs/clan-tree.spec.md §4-3） */
-export const CLAN_FOUNDER_LOCK_MESSAGE = '始祖节点信息需在本姓宗谱中修改';
-/** 宗谱顶端链镜像节点的只读提示（docs/clan-tree.spec.md §3-1 / §3-7） */
+/** 始祖镜像指向的是**祖谱**节点时的只读提示（docs/clan-tree.spec.md §4-3） */
+export const CLAN_FOUNDER_LOCK_MESSAGE = '始祖节点信息需在本姓祖谱中修改';
+/** 祖谱顶端链镜像节点的只读提示（docs/clan-tree.spec.md §3-1 / §3-7） */
 export const CHAIN_MIRROR_LOCK_MESSAGE = '该节点为上层（中华世本）镜像，需到总谱修改';
 /** 解除挂载后的空白占位始祖节点：不承载身份数据（docs/founder-attach.spec.md §4-2） */
 export const PLACEHOLDER_LOCK_MESSAGE = '空白占位始祖节点：请先「认祖」挂载到中华世本后再填写信息';
@@ -67,7 +67,7 @@ export function kindLabel(kind) {
 /**
  * 认祖 target 合法性（docs/clan-tree.spec.md §3-2，Kevin 2026-09-15 硬口径）：
  * - 普通家族树 → 只能是 kind='clan'（**禁止**直挂世本）
- * - 宗谱 → 只能是 kind='master'
+ * - 祖谱 → 只能是 kind='master'
  * - 中华世本本身不可认祖
  */
 export function assertAttachTarget({ sourceTreeId = '', sourceEntry = null, targetTreeId = '', targetEntry = null } = {}) {
@@ -77,11 +77,11 @@ export function assertAttachTarget({ sourceTreeId = '', sourceEntry = null, targ
     throw badRequest('中华世本总谱本身不可认祖');
   }
   if (src === TREE_KIND.CLAN && tgt !== TREE_KIND.MASTER) {
-    throw badRequest('宗谱只能认祖到中华世本（总谱）');
+    throw badRequest('祖谱只能认祖到中华世本（总谱）');
   }
   if (src === TREE_KIND.FAMILY && tgt !== TREE_KIND.CLAN) {
-    if (tgt === TREE_KIND.MASTER) throw badRequest('普通家族树不得直挂中华世本，请先建立/认祖到本姓宗谱');
-    throw badRequest('普通家族树的认祖目标只能是宗谱');
+    if (tgt === TREE_KIND.MASTER) throw badRequest('普通家族树不得直挂中华世本，请先建立/认祖到本姓祖谱');
+    throw badRequest('普通家族树的认祖目标只能是祖谱');
   }
   if (targetTreeId && sourceTreeId && targetTreeId === sourceTreeId) {
     throw badRequest('不能认祖到自己');
@@ -110,8 +110,8 @@ export function isUpperMirror(person, treeId) {
 
 /**
  * 上层镜像节点的只读文案（可编辑 → ''）：
- * - chain 镜像（宗谱顶端世系链）→ 需到总谱修改（docs/clan-tree.spec.md §3-1）
- * - founder 镜像 → 依上层层级：宗谱 / 中华世本
+ * - chain 镜像（祖谱顶端世系链）→ 需到总谱修改（docs/clan-tree.spec.md §3-1）
+ * - founder 镜像 → 依上层层级：祖谱 / 中华世本
  */
 export async function upperMirrorLockMessage(person, treeId) {
   if (!isUpperMirror(person, treeId)) return '';
@@ -163,7 +163,7 @@ export function isFounderNode(tree, person, entry) {
 
 /**
  * 「挂载到 masterTreeId 的始祖镜像节点」handle（读侧推导专用，docs/founder-attach.spec §3-2）。
- * 与 resolveFounderHandle 的区别：宗谱（kind='clan'）的 tree-meta.founder_handle 指向的是
+ * 与 resolveFounderHandle 的区别：祖谱（kind='clan'）的 tree-meta.founder_handle 指向的是
  * **自有支系段入口**（如 季花），而挂到世本的镜像在顶端链首（link_type='founder'）；
  * 所以这里按「external_link_type==='founder' && external_tree===masterTreeId」实扫，始祖位优先。
  * @returns {string} 找不到返回 ''
@@ -236,7 +236,7 @@ export function chainGenOf(detail) {
   return Number.isFinite(n) ? n : null;
 }
 
-/** 关系备注：`<真身姓名>（中华世本 · 第 N 世）`（层可换：宗谱；无世数则省略第 N 世） */
+/** 关系备注：`<真身姓名>（中华世本 · 第 N 世）`（层可换：祖谱；无世数则省略第 N 世） */
 export function founderRelationNote(masterName, gen, layerLabel = KIND_LABEL.master) {
   const who = String(masterName || '').trim() || `${layerLabel}节点`;
   const layer = String(layerLabel || KIND_LABEL.master);
@@ -330,7 +330,7 @@ export function isFounderMissing(entry) {
  * 认祖入口守卫（纯函数；前后端同一口径）：
  * - 无始祖态（founder_state='none'）→ **该树任意节点**均可发起认祖（语义：由管理员指定始祖节点）
  * - 已有登记的始祖 → 仅始祖位置节点（meta.founder_handle → founder_gramps_id → 树 JSON）
- *   与宗谱顶端的上层镜像（founder / chain）
+ *   与祖谱顶端的上层镜像（founder / chain）
  * 注：不兜底 'I0001' —— 未登记始祖的树不得把 I0001 当始祖（见 founderGrampsIdOf）。
  */
 export function canInitiateAttach({ tree, person, entry, treeId = '' }) {
@@ -343,7 +343,7 @@ export function canInitiateAttach({ tree, person, entry, treeId = '' }) {
 /**
  * 无始祖态认祖成功 → 该被指定节点登记为始祖（纯函数）：
  * 回写 founder_handle / founder_gramps_id / founder_name，并删除 founder_state（回到「有始祖」态）。
- * 其他元数据（堂号/简介/宗谱的上层指针等）原样保留。
+ * 其他元数据（堂号/简介/祖谱的上层指针等）原样保留。
  */
 export function planFounderRegister(entry, person) {
   const next = { ...(entry || {}) };
@@ -359,7 +359,7 @@ export const FOUNDER_RESET_MIRROR_MESSAGE = '该始祖为镜像节点，请先�
 
 /**
  * 当前始祖节点 handle（重置前的「谁是始祖」判定）：
- * ① 已挂载的始祖镜像优先（family 的始祖镜像 / 宗谱顶端世本镜像）——这是**当前生效**的始祖；
+ * ① 已挂载的始祖镜像优先（family 的始祖镜像 / 祖谱顶端世本镜像）——这是**当前生效**的始祖；
  * ② 否则按 tree-meta.founder_handle → founder_gramps_id → 树 JSON 解析（老的、非镜像的真人始祖）；
  *    未登记始祖的树（含 founder_state='none'）→ ''（不兜底 I0001）。
  * @returns {string} 找不到返回 ''
@@ -402,7 +402,7 @@ export function assertFounderResettable({ entry, tree }) {
 
 /**
  * 重置后的 tree-meta 条目（纯函数）：删除始祖登记字段 + 置 founder_state='none'。
- * 只动这三个字段与状态位，其他元数据（堂号/简介/宗谱的上层指针等）原样保留。
+ * 只动这三个字段与状态位，其他元数据（堂号/简介/祖谱的上层指针等）原样保留。
  */
 export function planFounderReset(entry) {
   const next = { ...(entry || {}) };
@@ -468,7 +468,7 @@ export async function attachFounder({ treeId, founderHandle, masterTreeId, maste
     throw badRequest('仅本家族树的始祖节点可发起认祖');
   }
 
-  // 认祖 target 合法性（docs/clan-tree.spec.md §3-2）：普通树只能认宗谱，宗谱只能认世本
+  // 认祖 target 合法性（docs/clan-tree.spec.md §3-2）：普通树只能认祖谱，祖谱只能认世本
   const tgt = targetEntry !== null && targetEntry !== undefined ? targetEntry : await metaEntryOf(masterTreeId);
   assertAttachTarget({ sourceTreeId: treeId, sourceEntry: meta, targetTreeId: masterTreeId, targetEntry: tgt });
 
@@ -654,7 +654,7 @@ export async function listAttachedTrees({ masterTreeId, meta = null, getTreeFn =
       tree = null;
     }
     if (!tree?.people) continue;
-    // 读侧推导「谁挂到了本节点」：实扫始祖镜像（宗谱的 meta.founder_handle 指自有段入口，不能直接用）
+    // 读侧推导「谁挂到了本节点」：实扫始祖镜像（祖谱的 meta.founder_handle 指自有段入口，不能直接用）
     const fh = findAttachedFounderHandle(tree, e, masterTreeId);
     if (!fh) continue;
     const f = tree.people[fh];

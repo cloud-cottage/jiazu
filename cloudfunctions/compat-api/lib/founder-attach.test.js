@@ -23,7 +23,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'jiazu-founder-attach-'));
 process.env.COMPAT_SOURCE = 'local';
 process.env.COMPAT_OUT_DIR = TMP;
 // tree-meta 也指到副本：硬口径 2（普通树不得直挂世本）需要按 kind 判定认祖 target，
-// 且宗谱认祖会写 meta —— 真源 config/tree-meta.json 必须保持只读（见文末 md5 断言）。
+// 且祖谱认祖会写 meta —— 真源 config/tree-meta.json 必须保持只读（见文末 md5 断言）。
 const META_FILE = path.join(TMP, 'tree-meta.json');
 process.env.COMPAT_META_FILE = META_FILE;
 
@@ -45,31 +45,31 @@ for (const tag of ['attach', 'once', 'n1', 'n2', 'lock', 'detach', 'list_a', 'li
     display_title: `季氏测试家族 ${tag}`, founder_handle: 'f', enable_custom_domain: false,
   };
 }
-// 宗谱条目（kind='clan'）：mc_clan 认 mX（季）、mc_xu 同节点异姓（徐）、mc_ji2 认 mRoot
+// 祖谱条目（kind='clan'）：mc_clan 认 mX（季）、mc_xu 同节点异姓（徐）、mc_ji2 认 mRoot
 metaFixture.trees.mc_clan = {
   tree_id: 'mc_clan', kind: 'clan', path_alias: '/z/mc_clan', surname: '季', surname_char: '季',
-  display_title: '季氏宗谱', genealogy_name: '季氏宗谱', founder_handle: 'own_ji',
+  display_title: '季氏祖谱', genealogy_name: '季氏祖谱', founder_handle: 'own_ji',
   master_tree_id: 'zhonghua', master_handle: 'mX', master_name: '季始祖公', enable_custom_domain: false,
 };
 metaFixture.trees.mc_xu = {
   tree_id: 'mc_xu', kind: 'clan', path_alias: '/z/mc_xu', surname: '徐', surname_char: '徐',
-  display_title: '徐氏宗谱', founder_handle: 'own_xu',
+  display_title: '徐氏祖谱', founder_handle: 'own_xu',
   master_tree_id: 'zhonghua', master_handle: 'mX', master_name: '季始祖公', enable_custom_domain: false,
 };
 metaFixture.trees.mc_list = {
   tree_id: 'mc_list', kind: 'clan', path_alias: '/z/mc_list', surname: '季', surname_char: '季',
-  display_title: '季氏宗谱 list', founder_handle: 'own_ji',
+  display_title: '季氏祖谱 list', founder_handle: 'own_ji',
   master_tree_id: 'zhonghua', master_handle: 'mX', master_name: '季始祖公', enable_custom_domain: false,
 };
 metaFixture.trees.mc_ji2 = {
   tree_id: 'mc_ji2', kind: 'clan', path_alias: '/z/mc_ji2', surname: '季', surname_char: '季',
-  display_title: '季氏宗谱二', founder_handle: 'own_ji2',
+  display_title: '季氏祖谱二', founder_handle: 'own_ji2',
   master_tree_id: 'zhonghua', master_handle: 'mRoot', master_name: '风伏羲', enable_custom_domain: false,
 };
-// 顶端链镜像用例的宗谱（seedClan('chain') 会造这棵树；meta 注册须同步，否则树被当作 family）
+// 顶端链镜像用例的祖谱（seedClan('chain') 会造这棵树；meta 注册须同步，否则树被当作 family）
 metaFixture.trees.mc_chain = {
   tree_id: 'mc_chain', kind: 'clan', path_alias: '/z/mc_chain', surname: '季', surname_char: '季',
-  display_title: '季氏宗谱（顶端链镜像）', founder_handle: 'own_ji',
+  display_title: '季氏祖谱（顶端链镜像）', founder_handle: 'own_ji',
   master_tree_id: 'zhonghua', master_handle: 'mX', master_name: '季始祖公', enable_custom_domain: false,
 };
 fs.writeFileSync(META_FILE, JSON.stringify(metaFixture, null, 2));
@@ -168,7 +168,7 @@ function seedTree(tag) {
 }
 
 /**
- * 宗谱副本（docs/clan-tree.spec.md）：顶端 = 世本镜像（mX / mRoot），其下自有支系入口节点 own_*。
+ * 祖谱副本（docs/clan-tree.spec.md）：顶端 = 世本镜像（mX / mRoot），其下自有支系入口节点 own_*。
  * 与上方 metaFixture 的条目一致（own_ji / own_xu / own_ji2）。
  */
 function seedClan(tag, { masterHandle = 'mX', ownHandle = 'own_ji', ownName = '季花' } = {}) {
@@ -330,7 +330,7 @@ test('申请单：构造字段完整；待审批过滤 chief 看全部 / steward
 
 // ============ 写路径 ============
 
-test('建立挂载（family→clan）：只写挂载树（指针 + 真身展示副本），宗谱与世本都不改', async () => {
+test('建立挂载（family→clan）：只写挂载树（指针 + 真身展示副本），祖谱与世本都不改', async () => {
   const treeId = seedTree('attach');
   const clanId = seedClan('clan');
   const masterBefore = treeFileMd5('zhonghua');
@@ -339,7 +339,7 @@ test('建立挂载（family→clan）：只写挂载树（指针 + 真身展示�
   const r = await fa.attachFounder({ treeId, founderHandle: 'f', masterTreeId: clanId, masterHandle: 'own_ji', requestedBy: '16600000000' });
   assert.equal(r.ok, true);
   assert.equal(r.target_kind, 'clan');
-  assert.equal(r.relation_note, '季花（宗谱）', '上层层级为宗谱 → 备注写「宗谱」');
+  assert.equal(r.relation_note, '季花（祖谱）', '上层层级为祖谱 → 备注写「祖谱」');
   assert.match(r.message, /已认祖/);
 
   const after = readTree(treeId);
@@ -352,9 +352,9 @@ test('建立挂载（family→clan）：只写挂载树（指针 + 真身展示�
   assert.equal(f.gramps_id, 'I0001', '始祖位置不变');
   assert.equal(after.version, 4, '挂载树版本 +1');
 
-  // 上层两棵树都不得被改写（宗谱人数不计入世本；家族树人数不计入宗谱）
+  // 上层两棵树都不得被改写（祖谱人数不计入世本；家族树人数不计入祖谱）
   assert.equal(treeFileMd5('zhonghua'), masterBefore, '总谱树 JSON 不得被改写');
-  assert.equal(treeFileMd5(clanId), clanBefore, '宗谱树 JSON 不得被改写');
+  assert.equal(treeFileMd5(clanId), clanBefore, '祖谱树 JSON 不得被改写');
   const masterAfter = readTree('zhonghua');
   assert.equal(Object.keys(masterAfter.people).length, 4);
   assert.equal(masterAfter.version, 7);
@@ -366,7 +366,7 @@ test('建立挂载（family→clan）：只写挂载树（指针 + 真身展示�
   assert.equal(after.families.fam.father_handle, 'f');
 });
 
-test('硬口径 2：普通家族树不得直挂世本（target=master → 400），宗谱只能认世本', async () => {
+test('硬口径 2：普通家族树不得直挂世本（target=master → 400），祖谱只能认世本', async () => {
   const treeId = seedTree('once');
   // 普通树 → 世本：400
   await assert.rejects(
@@ -376,9 +376,9 @@ test('硬口径 2：普通家族树不得直挂世本（target=master → 400）
   // 普通树 → 普通树：400
   await assert.rejects(
     () => fa.attachFounder({ treeId, founderHandle: 'f', masterTreeId: 'mt_lock', masterHandle: 'f' }),
-    (e) => e.status === 400 && /只能是宗谱/.test(e.message),
+    (e) => e.status === 400 && /只能是祖谱/.test(e.message),
   );
-  // 宗谱 → 世本：允许（走 attachClanToMaster）
+  // 祖谱 → 世本：允许（走 attachClanToMaster）
   assert.equal(treeFileMd5(treeId) === treeFileMd5(treeId), true);
   // 纯函数直测（口径表）
   assert.deepEqual(
@@ -408,10 +408,10 @@ test('一树一挂载：已挂载的树再次认祖 → 400，且两侧都不被
     (e) => e.status === 400 && /已认祖，请先解除挂载/.test(e.message),
   );
   assert.equal(treeFileMd5(treeId), before, '拒绝时挂载树不得被写');
-  assert.equal(treeFileMd5(clanId), clanBefore, '拒绝时宗谱不得被写');
+  assert.equal(treeFileMd5(clanId), clanBefore, '拒绝时祖谱不得被写');
 });
 
-test('宗谱节点 1:N：同一宗谱节点可被多棵普通树认作始祖', async () => {
+test('祖谱节点 1:N：同一祖谱节点可被多棵普通树认作始祖', async () => {
   const a = seedTree('n1');
   const b = seedTree('n2');
   const clanId = seedClan('clan');
@@ -435,7 +435,7 @@ test('只读 403：镜像态始祖整节点只读（姓名/性别/生卒/称号�
   };
   await assert.rejects(
     () => updatePerson(treeId, 'f', body, { masterTreeId: 'zhonghua' }),
-    (e) => e.status === 403 && e.message === '始祖节点信息需在本姓宗谱中修改',
+    (e) => e.status === 403 && e.message === '始祖节点信息需在本姓祖谱中修改',
   );
   assert.equal(readTree(treeId).people.f.name, '季花', '403 时不得落任何改动');
   // 除始祖节点外，任何节点均可正常编辑
@@ -444,7 +444,7 @@ test('只读 403：镜像态始祖整节点只读（姓名/性别/生卒/称号�
   assert.equal(readTree(treeId).people.kid.name, '季子明');
 });
 
-test('只读 403（宗谱顶端链镜像）：chain 镜像整节点只读，文案「需到总谱修改」；自有段可编辑', async () => {
+test('只读 403（祖谱顶端链镜像）：chain 镜像整节点只读，文案「需到总谱修改」；自有段可编辑', async () => {
   const clanId = seedClan('chain', { ownHandle: 'own_ji', ownName: '季花' });
   // 加深镜像链：mX → mChild → mGrand
   const tree = readTree(clanId);
@@ -533,7 +533,7 @@ test('读侧推导：listAttachedTrees 由 tree-meta 的始祖节点读 external
   const meta = {
     trees: {
       zhonghua: { tree_id: 'zhonghua', kind: 'master', display_title: '中华世本' },
-      [clanId]: { tree_id: clanId, kind: 'clan', display_title: '季氏宗谱' },
+      [clanId]: { tree_id: clanId, kind: 'clan', display_title: '季氏祖谱' },
       [a]: { tree_id: a, kind: 'family', display_title: '季氏测试家族', surname_char: '季', founder_handle: 'f' },
       [b]: { tree_id: b, kind: 'family', display_title: '季氏测试家族二', surname_char: '季', founder_gramps_id: 'I0001' },
       mt_none: { tree_id: 'mt_missing', display_title: '不存在的树', surname_char: '无' },
@@ -550,7 +550,7 @@ test('读侧推导：listAttachedTrees 由 tree-meta 的始祖节点读 external
   assert.equal(ofClan.length, 2);
   assert.equal(fa.founderTreeLabel(ofClan[0]), '季家族的始祖节点');
   assert.deepEqual(fa.attachedTreesOf(list, 'mNobody'), []);
-  // 解除后该树从列表中消失（宗谱支系入口列表随之更新）
+  // 解除后该树从列表中消失（祖谱支系入口列表随之更新）
   await fa.detachFounder({ treeId: a, founderHandle: 'f' });
   const list2 = await fa.listAttachedTrees({
     masterTreeId: clanId,
@@ -627,7 +627,7 @@ test('路由 POST /admin/founder-request：认祖申请落地 pending；未登�
   // 目标节点不存在 → 404
   assert.equal((await post('/admin/founder-request', { tree_id: treeId, person_handle: 'f', target_tree_id: clanId, target_handle: 'nope' }, stewardToken, treeId)).statusCode, 404);
 
-  // 正常提交（普通树 → 宗谱）
+  // 正常提交（普通树 → 祖谱）
   const res = await post('/admin/founder-request', { tree_id: treeId, person_handle: 'f', target_tree_id: clanId, target_handle: 'own_ji', note: '认祖' }, stewardToken, treeId);
   assert.equal(res.statusCode, 200);
   const body = json(res);
@@ -635,7 +635,7 @@ test('路由 POST /admin/founder-request：认祖申请落地 pending；未登�
   assert.equal(body.target_kind, 'clan');
   assert.ok(body.request_id);
   assert.equal(body.master_name, '季花');
-  assert.match(body.message, /宗谱总编审批/);
+  assert.match(body.message, /祖谱总编审批/);
   // 重复提交 → 400
   const dup = await post('/admin/founder-request', { tree_id: treeId, person_handle: 'f', target_tree_id: clanId, target_handle: 'own_ji' }, stewardToken, treeId);
   assert.equal(dup.statusCode, 400);
@@ -649,25 +649,25 @@ test('路由 POST /admin/founder-request：认祖申请落地 pending；未登�
   assert.match(json(again).error, /已认祖，请先解除挂载/);
 });
 
-test('路由 GET /admin/founder-requests：chief 看全部 + 宗谱单列 + 本树 steward 只看本树', async () => {
+test('路由 GET /admin/founder-requests：chief 看全部 + 祖谱单列 + 本树 steward 只看本树', async () => {
   const listRes = await get('/admin/founder-requests', chiefToken, 'zhonghua');
   assert.equal(listRes.statusCode, 200);
   const listBody = json(listRes);
   assert.equal(listBody.can_approve_all, true);
   assert.ok(Array.isArray(listBody.list));
   assert.deepEqual(listBody.attachments, [], '不带 master_handle 时不返回挂载列表');
-  assert.ok(Array.isArray(listBody.clans), 'chief 可见宗谱清单（单列，不计入世本统计）');
+  assert.ok(Array.isArray(listBody.clans), 'chief 可见祖谱清单（单列，不计入世本统计）');
   assert.ok(listBody.clans.every((c) => c.kind === undefined || c.own_count !== undefined));
 
   // steward：只看到自己树相关的待办
   const st = await get('/admin/founder-requests', stewardToken, 'zhonghua');
   assert.equal(st.statusCode, 200);
   assert.equal(json(st).can_approve_all, false);
-  assert.deepEqual(json(st).clans, [], '非 chief 不返回宗谱清单');
+  assert.deepEqual(json(st).clans, [], '非 chief 不返回祖谱清单');
   // 未登录 → 401
   assert.equal((await get('/admin/founder-requests', '', 'zhonghua')).statusCode, 401);
 
-  // ?master_handle → 读侧推导出挂到该节点的树：P3 硬口径 2 之后，世本节点上只可能有「宗谱」（P2 顶端镜像），
+  // ?master_handle → 读侧推导出挂到该节点的树：P3 硬口径 2 之后，世本节点上只可能有「祖谱」（P2 顶端镜像），
   // 不再出现普通家族树（mt_*）
   const withAttach = await handleRequest({
     path: '/admin/founder-requests',
@@ -678,13 +678,13 @@ test('路由 GET /admin/founder-requests：chief 看全部 + 宗谱单列 + 本�
   const att = json(withAttach).attachments;
   assert.ok(
     att.every((a) => a.kind === fa.TREE_KIND.CLAN),
-    `世本节点只挂宗谱（普通树不得直挂世本）：${JSON.stringify(att)}`,
+    `世本节点只挂祖谱（普通树不得直挂世本）：${JSON.stringify(att)}`,
   );
   assert.ok(att.every((a) => a.master_handle === 'mX'), '只返回认祖到该真身节点的树');
   assert.ok(!att.some((a) => a.tree_id.startsWith('mt_')), '普通家族树不出现在世本挂载列表');
   assert.ok(
     att.some((a) => a.tree_id === 'mc_chain'),
-    '宗谱 mc_chain 认祖 mX 后可由世本节点读侧推导出（P2）',
+    '祖谱 mc_chain 认祖 mX 后可由世本节点读侧推导出（P2）',
   );
 });
 
@@ -705,7 +705,7 @@ test('路由 POST /admin/decide-founder：驳回不改任何数据；通过建�
   assert.equal(rej.statusCode, 200);
   assert.equal(json(rej).status, 'rejected');
   assert.equal(treeFileMd5(treeId), before, '驳回不改挂载树');
-  assert.equal(treeFileMd5(clanId), clanBefore, '驳回不改宗谱');
+  assert.equal(treeFileMd5(clanId), clanBefore, '驳回不改祖谱');
   assert.ok(!readTree(treeId).people.f.external_tree, '驳回后始祖节点不含跨树指针');
   // 重复处理 → 400
   assert.equal((await post('/admin/decide-founder', { request_id: rid, approve: true }, chiefToken, clanId)).statusCode, 400);
@@ -743,13 +743,13 @@ test('路由 POST /admin/attach-founder（方式 B）：总编辑直接挂载；
   assert.equal(directMaster.statusCode, 400);
   assert.match(json(directMaster).error, /不得直挂中华世本/);
 
-  // 宗谱侧直挂普通树 → 200
+  // 祖谱侧直挂普通树 → 200
   const res = await post('/admin/attach-founder', { tree_id: treeId, target_tree_id: clanId, target_handle: 'own_ji' }, chiefToken, clanId);
   assert.equal(res.statusCode, 200);
   const body = json(res);
   assert.equal(body.master_handle, 'own_ji');
   assert.equal(body.target_kind, 'clan');
-  assert.equal(body.relation_note, '季花（宗谱）');
+  assert.equal(body.relation_note, '季花（祖谱）');
   const after = readTree(treeId);
   assert.equal(after.people.f.external_tree, clanId);
   assert.equal(after.people.f.external_person_handle, 'own_ji');
@@ -766,8 +766,8 @@ test('路由 POST /admin/attach-founder（方式 B）：总编辑直接挂载；
   assert.equal((await post('/admin/attach-founder', { tree_id: treeId, target_tree_id: clanId, target_handle: 'own_ji' }, chiefToken, clanId)).statusCode, 400);
 });
 
-test('路由 POST /admin/detach-founder：普通树侧 steward 立即生效；宗谱侧（世本档案）chief 解除并保留自有段', async () => {
-  // ① 挂载树侧发起（解除到宗谱的认祖）
+test('路由 POST /admin/detach-founder：普通树侧 steward 立即生效；祖谱侧（世本档案）chief 解除并保留自有段', async () => {
+  // ① 挂载树侧发起（解除到祖谱的认祖）
   const a = seedTree('det_a');
   const clanId = seedClan('clan');
   await fa.attachFounder({ treeId: a, founderHandle: 'f', masterTreeId: clanId, masterHandle: 'own_ji' });
@@ -777,7 +777,7 @@ test('路由 POST /admin/detach-founder：普通树侧 steward 立即生效；�
   assert.equal(readTree(a).people.f.external_tree, '');
   assert.equal(readTree(a).people.f.name, '');
 
-  // ② 上层侧发起：世本节点 mX 上的宗谱 mc_clan（P2「宗谱与世本解除」）
+  // ② 上层侧发起：世本节点 mX 上的祖谱 mc_clan（P2「祖谱与世本解除」）
   const before = readTree('mc_clan');
   assert.ok(before.people[mirrorHandleOf('mX')], '支系存在顶端世本镜像');
   const res2 = await post('/admin/detach-founder', { master_handle: 'mX', attached_tree_id: 'mc_clan' }, chiefToken, 'zhonghua');
@@ -785,11 +785,11 @@ test('路由 POST /admin/detach-founder：普通树侧 steward 立即生效；�
   assert.equal(json(res2).tree_id, 'mc_clan');
   const afterClan = readTree('mc_clan');
   assert.equal(afterClan.people[mirrorHandleOf('mX')], undefined, '顶端镜像段已清空');
-  assert.ok(afterClan.people.own_ji, '宗谱自有段保留');
+  assert.ok(afterClan.people.own_ji, '祖谱自有段保留');
   assert.equal(afterClan.people.own_ji.parent_family, '', '自有段被解挂为根');
   assert.equal(json(res2).kept_own, 1);
   assert.match(json(res2).notice, /未认祖世本/);
-  // 已解除后再解除 → 400（宗谱无镜像段）
+  // 已解除后再解除 → 400（祖谱无镜像段）
   assert.equal((await post('/admin/detach-founder', { master_handle: 'mX', attached_tree_id: 'mc_clan' }, chiefToken, 'zhonghua')).statusCode, 400);
   // 真身未挂载任何树 → 400
   assert.equal((await post('/admin/detach-founder', { master_handle: 'mNobody' }, chiefToken, 'zhonghua')).statusCode, 400);
