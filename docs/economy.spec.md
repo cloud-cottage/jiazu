@@ -530,6 +530,19 @@
 3. **人民币钱包收缩**：`jiazu_wallets` 保留，但**只用于购买官方竹简**；`trees[tree_id].balance_cents` 与
    `transferToTree` **下线**（`/wallet/transfer`、`/wallet/tree-balance` 关闭或返回 410，前端对应入口移除）；
    `config.tree_create_fee_cents` 不再参与建树。**人民币不可直接购买积分**（永久口径）。
+
+   > **§12-3 状态（2026-09-17 回写 · 已实施）** —— 本节文字为原文，状态以本括注为准；逐字落点与测试见
+   > `docs/home-sort-search.spec.md` §8（本册为该口径的唯一权威，彼册只引用不重写）。
+   > ① **两条路由已在下线端落地**：`POST /wallet/transfer` 与 `GET /wallet/tree-balance` 在**鉴权 / 参数校验之前**
+   > **恒返 410** + `{ error: '家族树资金功能已下线', code: 'TREE_FUND_RETIRED' }`（本批 **15 种请求组合实测全 410**；
+   > 对照组 `GET /wallet/balance` 仍按原口径 401 / 200 正常，未被牵连）。
+   > ② **`lib/wallet.js` 已删 `transferToTree` / `getTreeBalance`**，**保留** `deductTreeCreateFee`（建树费钩子不变）。
+   > ③ **前端入口已移除**：家族树页「家族树资金」区块 + 「转账支持」入口、钱包页「转账到家族树」区块，
+   > 以及 `business/{api,index}.ts` 的两个封装（`transferToTree` / `fetchTreeBalance`）均已删除，并同步 `about.vue` / `mine/index.vue` 文案。
+   > ④ **`auth-server/**`（遗留 Gramps 链路）** 的 `/wallet/transfer` 与 `transferToTree` **本轮未动** —— 它属遗留链路，
+   > 不在运行链路口径内；**不得据它判定本节未落地**。
+   > ⑤ 遗留未改项（待裁决 / 待改）：钱包页余额卡片仍写「新建家族树费用：¥9.90」（本册 **§5-5 建树扣 9 颗石榴籽** 已改口径，
+   > 且 **§9 前端落点表**已要求该文案改为「9 颗完整石榴籽」）—— 已登记于 `docs/PENDING_DEPLOY.md` §16-7。
 4. **无定时任务**：本轮不注册任何定时任务，到期作废 / 21 点发售 / 到期预警 / **挂单过期释放锁定（K9）**全靠**惰性结算**在请求内完成；
    定时任务与推送（含真二级域名绑定）统一留部署阶段。
 5. **打包与部署**：沿用现有流程 —— `npx esbuild cloudfunctions/compat-api/index.js --bundle --platform=node --format=cjs --external:@cloudbase/node-sdk --outfile=cloudfunctions/deploy/compat-api/index.js`，

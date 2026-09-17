@@ -1028,3 +1028,142 @@ CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs
 
 - **无**（本地已完）。云端需 `CB_ENV` + `CB_KEY`（云开发 API Key，取值方式同 §3）才能重传；无密钥时本批改动只在本地、云端祖谱仍无认祖落点。
 - **（提示）立支在真实数据上的先决条件 = 本批落点已补**：云端重传并回读一致后，立支即可按 §14-5 第 3 条冒烟**真跑**（本批之前该路径必 400）。
+
+---
+
+## 16. 本批：首页列表范围 / 三档排序 / 全站人物搜索 + 家族树资金功能下线（**代码批次**）
+
+> **权威规格**：`docs/home-sort-search.spec.md`（本批新建；**从属于** `docs/economy.spec.md` 等总纲——经济域口径的唯一权威仍是 `docs/economy.spec.md`）；
+> 资金下线的**总纲表述** = `docs/economy.spec.md` **§12-3**（已回写状态）。
+> **本批性质**：**纯代码批次**（后端 `cloudfunctions/**` + 前端 `frontend/**` + 根 `package.json`）→
+> **无新增集合、无数据变更**；真源数据本轮**零改动**（`config/tree-meta.json` 与 `migrate-output/**` 逐字节未变；会话期间唯一被写的真源文件是
+> `migrate-output/collections/jiazu_sms_codes.json`，由主代理取 dev 验证码产生，**与本批无关、不构成上传项**）。
+> ⚠️ **云函数必须重打包**：`cloudfunctions/deploy/compat-api/index.js` **仍是旧产物**，落后本批全部后端改动
+> （新增 **1 条路由** + **1 条路由出参增量** + **2 条路由改 410**）。
+> ⚠️ **前端 H5 / 小程序同样必须重打包**：不重打包则线上仍是被删掉的资金入口 + 没有首页搜索框。
+
+### 16-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包 + `tcb fn deploy`**（§16-1：`GET /search/global` 新增、`GET /tree/rank` 出参增量、`/wallet/transfer` 与 `/wallet/tree-balance` 改 410） | 无 |
+| 2 | CloudBase 集合 | **无**（不新增集合；`COLLECTIONS` 保持 §11-2 的 12 项） | — |
+| 3 | 云端数据 | **无**（不改数据 → 不重跑迁移上传） | — |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（§16-4：首页列表 / 三档排序 / 搜索框、家族树页删资金块、钱包页删转账区、business 封装 + 两处文案） | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 16-1 云函数 `compat-api`：新增 1 条路由 + 1 条出参增量 + 2 条路由改 410（**必须重打包 + 部署**）
+
+**为什么需要**（逐条列出本批新增 / 变更的路由）：
+
+| 路由 / 模块 | 变更内容 | 本地验证 |
+|---|---|---|
+| **`GET /search/global`** | **新增**（全站人物搜索）：**无需 `X-Tree-Id`**，注册在**树编辑闸门之前**；`query` trim 空 → **200 `[]`**、`limit` 默认 **30** / clamp **1..100** / 非法回落 30；匹配 = ①`resolveNode` 编号或 handle（`matched='id'` 置顶）②编号数字形态（`123` / `000123` / `I000123` 均命中 `I000123`）③姓名（`name`/`surname`/`given` 任一包含，去空格 + 大小写不敏感）；逐树套 `resolveTreeAccess(...).isHiddenPerson` **节点级裁剪**；**镜像归并**（判据 `external_mirror==='true'` + `external_person_handle` 非空；沿镜像链**递归**到最终真身，防环、上限 32 跳；归并键 = 真身 handle，同一人只出**一条**、**不附注镜像数量**）；`restricted` 判定 = **真身对访问者可见 → 取真身且 `restricted=false`（即使只命中镜像）**、真身不可见 / 解析不到 → 取镜像且 `restricted=true` 并**不泄漏真身 handle / gramps_id / tree_id / tree_title**；排序 = 编号置顶 → `tree_id` 字典序（同树内保持 people 键序）；**先归并、后截断** | `lib/home-sort-search.test.js` B / D / D-2 组 + 本轮 `npm test` **350 pass / 0 fail** |
+| **`GET /tree/rank`** | **出参增量（向后兼容）**：新增 `activity`（number，近 30 天互动事件数）与 `updated_at`（string，树 JSON 原值；缺失 → `''`）；既有字段（`rank_key` / `rank_label` / `rank_en` / `rank_desc` / `person_count` / `total_generations` / `access` …）**全部保留**；活跃度实现 = 新模块 **`cloudfunctions/compat-api/lib/tree-activity.js`**（集合缺失 / 读失败 → 0 且不抛） | `lib/home-sort-search.test.js` A 组 + 既有 rank 断言无回归 |
+| **`POST /wallet/transfer`** | **改语义为下线**：在**鉴权 / 参数校验之前**恒返 **410** + `{ error: '家族树资金功能已下线', code: 'TREE_FUND_RETIRED' }` | `lib/home-sort-search.test.js` C 组（**15 种请求组合实测全 410**；对照组 `GET /wallet/balance` 仍 401 / 200 正常） |
+| **`GET /wallet/tree-balance`** | 同上（恒 **410** + `TREE_FUND_RETIRED`） | 同上 |
+| `lib/wallet.js` | **删** `transferToTree` / `getTreeBalance`；**保留** `deductTreeCreateFee`（建树费钩子不变） | 同上（模块级导出已核对） |
+
+**具体命令**（仓库根；写法同 §1 / §11-1 / §14-1）：
+
+```bash
+# ① 重打包（产物 cloudfunctions/deploy/compat-api/index.js）
+frontend/node_modules/.bin/esbuild cloudfunctions/compat-api/index.js \
+  --bundle --platform=node --format=cjs --external:@cloudbase/node-sdk \
+  --outfile=cloudfunctions/deploy/compat-api/index.js
+
+# ② 部署（cloudbaserc.json 已配 functionRoot=./cloudfunctions/deploy、envId=liwu-d8gek6jjdab1d087c）
+tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c
+
+# ③ 重打包判据（两条都要 ≥ 1；未重打 = 0）
+grep -c 'search/global'     cloudfunctions/deploy/compat-api/index.js
+grep -c 'TREE_FUND_RETIRED' cloudfunctions/deploy/compat-api/index.js
+```
+
+**本地验证证据**：
+
+- 重打包判据**当前实测 = 0 / 0** → `grep -c 'search/global' cloudfunctions/deploy/compat-api/index.js` = **0**、
+  `grep -c 'TREE_FUND_RETIRED' …` = **0** ⇒ **确认本批尚未进打包产物**（必须重打）。
+- ⚠️ **不要用 `grep -c 'wallet/transfer'` / `grep -c 'tree-balance'` 当判据**：这两个串在**旧产物里本就存在**（旧实现），
+  当前实测各 = **1**，命中**不代表**本批的 410 已进产物（会给出假绿）。
+- 全量 `npm test` = **350 pass / 0 fail**；新增文件 `cloudfunctions/compat-api/lib/home-sort-search.test.js`
+  **已注册**进根 `package.json` 的 `scripts.test`（未注册 = 假绿）。
+- 前端改动与规格逐条对应（§16-4 表）；`git diff --stat` 覆盖 `cloudfunctions/` 2 个文件、`frontend/` 7 个文件、根 `package.json`，**无真源数据文件**。
+
+**阻塞点**：**无**（命令与判据齐备）；仅需 `tcb` 登录态与 envId 权限（同既有批次）。
+
+### 16-2 CloudBase 集合：**无**
+
+- **无新增集合**（明确「**无**」）：本批不新建、不改动任何集合 → `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`
+  **保持 §11-2 的 12 项不变**，**无需补列表、无需控制台手建**。
+- 附注（不构成部署项）：`lib/tree-activity.js` 只**读**四个申请集合（`jiazu_join_requests` / `jiazu_marriage_requests` /
+  `jiazu_founder_requests` / `jiazu_clan_requests`）—— 它们已在 §2 / §11-2 的清单内；**某个集合在云端尚不存在时，活跃度只返回 0、不报错**（不阻塞本批）。
+
+### 16-3 云端数据：**无**
+
+- **无数据变更**（明确「**无**」）：本批不改树 JSON / 详情文档 / `tree-meta` / 编号计数器 → **不需要重跑**
+  `CB_ENV=… CB_KEY=… node scripts/upload-migrated-to-cloudbase.mjs`。
+- 真源数据本轮**零改动**：`config/tree-meta.json`、`migrate-output/**` 均无改动；会话期间唯一被写的真源文件是
+  `migrate-output/collections/jiazu_sms_codes.json`（主代理取 dev 验证码产生），**与本批无关、不上传**。
+
+### 16-4 前端 H5（**必须重打包 + hosting 部署**；小程序同理）
+
+**为什么需要**（改动区域逐条）：
+
+| 区域 | 文件 | 改动 |
+|---|---|---|
+| 首页列表范围 | `frontend/src/pages/index/index.vue` | `normalHalls` = `!isMaster && kind !== 'clan'`（**只列普通家族树**；缺 `kind` 按 family 兼容） |
+| 首页三档排序 | 同上 | 排序档 `comprehensive` / `members` / `activity`（默认「综合」）+ 综合分 `0.4×人数 + 0.4×活跃度 + 0.2×新近度`（`max===min` 记 1）+ 统一 tie-break |
+| 首页全站搜索 | 同上 | 「搜索人物（姓名 / 编号）」框；受限条显示「权限受限，不可见详情」且**点击只 toast 不跳转**，非受限跳 `/pages/person/detail?tree_id=…&handle=…` |
+| 家族树页删资金块 | `frontend/src/pages/hall/index.vue` | **删**「家族树资金」区块 + 「转账支持」入口（连带 `fetchTreeBalance` 调用与 `goTransfer`），导入行同步收敛 |
+| 钱包页删转账区 | `frontend/src/pages/wallet/index.vue` | **删**「转账到家族树」区块（-61 行） |
+| business 封装 | `business/api.ts` / `business/index.ts` / `business/types.ts` | **删** `transferToTree` / `fetchTreeBalance` 封装与转出；**新增** `searchPeopleGlobal` + `GlobalPersonHit`；`DigitalHallCard.kind?`；rank 类型加 `activity?: number` / `updated_at?: string` |
+| 文案同步 | `pages/about/about.vue`、`pages/mine/index.vue` | 「转账支持家族树」→「充值购买站内资产」；「我的钱包」描述「余额 / 充值 / 转账」→「余额 / 充值 / 交易流水」 |
+
+**具体命令**：
+
+```bash
+cd frontend
+VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5      # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+npm run build:mp-weixin                                        # 产物交微信开发者工具上传
+```
+
+**本地验证证据**：上表改动与 `docs/home-sort-search.spec.md` §2 / §3 / §5-2（前端消费）/ §8 逐条对应；
+`git diff --stat` = `cloudfunctions/compat-api/index.js`、`lib/wallet.js`、`frontend/` 7 个文件、根 `package.json`（**无真源数据文件**）。
+（`npx vue-tsc --noEmit` 与前端真机点测属本轮验收项，**不由本清单代为断言**。）
+
+**阻塞点**：H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限。
+
+### 16-5 部署后冒烟验证（按序做）
+
+1. **重打包判据**两条都 **≥ 1**：`grep -c 'search/global' cloudfunctions/deploy/compat-api/index.js`、`grep -c 'TREE_FUND_RETIRED' …`（未重打 = 0）；
+2. **无需 `X-Tree-Id`**：**不带** `X-Tree-Id` 调 `GET /search/global?query=<姓氏或编号>` → **200**（能走到业务逻辑 = 注册位置正确），不是「缺少 X-Tree-Id」；
+3. **搜索契约**：`query=I000123`（或 `123` / `000123`）→ 该人**置顶**且 `matched='id'`；空 / 全空格 `query` → **200 `[]`**；`limit=999` → 实际生效上限 100；
+   **被可见性裁剪的真身用其编号搜 → 0 条**（规格 §7-a 已知边界，**不是** bug）；
+4. **归并 / 受限**：同一真身的多条镜像命中 → **只出 1 条**；真身可见 → 条目指向真身、`restricted=false`；
+   真身不可见 → 条目为镜像、`restricted=true`，且响应**不含**真身的 `handle` / `gramps_id` / `tree_id` / `tree_title`；
+5. **`/tree/rank` 增量**：带 `X-Tree-Id` 调 → 200 且含 `activity`（number）与 `updated_at`（string；缺失为 `''`），既有字段仍在；首页三档切换 / 徽章不显示 NaN；
+6. **资金下线**：不带令牌 / 带普通令牌 / 带非法金额 / 带 `X-Tree-Id` 等组合调 `POST /wallet/transfer` 与 `GET /wallet/tree-balance`
+   → **一律 410 + `code='TREE_FUND_RETIRED'`**；对照 `GET /wallet/balance` → 未登录 **401** / 登录 **200**（证明只下线这两条）；
+7. **页面**：首页**不再出现祖谱与世本卡片**；三档排序切换顺序可复现（同分按 `tree_id` 升序）；
+   搜索框：受限条点击只出 toast「权限受限，不可见详情」、**不进详情页**，非受限条正常跳人物详情；
+   家族树页无「家族树资金」区块、钱包页无「转账到家族树」区块。
+
+### 16-6 本批**不需要**上云的东西
+
+- **测试文件** `cloudfunctions/compat-api/lib/home-sort-search.test.js`：纯本地动作（落盘 + 已进 `package.json` 的 `scripts.test` + 本地 `npm test`），
+  **不进打包产物、不影响云端重传**；`npm test` 跑 `/tmp` 副本，**不得当云端回归**。
+- `/tmp` 下的数据副本与取证文件：临时产物。
+- 规格与质检文档（`docs/home-sort-search.spec.md` / `docs/home-sort-search.qa.md`）：不进产物、不影响云端。
+
+### 16-7 顺带登记：未处理事项（**待裁决 / 待改**；本批未动）
+
+1. **`auth-server` 遗留转账链路**（**待裁决**）：`auth-server/server.js`（`/api/wallet/transfer` 分支，内调 `wallet.transferToTree(...)`）与
+   `auth-server/wallet.js`（`transferToTree`）**仍在**。它属**遗留 Gramps 链路**（已退出运行链路），本批**未动**；
+   待裁决：是否随遗留链路整体清理（本次不动，避免扩大改动范围；**不得据它判定资金下线未落地**）。
+2. **钱包页余额卡片文案仍是人民币口径**（**待改**）：`frontend/src/pages/wallet/index.vue` 第 7 行
+   `新建家族树费用：¥{{ wallet?.tree_create_fee_yuan || '9.90' }}`。
+   而经济总纲 `docs/economy.spec.md` **§5-5（建树扣 9 颗石榴籽）** 且 **§9 前端落点表**已要求该文案改为「**9 颗完整石榴籽**」
+   → 现状与规格不符，**本批只登记、不改**。
+   - 同根因的**附带观察**（建议一并裁决）：`frontend/src/pages/index/index.vue` 第 340 行 `const feeYuan = ref('9.90')`
+     （新建家族树弹窗取 `fetchWallet().tree_create_fee_yuan`），文案同样会显示「¥9.90」。

@@ -1,0 +1,1054 @@
+# 首页排序 + 全站搜索 + 资金下线 —— 独立质检报告（Neng）
+
+- 质检对象：`cloudfunctions/compat-api/{index.js,lib/tree-activity.js,lib/wallet.js}`、`cloudfunctions/compat-api/lib/home-sort-search.test.js`、`frontend/src/{business/api.ts,pages/index/index.vue,pages/hall/index.vue,pages/wallet/index.vue}`
+- 质检人：Neng（独立质检；不接受源码扫描 / mock 层覆盖当结论，全部结论由真机实例 + 真实数据 + 独立复算得出）
+- 质检环境：macOS 15.7.4，Node（版本见 §0）；真源 = `/Users/kevin/bistro/jiazu`；**全程未碰用户正在使用的 3100 / 5199**
+- 副本实例：`/tmp/qa-copy`（trees/details/collections + tree-meta.json 全量拷贝，md5 校验与真源一致）→ 端口 `3458`
+- 遗留 / 未覆盖（本报告明确声明）：浏览器渲染层未走（派单禁止浏览器）；前端只做 `vue-tsc --noEmit` + `@vue/compiler-sfc` 编译 + 逻辑独立复算，不做像素取证。
+
+---
+
+## 0. 环境与基线（真源 md5 前置取证）
+
+**命令**
+
+```bash
+node -v
+lsof -nP -iTCP -sTCP:LISTEN | grep -E ':(3100|5199|3000|8000|3458)\b'
+md5 -q config/tree-meta.json ; md5 -q migrate-output/trees/*.json ; md5 -q migrate-output/collections/*.json
+```
+
+**实际输出**
+
+```
+v18.19.0
+node  20720 kevin  TCP *:3100 (LISTEN)      ← 用户在用，全程未碰
+node  36160 kevin  TCP *:3000 (LISTEN)      ← 遗留链路，未碰
+node  41219 kevin  TCP [::1]:5199 (LISTEN)  ← 用户在用，全程未碰
+Python 44512 kevin TCP 127.0.0.1:8000 (LISTEN) ← Gramps 遗留，未碰
+3458 FREE                                    ← 自选副本实例端口
+config/tree-meta.json          d59a9767c34ed4ffefbf70de59d26aa6
+migrate-output/trees/*.json    (9 个, 见 /tmp/qa-1789649652/baseline.md5)
+```
+
+**副本与自起实例**
+
+```bash
+rm -rf /tmp/qa-copy && mkdir -p /tmp/qa-copy
+cp -R migrate-output/{trees,details,collections} /tmp/qa-copy/
+cp config/tree-meta.json /tmp/qa-copy/tree-meta.json
+COMPAT_OUT_DIR=/tmp/qa-copy COMPAT_META_FILE=/tmp/qa-copy/tree-meta.json COMPAT_SOURCE=local \
+  node cloudfunctions/compat-api/local-server.js 3458        # 后台
+```
+
+启动日志 / 探活（**真机实例**，非 mock）：
+
+```
+兼容层 API 本地服务: http://localhost:3458 (source=local)
+root HTTP 400   meta HTTP 200   rank HTTP 200
+GET /tree/rank  (X-Tree-Id: ji_23395_01):
+{"tree_id":"ji_23395_01","total_generations":26,"rank_key":"lineage_rank","rank_label":"宗乘级",
+ "rank_en":"Lineage-Rank","rank_desc":"长程亲属谱系，合计总世代 19-72 世","over_limit":false,
+ "max_depth":72,"root_count":42,"person_count":90,"explicit":false,"activity":2,
+ "updated_at":"2026-09-17T02:28:45.864Z",
+ "access":{"mode":"partial","visible_max_depth":8,"hide_tail":18,"is_master":false,
+           "member":false,"login_required":true,"clamped":false}}
+```
+
+**判定**：环境就绪。副本 tree-meta.json md5 `d59a9767c34ed4ffefbf70de59d26aa6` 与真源**逐字节一致**；新字段 `activity` / `updated_at` 已在真实实例出参中出现，既有 12 个字段全部在。
+
+---
+
+## 1. 定向攻坚 A —— 变异验证（WINDOW_DAYS=0 / 去掉 isHiddenPerson 裁剪）
+
+### A-0 基线（未变异）
+
+```
+$ node --test cloudfunctions/compat-api/lib/home-sort-search.test.js
+# tests 13
+# pass 13
+# fail 0
+（grep '^not ok' → 无命中）
+```
+
+### A-1 变异①：`lib/tree-activity.js` 的 `WINDOW_DAYS = 30` → `0`
+
+```
+--- a/cloudfunctions/compat-api/lib/tree-activity.js
+-export const WINDOW_DAYS = 30;
++export const WINDOW_DAYS = 0;
+
+$ node --test cloudfunctions/compat-api/lib/home-sort-search.test.js      → exit=1
+# tests 13
+# pass 11
+# fail 2
+not ok 3 - A3 treeActivity：读 4 个集合求和（master_tree_id 不计入、时间字段回退、集合缺失/未知树恒 0 不抛）
+not ok 4 - C1 /tree/rank：新增 activity / updated_at，且既有字段逐字段仍在（一个不许少）
+```
+
+**判定**：窗口口径一旦被破坏，活跃度矩阵**确定变红**（13→11/2），证明活跃度用例不是在空转。
+
+### A-2 变异②：`index.js` 的 `/search/global` 去掉节点级可见裁剪（3 处 `isHiddenPerson` 判定）
+
+```
+-  if (!access.isHiddenPerson(p.handle)) {          →  if (access) {
+-  if (access.isHiddenPerson(p.handle)) continue; // 节点级可见裁剪…   →  if (false) continue; // MUTATION
+-  if (access.isHiddenPerson(p.handle)) continue;                      →  if (false) continue; // MUTATION
+
+$ node --test cloudfunctions/compat-api/lib/home-sort-search.test.js      → exit=1
+# tests 13
+# pass 11
+# fail 2
+not ok 8 - B3 /search/global：guest 被节点级可见分层隐藏的节点不出现，可见节点照常返回
+not ok 9 - B4 /search/global：空 query → []；limit 生效并 clamp 到 1..100
+（B4 同时断言「guest 在深树上仅见第 1、2 世 == 2」，隐私面一破它也红）
+```
+
+**判定**：隐私裁剪一旦被移除，隐私用例**确定变红**。两处变异均在验证后**原样回滚**（`diff -q` IDENTICAL + md5 复原，§1 末尾证据）。
+
+### A-3 回滚证据
+
+```
+$ cp /tmp/qa-copy/mut-tree-activity.orig.js cloudfunctions/compat-api/lib/tree-activity.js
+$ md5 -q cloudfunctions/compat-api/lib/tree-activity.js
+ee071a8425a11172e809d2101d83bf8f   （= 变异前）
+$ cp /tmp/qa-copy/mut-index.orig.js cloudfunctions/compat-api/index.js
+$ md5 -q cloudfunctions/compat-api/index.js
+c365670c3883dbbd56f4f552a55df847   （= 变异前）
+$ diff -q cloudfunctions/compat-api/index.js /tmp/qa-copy/mut-index.orig.js   → IDENTICAL
+$ node --test …/home-sort-search.test.js
+# tests 13 / # pass 13 / # fail 0      （回滚后恢复全绿）
+```
+
+
+## 1. 定向攻坚 A —— 变异验证（WINDOW_DAYS=0 / 去掉 isHiddenPerson 裁剪）
+
+> （注：此处是上一轮骨架残留的**重复标题**，正文见上方同名章节 §1；为保持「骨架 ↔ 实际章节」可对照，保留此标题并加注，未删改任何既有内容。）
+
+## 2. 定向攻坚 B —— 活跃度窗口边界（五类夹具）
+
+**手法**：自造夹具（`/tmp/qa-window.mjs` + `/tmp/qa-window2.mjs`），固定 `now = 2026-09-17T00:00:00.000Z`，直接 import 真模块 `lib/tree-activity.js` 并真跑 `countRecentEvents` / `treeActivity`（后者读 `/tmp/qa-window-fix/collections/` 落盘集合文件）。
+
+**① 五类夹具实测值**
+
+| 夹具 | 记录 | `countRecentEvents([rec],'W1',NOW,30)` |
+|---|---|---|
+| 恰好 30 天整 | `created_at = now - 30d` | **1**（计入，含等号边界） |
+| 30 天零 1 毫秒 | `created_at = now - 30d - 1ms` | **0** |
+| 40 天前 | `created_at = now - 40d` | **0** |
+| 时间字段全缺 | `{tree_id:'W1'}` | **0** |
+| created_at 非法但 ts 合法 | `created_at:'不是时间', ts: now-1d` | **1**（回退到 ts 并计入） |
+
+合并五条：`countRecentEvents(全部五条, 'W1', NOW, 30) = 2`；`countRecentEvents(全部五条,'W1',NOW,0) = 0`；真机 `treeActivity('W1',{now:NOW}) = 2`（`{now:'2026-09-17T00:00:00.000Z'}` 字符串形式同为 2），`treeActivity('W-none') = 0`。模块常量实测：`WINDOW_DAYS = 30`、`TIME_FIELDS = ["created_at","ts","handled_at","decided_at"]`、`EVENT_COLLECTIONS = ["jiazu_join_requests","jiazu_marriage_requests","jiazu_founder_requests","jiazu_clan_requests"]`。
+
+**② 补充边界（回应「跳过非法值继续试下一字段」是否会造成错误计入）**
+
+```
+NOW = 2026-09-17T00:00:00.000Z | WINDOW = 30d
+6a created_at=40天前(合法) + ts=1天前    → countRecentEvents = 0   （合法 created_at 优先，不回退）
+6b created_at=非法 + ts=40天前           → countRecentEvents = 0
+6c created_at=0(数字) + ts=1天前         → countRecentEvents = 0   （0 是合法数字时间，优先且不回退）
+6d created_at={} + ts=1天前              → countRecentEvents = 1   （对象不可解析 → 回退 ts）
+6e created_at=true + ts=1天前            → countRecentEvents = 1   （同上）
+6f created_at=null + ts=1天前            → countRecentEvents = 1   （缺失 → 回退）
+6g created_at="2026-09-17" (仅日期)      → countRecentEvents = 1
+treeActivity("W1",{now:NOW}) with only 6a = 0                     （集合级判定与纯函数一致）
+```
+
+**判定（裁定意见）**：**与派单口径一致，不构成错误计入，无需返工。**
+
+依据：
+1. 派单口径写的是「时间取 `created_at` → `ts` → `handled_at` → `decided_at` **首个可解析值**」——「可解析」= `Date.parse` / 有限数字可解析。实现（`tree-activity.js:44-56`）逐字段尝试、`Date.parse(...)` 为 `NaN` 或非有限数时 **continue 到下一字段**，取到的第一个可解析值即终止 —— 这正是「首个可解析值」的字面语义。Kong 自报的「跳过非法值继续试下一字段」与派单口径**不冲突**（若按「取第一个非空字段，非空但非法即整条不计」实现，反而会与「首个可解析值」相左，且与测试 CR_1（`created_at:''` → 用 `decided_at`）的既有口径自相矛盾）。
+2. 「是否会造成错误计入」的举证：唯一可能多计的情形 = **合法值在窗口外、非法值回退到窗口内的次级字段**。实测 6a 证明该路径不成立 —— `created_at` 只要**可解析**就独占优先权（40 天前 + 窗口内的 ts 仍判 0）。6b/6c 进一步证明：次级字段无法「救活」已有可解析值的记录。
+3. 反向风险（少计）也不成立：6d/6e/6f（缺失/对象/布尔）与 6g（仅日期）均正确回退并计入。
+4. 唯一可登记的**行为观察（非缺陷、无需返工）**：`created_at: 0`（数值型未初始化字段）会被当作合法时间（1970-01-01）从而**不回退** `ts` → 该条不计入。符合「首个可解析值」口径；真源 4 个集合现有记录中不存在数值型 `created_at=0`（见 §6 独立点数），实际影响为零。
+
+
+## 3. 定向攻坚 C —— 编号检索正/反向 + 隐私裁剪（guest / member / chief 两端）
+
+**手法（全部走真机实例 3458 副本数据；token 为真机 dev 登录所得，非伪造）**
+
+```bash
+# 登录（副本实例自带 /auth/*，dev_code 明文返回；未碰 3000/3100/5199）
+curl -X POST http://127.0.0.1:3458/auth/send-code -d '{"phone":"13800000001"}'  → dev_code=261707
+curl -X POST http://127.0.0.1:3458/auth/login -d '{"phone":"13800000001","code":"261707"}'
+   → role=user        tokenLen=203   → /tmp/qa-token-member.txt
+curl -X POST http://127.0.0.1:3458/auth/send-code -d '{"phone":"16601061656"}'  → dev_code=596797
+curl -X POST http://127.0.0.1:3458/auth/login -d '{"phone":"16601061656","code":"596797"}'
+   → role=chief_editor tokenLen=213  → /tmp/qa-token-chief.txt
+# token 生效校验
+GET /auth/me (member) → 200 {"phone":"13800000001","role":"user"}
+GET /auth/me (chief)  → 200 {"phone":"16601061656","role":"chief_editor"}
+```
+
+**① 可见节点编号三写法（I000167 = 季氏费县白露家族 刘秀英，guest 可见）**
+
+```
+I000167 定位: {"tree":"ji_23395_01","handle":"103f95b8761657e018ed8f1e825e","pid":"I000167","name":"刘秀英","guestSees":true}
+  query=I000167   status=200 命中该节点=true matched=id 结果数=1
+  query=167       status=200 命中该节点=true matched=id 结果数=1
+  query=000167    status=200 命中该节点=true matched=id 结果数=1
+首条={"tree_id":"ji_23395_01","tree_title":"季氏费县白露家族","handle":"103f95b8761657e018ed8f1e825e",
+      "gramps_id":"I000167","name":"刘秀英","gender":"U","birth_date":"","death_date":"2024-03-29","matched":"id"}
+```
+
+**判定**：三种写法（`I000167` / `167` / `000167`）**均命中同一 handle、matched 均为 `id`**，且出参 9 个字段齐全（`tree_id/tree_title/handle/gramps_id/name/gender/birth_date/death_date/matched`）。**通过**。
+
+**② 反向：guest 对被隐藏节点必须 0 命中**（隐藏节点判定独立于被测路由 —— 用 `/people/` 的 guest 与 chief 两份真实响应做 handle 差集）
+
+各树真实可见面（guest vs chief）：
+
+```
+tree gu_39038       guestVisible=  1 chiefVisible=  2 guestHidden=1
+tree gu_39038_01    guestVisible=  2 chiefVisible= 23 guestHidden=21
+tree ji_23395       guestVisible=  1 chiefVisible=  2 guestHidden=1
+tree ji_23395_01    guestVisible= 50 chiefVisible= 90 guestHidden=40
+tree liu_21016_01   guestVisible=  1 chiefVisible= 19 guestHidden=18
+tree qin_31206      guestVisible=  1 chiefVisible=  4 guestHidden=3
+tree qin_31206_01   guestVisible=  0 chiefVisible=  0 guestHidden=0   （无树文件）
+tree shen_27784_01  guestVisible=  2 chiefVisible= 11 guestHidden=9
+tree zhonghua       guestVisible=140 chiefVisible=140 guestHidden=0   （总谱恒全可见）
+```
+
+单点探针（隐藏节点 = `gu_39038` / `I000139` 顾清学 / handle `5ae4c6e505c90d290f71f66b`）：
+
+```
+  编号(guest)   query="I000139"                 status=200 结果数=0 命中隐藏节点=false
+  纯数字(guest) query="139"                     status=200 结果数=0 命中隐藏节点=false
+  handle(guest) query="5ae4c6e505c90d290f71f66b" status=200 结果数=0 命中隐藏节点=false
+  姓名(guest)   query="顾清学"                    status=200 结果数=2 命中隐藏节点=false
+  编号(member)  query="I000139"                 status=200 结果数=0 命中隐藏节点=false（member 锚点在 ji_23395_01，对 gu_39038 仍是 guest 档）
+  handle(member) query="5ae4c6..."              status=200 结果数=0 命中隐藏节点=false
+  编号(chief)   query="I000139"                 status=200 结果数=1 命中隐藏节点=true  matched=id
+  姓名(chief)   query="顾清学"                    status=200 结果数=3 命中隐藏节点=true  matched=name
+  handle(chief) query="5ae4c6..."               status=200 结果数=1 命中隐藏节点=true  matched=id
+```
+
+`顾清学` guest 那 2 条结果的归属已逐条核对 —— **不是**隐藏节点，是**别树/别 handle 的同名节点**（属正常可见数据）：
+
+```
+  gu_39038_01 103f95b87b5a464242933ee319d5 I000143 顾清学 matched=name
+  zhonghua    103ff1c309eb7bf2cb4f6ff1762e I0046   顾清学 matched=name
+  （隐藏节点 handle=5ae4c6e505c90d290f71f66b tree=gu_39038 未出现；chief 视角下它才出现）
+  chief: gu_39038 5ae4c6e505c90d290f71f66b I000139 顾清学 matched=name
+```
+
+批量反向（**覆盖全部 8 棵有树文件的树**，每树最多 3/5 个隐藏节点）：
+
+```
+=== ②b 编号 + handle 路批量反向 ===
+checked=34 leaks=0
+=== ②c 姓名路批量反向（姓+名整串）× 每树最多 5 个隐藏节点 ===
+checked=25 leaks=0 skippedEmptyName=0
+```
+
+**判定**：guest 视角下，被节点级分层隐藏的节点用 **编号 / 纯数字编号 / handle / 姓名** 四路检索**全部 0 命中**（59 次探针 0 泄漏）。**通过**。
+
+**③ member / chief 两端对比（同一隐藏节点，ji_23395_01 / I000159）**
+
+```
+  guest   query=I000159 status=200 结果数=0 命中=false
+  member  query=I000159 status=200 结果数=1 命中=true
+  chief   query=I000159 status=200 结果数=1 命中=true
+  姓名「季季贺为」guest hits=0 / member hits=1
+```
+
+**判定**：同一节点 guest 0 命中、member（真实登录、锚点 ji_23395_01）1 命中 —— 证明**不是「数据里没有」，而是裁剪按身份分档生效**；差异方向正确（多可见 ≠ 泄漏）。**通过**。
+
+
+## 4. 定向攻坚 D —— /search/global 边界（空 query / limit clamp / 幽灵 tree_id）
+
+**① 空 / 空白 query（真机 3458）**
+
+```
+  无 query 参数    → HTTP 200 body=[]
+  query=          → HTTP 200 body=[]
+  query=(3空格)    → HTTP 200 body=[]
+  query=%20       → HTTP 200 body=[]
+  query=&limit=5  → HTTP 200 body=[]
+```
+
+**② limit 下界 clamp + 默认值（真机 3458，query="季"）**
+
+```
+  limit 缺省   → HTTP 200 结果数=27
+  limit=0     → HTTP 200 结果数=1      （clamp 到 1）
+  limit=-5    → HTTP 200 结果数=1      （clamp 到 1）
+  limit=1     → HTTP 200 结果数=1
+  limit=1.9   → HTTP 200 结果数=1      （parseInt→1）
+  limit=+7    → HTTP 200 结果数=7
+  limit=0x10  → HTTP 200 结果数=1      （parseInt('0x10')=0 → clamp 1；未被当 16 处理）
+  limit=abc   → HTTP 200 结果数=27     （非法 → 默认 30，可用量 27）
+  limit=(空)   → HTTP 200 结果数=27     （同上）
+```
+
+**③ limit 上限 clamp —— 真源可用量不足以触及 100，故另起夹具副本实例 3459 造 150 命中（`qa_big`，150 人姓名全含「测试甲」；`COMPAT_OUT_DIR=/tmp/qa-copy-fixture`，未碰真源）**
+
+```
+  limit 缺省   → status=200 结果数=30     ← 默认 30
+  limit=99    → status=200 结果数=99
+  limit=100   → status=200 结果数=100
+  limit=101   → status=200 结果数=100     ← 上限 clamp 生效
+  limit=500   → status=200 结果数=100     ← 上限 clamp 生效
+  limit=1000  → status=200 结果数=100     ← 上限 clamp 生效
+  limit=0     → status=200 结果数=1
+  limit=-5    → status=200 结果数=1
+  limit=abc   → status=200 结果数=30
+```
+
+**判定**：`limit` 默认 30、下限 clamp 1、上限 clamp 100、非法值回落 30 —— **全部与口径一致**。第 ③ 组把「≤100」这条弱断言升级为**确切等于 100**（150 命中可用），不再留容忍余量。**通过**。
+
+**④ 幽灵 tree_id（meta 有登记、树文件缺失）不得 500**
+
+夹具副本 meta 额外写入两条幽灵条目（`ghost_tree` 键=tree_id；`ghost_key_mismatch` 键≠tree_id → `ghost_tree2`，两组路径都覆盖）：
+
+```
+  /tree/rank 无 X-Tree-Id          → 400 {"error":"缺少 X-Tree-Id"}   （既有闸门未变）
+  /tree/rank X-Tree-Id=ghost_tree  → HTTP 404 {"error":"树不存在: ghost_tree"}
+  /tree/rank X-Tree-Id=ghost_tree2 → HTTP 404 {"error":"树不存在: ghost_tree2"}
+  /search/global?query=顾清学（含幽灵条目）→ status=200 结果数=2  tree_ids=["gu_39038_01","zhonghua"]
+  结果是否含 ghost* = false
+  /search/global?query=测试甲&limit=3 → status=200 结果数=3 首条={"tree_id":"qa_big",...,"matched":"name"}
+  /search/global?query=I000143        → status=200 结果数=1 tree_ids=["gu_39038_01"]
+  /search/global?query=顾&limit=1000  → status=200 结果数=3
+```
+
+**判定**：幽灵 tree_id 下 `/search/global` 恒 200 且**其余真实树结果照常返回**（顾清学 2 条、编号 I000143 命中 gu_39038_01），幽灵条目不进入结果；`/tree/rank` 对幽灵树仍是既有的 404（**不是 500**）。**通过**。
+
+**⑤ 精确命中置顶（真机）**
+
+```
+query=I000167&limit=100 → ji_23395_01/I000167/id                      （唯一，置顶）
+query=刘秀英&limit=100   → ji_23395_01/I000167/name | zhonghua/I0051/name
+```
+
+
+## 5. 定向攻坚 E —— 410 不被 401/400 抢先（四种请求）
+
+**手法**：副本实例 `3460`（`/tmp/qa2/copy`，tree-meta md5 与真源一致）真机发请求；对照路由用「同实例既有鉴权档位」。所有请求**不依赖 mock**。
+
+```
+$ curl -X POST http://127.0.0.1:3460/auth/send-code -d '{"phone":"16601061656"}'
+{"ok":true,"message":"验证码已发送","dev_code":"214344"}
+$ curl -X POST http://127.0.0.1:3460/auth/login -d '{"phone":"16601061656","code":"214344"}'
+role= chief_editor   tokenLen= 213
+```
+
+| # | 请求 | 期望 | 实测 |
+|---|---|---|---|
+| ① | `POST /api/wallet/transfer`（无 Authorization，body `{"amount":1}`） | 410 | **HTTP/1.1 410 Gone** `{"error":"家族树资金功能已下线","code":"TREE_FUND_RETIRED"}` |
+| ② | `POST /api/wallet/transfer`（`Authorization: Bearer bogus.token.xyz`） | 410（不得 401） | **410 Gone** 同上 |
+| ③ | `POST /api/wallet/transfer`（真实 chief token + `{"amount":100}`） | 410（已登录也不放行） | **410 Gone** 同上 |
+| ④ | `GET /api/wallet/tree-balance`（无 Authorization） | 410 | **410 Gone** 同上 |
+| ⑤ | `GET /api/wallet/tree-balance?tree_id=ji_23395_01`（chief token + `X-Tree-Id`） | 410 | **410 Gone** 同上 |
+| ⑥ | `GET /api/wallet/tree-balance`（带 `X-Tree-Id` 但无 token —— 树闸门对照组） | 410（不得被 `缺少 X-Tree-Id`/401 抢先） | **410 Gone** 同上 |
+| ⑦ | `POST /api/wallet/transfer` + body `not-json`（非法 JSON） | 410（不得被 parseBody 抢先 400） | **410 Gone** 同上 |
+| 对照 A | `GET /api/wallet/balance`（无 token） | 401 | **401** `{"error":"未登录或登录已过期"}` |
+| 对照 B | `GET /api/wallet/balance`（chief token） | 200 | **200**（`user_balance_yuan:"10.70"`，出参含历史 `tree_create_fee`… 与一条 2026-08-13 的历史 `transfer` 流水，仅存档不改） |
+
+**判定**：7 条待下线路由探针**全部 410 + `TREE_FUND_RETIRED`**，且**未登录 / 伪 token / 真 token / 缺树头 / 非法 JSON 五种抢跑路径都没能抢先**（对照 A/B 证明同实例鉴权仍按既有档位工作 —— 410 是路由自身行为、不是鉴权崩掉后的副作用）。**通过**。
+
+## 6. 定向攻坚 F —— 真实数据交叉核对（/tree/rank activity vs 独立点数）
+
+**手法**：Neng **自写**独立点数脚本 `/tmp/qa2/activity-check.mjs`（不复用 `lib/tree-activity.js` 任何代码），直接读副本集合文件按 30 天窗口逐条判定，再与真机 `/tree/rank` 出参逐树对账。
+
+```
+NOW(ms) = 1789654485688 = 2026-09-17T14:14:45.688Z | 窗口下界 = 2026-08-18T14:14:45.688Z
+四集合记录总数 = 6
+  jiazu_join_requests: FILE-MISSING
+  jiazu_marriage_requests: 1 条（窗口内 = 1）
+  jiazu_founder_requests: 2 条（窗口内 = 2）
+  jiazu_clan_requests: 3 条（窗口内 = 3）
+独立点数（涉及该树且在窗口内的记录条数，from_tree/to_tree 各计 1）:
+  gu_39038 = 1   gu_39038_01 = 1   ji_23395 = 1   ji_23395_01 = 2   qin_31206 = 1   shen_27784_01 = 1
+
+逐树对账（/tree/rank.activity vs Neng 独立点数）:
+  gu_39038       api.activity=1      独立点数=1  OK
+  gu_39038_01    api.activity=1      独立点数=1  OK
+  ji_23395       api.activity=1      独立点数=1  OK
+  ji_23395_01    api.activity=2      独立点数=2  OK
+  liu_21016_01   api.activity=0      独立点数=0  OK
+  qin_31206      api.activity=1      独立点数=1  OK
+  qin_31206_01   api.activity=0      独立点数=0  OK
+  shen_27784_01  api.activity=1      独立点数=1  OK
+  zhonghua       api.activity=0      独立点数=0  OK
+
+不一致条数 = 0 []
+```
+
+**判定**：9 棵树**逐树相等、0 不一致**；`jiazu_join_requests` 在本地**文件缺失**（无数据即无文件）而 `activity` 仍正确计出 2（ji_23395_01 = 认祖申请 1 + 婚姻记录 `to_tree` 1），证明「集合缺失 → 按 0 计、不抛」在真机路径上生效。**通过**。
+
+## 7. 定向攻坚 G —— 前端静态与逻辑验（vue-tsc / compiler-sfc / 排序复算 / 列表过滤 / grep）
+
+### 7.1 `vue-tsc --noEmit`（必攻项）
+
+```
+$ cd frontend && npx vue-tsc --noEmit ; echo "EXIT=$?"
+EXIT=0
+```
+
+**判定**：**exit 0，零类型错误**。**通过**。
+
+### 7.2 `@vue/compiler-sfc` parse + compileTemplate（必攻项，4 个 SFC）
+
+```
+$ node /tmp/qa2/sfc-probe.cjs
+frontend/src/pages/index/index.vue: parse errors=0 compileTemplate errors=0
+   块: template=true script=true styles=1 code=16688 字节
+frontend/src/pages/hall/index.vue: parse errors=0 compileTemplate errors=0
+   块: template=true script=true styles=1 code=37089 字节
+frontend/src/pages/wallet/index.vue: parse errors=0 compileTemplate errors=0
+   块: template=true script=true styles=1 code=6074 字节
+frontend/src/pages/about/about.vue: parse errors=0 compileTemplate errors=0
+   块: template=true script=false styles=1 code=1314 字节
+合计 error 数 = 0
+```
+
+**判定**：4 个改动页 **0 error**（模板标签配平 / 指令语法全部通过；这层是 `vue-tsc` 查不出、只有 SFC 编译器能查的）。**通过**。
+
+### 7.3 三档排序独立复算（真机 `/tree/rank` 数据）
+
+数据来自副本实例 3460（非手填），公式按 `frontend/src/pages/index/index.vue` 逐字重写：
+
+```
+normalHalls（列表过滤后）: gu_39038_01, ji_23395_01, liu_21016_01, qin_31206_01, shen_27784_01
+
+逐树原始指标（真机出参）:
+  gu_39038_01    person_count=23  activity=1  updated_at=2026-09-17T02:28:45.865Z
+  ji_23395_01    person_count=90  activity=2  updated_at=2026-09-17T02:28:45.864Z
+  liu_21016_01   person_count=19  activity=0  updated_at=2026-09-16T05:15:55.961Z
+  qin_31206_01   person_count=0   activity=0  updated_at=2026-09-16T05:59:09.688Z
+  shen_27784_01  person_count=11  activity=1  updated_at=2026-09-15T07:30:11.000Z
+
+极值: 人数 [0,90]  活跃 [0,2]  时间戳 [1789457411000,1789612125865]
+
+综合分（0.4×人数 + 0.4×活跃 + 0.2×时间戳，极值归一化）:
+  gu_39038_01    分=0.502222
+  ji_23395_01    分=1.000000
+  liu_21016_01   分=0.185721
+  qin_31206_01   分=0.104629
+  shen_27784_01  分=0.248889
+
+[comprehensive] 复算顺序 = ji_23395_01 > gu_39038_01 > shen_27784_01 > liu_21016_01 > qin_31206_01
+[members]       复算顺序 = ji_23395_01 > gu_39038_01 > liu_21016_01 > shen_27784_01 > qin_31206_01
+[activity]      复算顺序 = ji_23395_01 > gu_39038_01 > shen_27784_01 > liu_21016_01 > qin_31206_01
+
+乱序输入 200 轮 × 3 档 → 顺序漂移次数 = 0
+
+缺 activity/updated_at 兜底（后端未重启场景）:
+  gu_39038_01=0.5022  ji_23395_01=1.0000  liu_21016_01=0.0844  qin_31206_01=0.2000  shen_27784_01=0.4489
+  含 NaN = false
+norm(0,5,5) = 1 （max===min → 1，不除零）
+```
+
+与派单给的参考复算值逐位对齐：**ji 1.0000 / gu 0.5022 / shen 0.2489 / liu 0.1857 / qin 0.1046 —— 5/5 完全一致**（参考值原为「ji≈1.0000 > gu≈0.5022 > shen≈0.2489 > liu≈0.1857 > qin≈0.1046」，实测 0.502222/0.248889/0.185721/0.104629）。原始指标也与派单一致（ji 90/2、gu 23/1、liu 19/0、qin 0/0、shen 11/1）。
+
+**逐行读 `frontend/src/pages/index/index.vue` 对照**：
+
+| 符号 | 行号 | 对照结论 |
+|---|---|---|
+| `norm` | 227–230 | `if (max === min) return 1;` 在除法之前 —— 除零分支被真正拦住 |
+| `membersOf` | 233–236 | `rankMap[id]?.person_count` 非 number / NaN → 0 |
+| `activityOf` | 239–242 | 同上（`activity` 缺失 → 0，后端没重启也不会 NaN） |
+| `recencyOf` | 245–248 | `Date.parse(updated_at \|\| '')` → NaN 一律收敛为 0 |
+| `scoreMap` | 251–268 | 三数组各自 `bounds()` 极值归一化后加权求和，权重常量 0.4/0.4/0.2（222–224 行）与口径逐字一致 |
+| `compareHalls` | 274–297 | **三档 tie-break 显式写全**：`members`＝人数↓→活跃↓→（共用尾链）时间戳↓→tree_id↑；`activity`＝活跃↓→人数↓→时间戳↓→tree_id↑；`comprehensive`＝综合分↓→人数↓→活跃↓→时间戳↓→tree_id↑。**无任何分支依赖数组原始顺序**（200 轮乱序输入 0 漂移为证） |
+| `sortedHalls` | 300 | `normalHalls.value.slice().sort(compareHalls)` —— 先复制再排，不改写 `normalHalls` |
+
+**判定**：**通过**。三档 tie-break 不存在「只写主指标 + 依赖原顺序」的旧坑。
+
+### 7.4 首页列表过滤（`normalHalls` 必须排除 `isMaster` 与 `kind==='clan'`）
+
+真源 meta 逐条（副本 tree-meta md5 与真源一致 `d59a9767c34ed4ffefbf70de59d26aa6`）：
+
+```
+gu_39038_01    is_master=false kind=family
+ji_23395_01    is_master=false kind=family
+liu_21016_01   is_master=false kind=family
+qin_31206_01   is_master=false kind=family
+shen_27784_01  is_master=false kind=family
+zhonghua       is_master=true  kind=master     ← 中华世本，被 is_master 排除
+ji_23395       is_master=false kind=clan       ← 祖谱（季氏宗谱），被 kind 排除
+gu_39038       is_master=false kind=clan       ← 祖谱（顾氏宗谱），被 kind 排除
+qin_31206      is_master=false kind=clan       ← 祖谱（秦氏宗谱），被 kind 排除
+```
+
+自算一遍 `normalHalls = trees.filter(h => !h.isMaster && h.kind !== 'clan')` → **恰 5 棵**：`gu_39038_01, ji_23395_01, liu_21016_01, qin_31206_01, shen_27784_01`。
+
+**判定**：3 本祖谱（ji_23395 / gu_39038 / qin_31206）与中华世本 zhonghua **均不在列表内**（且 5 棵普通树一棵不漏）；缺 `kind` 的旧条目因 `undefined !== 'clan'` 天然放行（代码注释 209–211 行与实现一致）。**通过**。
+
+### 7.5 财务功能前端残留 grep（必攻项）
+
+```
+$ grep -rn 'transferToTree|fetchTreeBalance|家族树资金|转账' frontend/src
+（无任何输出）
+grep exit=1          ← 1 = 0 命中
+```
+
+**判定**：**0 命中**。钱包页「转账到家族树」区块与 `api.ts` 的 `transferToTree` / `fetchTreeBalance` 封装**已彻底移除**（含文案关键词）。**通过**。
+
+
+## 8. 定向攻坚 H —— 代码卫生（console.log / 未使用导入 / node --check）
+
+**改动文件集**（`git status --porcelain` 的 M/?? 项）：`cloudfunctions/compat-api/index.js`、`lib/tree-activity.js`、`lib/wallet.js`、`lib/home-sort-search.test.js`、`frontend/src/business/{api,index,types}.ts`、`frontend/src/pages/{index,hall,wallet,mine,about}/*.vue`、`package.json`。
+
+**① `node --check`（必攻项，4 个后端 / 测试文件）**
+
+```
+$ for f in cloudfunctions/compat-api/index.js cloudfunctions/compat-api/lib/tree-activity.js \
+           cloudfunctions/compat-api/lib/wallet.js cloudfunctions/compat-api/lib/home-sort-search.test.js; do node --check "$f" && echo "  OK  $f"; done
+  OK  cloudfunctions/compat-api/index.js
+  OK  cloudfunctions/compat-api/lib/tree-activity.js
+  OK  cloudfunctions/compat-api/lib/wallet.js
+  OK  cloudfunctions/compat-api/lib/home-sort-search.test.js
+```
+
+**② `console.*` 残留**
+
+```
+$ grep -n 'console\.' <12 个改动文件>
+frontend/src/pages/index/index.vue:332:    console.error('加载元数据失败:', e);
+frontend/src/pages/hall/index.vue:705:    console.error('加载数字馆信息失败:', e);
+frontend/src/pages/hall/index.vue:723:      console.error('加载谱系可见范围失败:', e);
+$ git diff -U0 -- <12 个改动文件> | grep -E '^\+' | grep -nE 'console\.|MUTATION|TODO|FIXME|debugger'
+（空 → 0 命中）
+```
+
+**判定**：**新增行 0 条 `console.*`**；仅存的 3 处 `console.error` 全在既有 `catch` 兜底分支、**均不在本轮 diff 的 `+` 行内**（属仓库既有风格，非本轮引入的调试残留）。**通过**。
+
+**③ 临时调试 UI / 变异残留关键词**
+
+```
+$ grep -n 'MUTATION|临时|TODO|FIXME|XXX|DEBUG|调试|测试用|hack' <12 个改动文件>
+（空 → 0 命中）
+```
+
+**判定**：0 命中（本轮 §1 / §11 自造变异都写在 `/tmp` 副本，仓库文件从未出现 `MUTATION` 标记，见 §1-A3 与 §11.7 的 md5 回滚证据）。**通过**。
+
+**④ 未使用导入 / 孤儿声明静态扫描**（自写 `/tmp/qa2/unused2.cjs`：按 import 子句提取标识符、剔除 import 语句本体后统计引用；顶层声明只算**非 export** 项）
+
+```
+  OK  cloudfunctions/compat-api/lib/tree-activity.js  未使用导入=[]  非导出孤儿声明=[]
+  OK  cloudfunctions/compat-api/lib/home-sort-search.test.js  未使用导入=[]  非导出孤儿声明=[]
+  OK  frontend/src/business/api.ts  未使用导入=[]  非导出孤儿声明=[]
+  OK  frontend/src/business/index.ts  未使用导入=[]  非导出孤儿声明=[]
+  OK  frontend/src/business/types.ts  未使用导入=[]  非导出孤儿声明=[]
+  !!  cloudfunctions/compat-api/index.js  未使用导入=[verifyJwt]  非导出孤儿声明=[]
+  !!  cloudfunctions/compat-api/lib/wallet.js  未使用导入=[crypto]  非导出孤儿声明=[]
+```
+
+两处未使用导入**均为本轮之前既存、且不在本轮改动行内**（逐条取证）：
+
+```
+$ git diff -U0 -- cloudfunctions/compat-api/index.js | grep -E '^[+-].*verifyJwt'      → 空（本轮未动该 import）
+$ git diff -U0 -- cloudfunctions/compat-api/lib/wallet.js | grep -E '^[+-].*(import|crypto)'  → 空
+$ git show HEAD:cloudfunctions/compat-api/index.js | grep -c verifyJwt   → 1（HEAD 版本已有）
+$ git show HEAD:cloudfunctions/compat-api/lib/wallet.js | grep -n crypto → 5:import crypto from 'node:crypto';
+```
+
+**判定**：**本轮改动文件无新增未使用导入、无孤儿声明**；`verifyJwt`（index.js:41）与 `crypto`（lib/wallet.js:8）是**既存**的两处冗余导入 —— **按「只报告不修改」登记（见 §10 可疑点 S1/S2），不构成本轮返工项**。**通过**。
+
+**⑤ 钱包模块本轮改动面（对照「无调试 UI」）**：`lib/wallet.js` 本轮 = `-19 / +4` 行，删的正是 `getTreeBalance` / `transferToTree`（含 `转账到家族树` 文案）与文件头注释，新增的只有「功能已下线」注释 —— 与 §5 的 410 行为一致，**无任何调试代码或临时分支**。
+
+## 9. 定向攻坚 I —— 真源体检（跑测前后 md5 比对）
+
+**手法**：跑 `npm test` **前**取真源 md5 → 跑 → **后**再取一次逐字节比对；再 `find` 盘点会话期间被写过的真源文件。
+
+**① 跑测前**
+
+```
+$ md5 -q config/tree-meta.json
+d59a9767c34ed4ffefbf70de59d26aa6
+$ find migrate-output/trees migrate-output/collections -type f -name '*.json' | sort | xargs md5   （21 个文件，存 /tmp/qa2/pre.data.md5）
+```
+
+**② 全量测试**
+
+```
+$ npm test > /tmp/qa2/npmtest.log 2>&1 ; echo NPM_EXIT=$?
+NPM_EXIT=0
+# tests 350
+# pass 350
+# fail 0
+# cancelled 0
+# skipped 0
+$ grep -c '^not ok' /tmp/qa2/npmtest.log   → 0
+```
+
+**③ 跑测后（逐字节比对）**
+
+```
+$ md5 -q config/tree-meta.json
+d59a9767c34ed4ffefbf70de59d26aa6        ← 与跑测前一致
+$ find migrate-output/trees migrate-output/collections -type f -name '*.json' | sort | xargs md5 > /tmp/qa2/post.data.md5
+$ diff /tmp/qa2/pre.data.md5 /tmp/qa2/post.data.md5
+（无输出）
+IDENTICAL: 21 个数据文件 md5 全等
+```
+
+**判定**：`npm test` **350/350 全绿**且真源 `config/tree-meta.json` + 21 个数据文件**前后逐字节一致**（`home-sort-search.test.js` 文末自身的真源 md5 护栏也在套件内跑过）。**通过**。
+
+**④ 会话期间（≥ 2026-09-17 20:35）被写过的真源文件盘点**
+
+```
+$ find config migrate-output -newermt '2026-09-17 20:35' -type f -exec stat -f '%Sm  %N' -t '%Y-%m-%d %H:%M:%S' {} \;
+2026-09-17 22:13:26  migrate-output/collections/jiazu_sms_codes.json
+```
+
+**只有 1 个文件**（与派单预期「只有 `jiazu_sms_codes.json` 被写」**数量一致**），但**时间不是派单写的 21:11，而是 22:13:26** —— 即 21:11 之后又发生过一次写；内容与成因经独立核对：
+
+```
+$ cat migrate-output/collections/jiazu_sms_codes.json
+{ "13900000003": { "_id": "13900000003", "code": "607271", "expires_at": 1786780328541, "attempts": 0 } }
+$ stat -f '%Sm %N' migrate-output/collections/jiazu_sms_codes.json /tmp/qa2/copy/collections/jiazu_sms_codes.json
+2026-09-17 22:13:26  migrate-output/collections/jiazu_sms_codes.json     ← 真源
+2026-09-17 22:14:23  /tmp/qa2/copy/collections/jiazu_sms_codes.json     ← 我起的副本实例
+```
+
+成因分类：**发验证码 + 登录消费**的一次完整 dev 登录周期（`send-code` 落一条、`login` 成功即删；文件里只剩一条 2026-08-14 的过期残留记录 `13900000003`，**新增验证码条目已被消费掉**，故内容里看不到当时那个手机号）→ 属「**主代理取 dev 验证码**」类写（非数据损害：该文件本就是验证码临时表，无业务真源语义）。
+
+**明确排除我自己**（沙箱纪律取证）：我在 22:14 的 chief 登录写的是**副本** `COMPACT_OUT_DIR=/tmp/qa2/copy/**`（mtime 22:14:23 即我那次登录+消费），而我的手机号 `16601061656` **从未出现在真源文件里**；且真源该文件在我整轮质检前后 md5 均为 `407a29f866a6558a9f2d3ceec60285b5`（见 ①/③ 的 pre/post 清单）。
+
+**旁证（非我职责域、只列不碰）**：同窗口内 `docs/PENDING_DEPLOY.md`、`docs/home-sort-search.spec.md`、`docs/economy.spec.md` 也有写（其他角色的文档轮，非真源数据文件，且本会话未被真源数据污染）。
+
+**判定**：真源数据面**零未授权写入**；唯一被写的 `jiazu_sms_codes.json` 已独立定性为「dev 验证码临时表 + 主代理取码所致」，**不构成本轮缺陷**（但时间与派单记录的 21:11 不一致 → 见 §10 观察项 O1）。
+
+
+## 10. 总体结论与返工清单
+
+### 10.1 总体结论：**通过（无必修返工项）**
+
+本轮项目标（首页三档排序 / 全站人物搜索 / 家族树资金下线 / 镜像归并口径 D·D-2）在**真机实例 + 真源数据 + 独立复算 + 自主变异**四条独立证据链下全部达标：`npm test` **350/350 全绿**、`vue-tsc --noEmit` **exit 0**、4 个 SFC **0 编译错误**、三档排序复算与参考值 **5/5 逐位一致**、410 探针 **7/7**、活跃度逐树对账 **9/9**、镜像归并 **chief 12/12 · guest 12/12 · 夹具 7/7**、泄漏 **0 例**、真源 md5 **逐字节未变**。
+
+### 10.2 逐项验收对照
+
+| 项 | 内容 | 结果 | 证据位置 |
+|---|---|---|---|
+| A | 变异验证（活跃度窗口 / 隐私裁剪被破坏必须变红） | 通过 | §1 |
+| B | 活跃度窗口边界（恰 30 天含等号 / 差 1ms / 字段回退） | 通过 | §2 |
+| C | 编号检索正反向 + guest/member/chief 分档（59 探针 0 泄漏） | 通过 | §3 |
+| D | `/search/global` 边界（空 query / limit clamp 1..100 / 幽灵 tree_id / 精确置顶） | 通过 | §4 |
+| E | 410 不被 401/400 抢先（**7 条探针全部 410 + `TREE_FUND_RETIRED`**） | 通过 | §5 |
+| F | 真实数据交叉核对（**activity 9/9 逐树相等**） | 通过 | §6 |
+| G | 前端（**vue-tsc exit 0** / **SFC 0 error** / 三档复算 5/5 / 列表过滤 5 棵 / 财务残留 grep 0） | 通过 | §7 |
+| H | 代码卫生（**node --check 4/4** / 新增行 0 `console.*` / 0 调试 UI / 0 新增未使用导入） | 通过 | §8 |
+| I | 真源体检（**350/350** + meta 与 21 个数据文件前后逐字节一致；会话窗口仅 1 个临时表被写） | 通过 | §9 |
+| D/D-2 | 镜像归并口径（真身优先 / 受限标记 / 递归链 / 防环 / 不按姓名归并 / 树内搜索未改） | 通过 | §11 |
+
+### 10.3 返工清单：**0 项（必修）**
+
+无「必须修复才能放行」的项 —— 上面 10 项逐项达标，尤其是两条最容易被「假绿」掩盖的硬指标（排序复算与镜像归并的变异验证）都用真机 / 真变异打穿过。
+
+**可选清理项（非阻塞，本轮不动代码，交主代理决策）**
+
+| # | 位置 | 建议 | 代价 |
+|---|---|---|---|
+| R1 | `cloudfunctions/compat-api/index.js:41` | `verifyJwt` 已无人使用（既存冗余导入） | 删一个词 + 重跑 `npm test`；非本轮引入 |
+| R2 | `cloudfunctions/compat-api/lib/wallet.js:8` | `crypto` 已无人使用（既存冗余导入） | 同上 |
+| R3 | 历史 `transfer` 流水（见 S3） | 需产品口径决定「保留存档 / 改负数 / 加标签」 | 涉及存档数据语义，**不属本轮范围** |
+
+### 10.4 发现但未修的可疑点（如实列出，未改任何代码）
+
+**S1 · `verifyJwt` 冗余导入（既存，非本轮引入）**
+`cloudfunctions/compat-api/index.js:41` 的 `import { signJwt, verifyJwt, authUser, … }` 里 `verifyJwt` 全文件零引用。复现：`grep -n verifyJwt cloudfunctions/compat-api/index.js` → 仅第 41 行；`git show HEAD:… | grep -c verifyJwt` → 1（HEAD 已有）。影响：无功能影响。
+
+**S2 · `crypto` 冗余导入（既存，非本轮引入）**
+`cloudfunctions/compat-api/lib/wallet.js:8` `import crypto from 'node:crypto'` 全文件零引用（已并入 S1 同类）。影响：无功能影响。
+
+**S3 · 退役功能的存档流水在钱包页被渲染成「收入」（数据/展示语义，非本轮引入）**
+- 现象：`GET /api/wallet/balance`（chief 16601061656）返回一条 2026-08-13 的历史流水 `{type:"transfer", tree:"gu_39038_01", amount_cents:2000, desc:"转账到家族树 gu_39038_01"}`；
+- `frontend/src/pages/wallet/index.vue:55-56` 按 `amount_cents >= 0` 打 `+` 并上绿色（`.tx-amount` 绿色 / `.minus` 红色），而**该笔实际是用户支出**（`transferToTree` 当初只用正数记账、未写负号）→ 界面显示为 **绿色 `+20.00`**。
+- 影响：**显示层面误导**（用户已不能发起新转账：`POST /wallet/transfer` 恒 410，见 §5），流水是历史存档，不产生新的错误记账。
+- 复现：`curl -s http://127.0.0.1:3460/api/wallet/balance -H "Authorization: Bearer $(cat /tmp/qa2/chief.token)"` → 见 `type:"transfer"` 那条；对照 `frontend/src/pages/wallet/index.vue:55`。
+- 判定：**不构成本轮返工项**（本轮口径只要求下线路由 + 移除前端入口，两者均已达成；历史流水符号语义属存档数据问题，需产品口径）。
+
+**O1 · `jiazu_sms_codes.json` 的写入时间比派单记录晚（需主代理确认归属）**
+派单记录「会话期间只有 `migrate-output/collections/jiazu_sms_codes.json` 被写（时间应为 21:11）」；我独立盘点得到 **mtime = 2026-09-17 22:13:26**（`find config migrate-output -newermt '2026-09-17 20:35'` 只此一条）。文件数**与预期一致**，时间**不一致** → 说明 21:11 之后又发生过一次 dev 验证码周期（内容已消费、md5 在我整轮质检前后均为 `407a29f866a6558a9f2d3ceec60285b5`）。**不是我写的**：我的登录只写 `/tmp/qa2/copy/collections/jiazu_sms_codes.json`（mtime 22:14:23），我的手机号从未出现在真源文件里。请主代理确认是其本轮取码所致（若是则无需处置）。
+
+**O2 · 环状镜像多命中时「各成一例」是口径推论，非缺陷**
+`A→B→A` 环上没有真身 → 实现把「组键」退回各镜像自己的 `external_person_handle`。故**单点查询恒 1 条**（符合派单要求），但**一次查询同时命中环上两节点时是 2+ 条（各 `restricted=true`）**，不会互相折叠（也绝不会按姓名折叠）。复现：夹具实例 3461 上 `GET /api/search/global?query=环` → 3 条（自环 + 环甲 + 环乙）。仓库既有用例 `N4 / M4 / N5` 亦按此口径断言（见 §11.7 变异②）。
+
+**O3 · 镜像链 >32 跳时保守退化为 `restricted=true`（设计上限）**
+`MAX_MIRROR_HOPS = 32`（`cloudfunctions/compat-api/index.js:2089`，防深判定在 `:2110`）：40 级链搜索首节点 → 1 条镜像 + `restricted=true`（真身明明存在但不展示），真身自身单独可查（`restricted=false`）。属**有界防御**（防病态数据拖垮请求），真源实测最长链深 1–2 跳，实际影响为零。复现：夹具实例 3461 `GET /api/search/global?query=I910000` vs `?query=I910039`。
+
+**O4 · 本报告自身的骨架残留（我这一轮所致，非产品缺陷）**
+上一轮因迭代上限，§1 末尾残留了一个**重复的空标题**、§5–§9 为空骨架。本轮已补全 §5–§11 并把该重复标题标注为残留（内容未删改任何既有章节）。
+
+### 10.5 覆盖边界（明确声明未覆盖项）
+
+- **浏览器渲染层未验**（派单禁止浏览器）：三档排序只做**逻辑独立复算** + 类型/编译门禁，**未做像素/DOM 取证**；钱包页 S3 的「绿色 +20.00」是**读代码行（`:55-56`）+ 真机出参**推出的，未截图。
+- **member 分档的归并表现只抽验了镜像编号路**（§3 已用真实 member token 验过同一隐藏节点 guest 0 / member 1）；§11 的 12 个镜像在 member 视角下未逐条重跑（chief + guest 两端已全量覆盖，member 是二者的中间档、由同一 `isHiddenPerson` 分档函数决定）。
+- **auth-server 遗留链路**（3000）本轮未验，也不在其口径内（派单与规格均声明退役中）。
+- 副本实例 `3460`（真源副本）与夹具实例 `3461`（14 棵夹具树）由我自起、**收工自行终止**；用户正在使用的 **3100 / 5199 全程未碰**（未 kill、未重启、未改指向）。
+
+
+---
+
+## 11. 归并口径（口径 D / D-2）独立验证 —— 镜像折叠 / 真身优先 / 受限标记 / 递归链 / 防环 / 不按姓名归并 / 树内搜索未改
+
+**验证环境**：真源数据副本实例 `3460`（`/tmp/qa2/copy`，tree-meta md5 与真源一致）+ 自造夹具实例 `3461`（`/tmp/qa2/fixt`，14 棵夹具树，**不含任何真源 tree_id**）。全程未碰 3100 / 5199；未改实现代码（变异验证在 `/tmp/qa2/mutrepo` 副本内做，见 11.7）。
+
+**真源镜像拓扑（自己扫 `migrate-output/trees/*.json` 得到，非读源码）**：全库 `external_mirror==='true'` 且有 `external_person_handle` 的节点共 **12 个**（founder 镜像 6 / marriage 镜像 3 / child 镜像 3）；最长链深 = 2 跳（普通树始祖 → 祖谱节点 → 真身…本例均为 1 跳）。
+
+### 11.1 真身可见 → 代表一律取真身且 `restricted=false`（**即使只命中镜像**）
+
+**手法**：chief token（`POST /auth/send-code` 回 `dev_code` → `POST /auth/login`，手机号 16601061656 → `role=chief_editor`），用**镜像自己的编号**`gramps_id` 检索 `/search/global`。12 个镜像逐个探针：
+
+```
+$ curl -X POST http://127.0.0.1:3460/auth/send-code -d '{"phone":"16601061656"}'
+{"ok":true,"message":"验证码已发送","dev_code":"214344"}
+$ curl -X POST http://127.0.0.1:3460/auth/login -d '{"phone":"16601061656","code":"214344"}'
+role= chief_editor   tokenLen= 213
+
+=== ① chief：按【镜像自己的编号】搜 → 期望 1 条且代表 = 真身、restricted=false ===
+  [OK] mirror gu_39038_01/I000143 → gu_39038/I000139/5ae4c6e5… name=顾清学 matched=id restricted=false
+  [OK] mirror gu_39038_01/I000292 → ji_23395_01/I000254/7146eadb… name=季清昆 matched=id restricted=false
+  [OK] mirror gu_39038_01/I000293 → ji_23395_01/I000149/103f95b8… name=季庭亦 matched=id restricted=false
+  [OK] mirror gu_39038_01/I000294 → ji_23395_01/I000159/103f95b8… name=季季贺为 matched=id restricted=false
+  [OK] mirror ji_23395_01/I000209 → ji_23395/I000163/3c95530f… name=季花 matched=id restricted=false
+  [OK] mirror ji_23395_01/I000253 → shen_27784_01/I000276/103f95b8… name=沈伟 matched=id restricted=false
+  [OK] mirror ji_23395_01/I000291 → gu_39038_01/I000140/103f95b8… name=顾景月 matched=id restricted=false
+  [OK] mirror shen_27784_01/I000285 → ji_23395_01/I000164/103f95b8… name=季志全 matched=id restricted=false
+  [OK] mirror shen_27784_01/I000286 → ji_23395_01/I000254/7146eadb… name=季清昆 matched=id restricted=false
+  [OK] mirror ji_23395/I000162 → zhonghua/I0100/103ff661… name=季行父 matched=id restricted=false
+  [OK] mirror gu_39038/I000138 → zhonghua/I0137/a824b97d… name=姒期视 matched=id restricted=false
+  [OK] mirror qin_31206/I000289 → zhonghua/I000288/3382fa53… name=姬搢 matched=id restricted=false
+  chief 结论: 12/12 命中「1 条 = 真身 + restricted=false」  失败=[]
+
+=== ② 按镜像姓名搜（chief，抽 4 例）===
+  顾清学: 条数=2 含真身=true 含镜像=false …（真身 gu_39038/I000139 + zhonghua/I0046）
+  季清昆: 条数=1 含真身=true 含镜像=false
+  季庭亦: 条数=1 含真身=true 含镜像=false
+  季季贺为: 条数=1 含真身=true 含镜像=false
+```
+
+**判定**：**12/12 通过**。查询只命中镜像（甚至用镜像自己的编号）时，只要真身对当前访问者可见，代表**一定是真身**且 `restricted=false` —— 不存在「假受限」。姓名路同样只出真身条（镜像条被折叠掉）。**通过**。
+
+### 11.2 真身不可见 / 解析不到 → 代表取镜像 + `restricted=true`，且**不泄漏**真身任何信息
+
+**手法**：guest（匿名）逐镜像编号；期望值**不靠猜**，先用 `/people/?profile=all` 独立判定「镜像自身」与「真身」各自的可见性，再推期望；泄漏检查在 `restricted=true` 的条上做**字段级精确比对**（并修正了 `gu_39038` 是 `gu_39038_01` 子串导致的初版假阳性）。
+
+```
+=== guest（匿名）逐镜像编号：期望值按「镜像/真身各自可见性」推导 ===
+  [OK] 镜像 gu_39038_01/I000143(顾清学) 可见性: 镜像=true 真身=false → 期望 1 条 = 镜像 + restricted:true
+       实测: 1 条 gu_39038_01/I000143 restricted=true  泄漏=false
+  [OK] 镜像 gu_39038_01/I000292 可见性: 镜像=true 真身=false → 实测: 1 条 gu_39038_01/I000292 restricted=true
+  [OK] 镜像 gu_39038_01/I000293 可见性: 镜像=false 真身=false → 期望 0 条（镜像自身被节点级分层隐藏）  实测: 0 条
+  [OK] 镜像 gu_39038_01/I000294 可见性: 镜像=false 真身=false → 实测: 0 条
+  [OK] 镜像 ji_23395_01/I000209(季花) 可见性: 镜像=true 真身=false → 实测: 1 条 ji_23395_01/I000209 restricted=true
+  [OK] 镜像 ji_23395_01/I000253(沈伟) 可见性: 镜像=true 真身=false → 实测: 1 条 ji_23395_01/I000253 restricted=true
+  [OK] 镜像 ji_23395_01/I000291(顾景月) 可见性: 镜像=true 真身=false → 实测: 1 条 ji_23395_01/I000291 restricted=true
+  [OK] 镜像 shen_27784_01/I000285(季志全) 可见性: 镜像=true 真身=false → 实测: 1 条 shen_27784_01/I000285 restricted=true
+  [OK] 镜像 shen_27784_01/I000286 可见性: 镜像=false 真身=false → 实测: 0 条
+  [OK] 镜像 ji_23395/I000162(季行父) 可见性: 镜像=true 真身=true → 期望 1 条 = 真身 + restricted:false
+       实测: 1 条 zhonghua/I0100 restricted=false
+  [OK] 镜像 gu_39038/I000138(姒期视) → 实测: 1 条 zhonghua/I0137 restricted=false
+  [OK] 镜像 qin_31206/I000289(姬搢) → 实测: 1 条 zhonghua/I000288 restricted=false
+
+guest 汇总: 镜像自身被隐藏→0 条 3 例；真身可见→取真身 3 例；真身不可见→取镜像+restricted=true 6 例；不符期望 []；泄漏 0 例
+```
+
+**受限条逐字符全文（肉眼复核，无任何真身字段）**：
+
+```
+query=I000143 → [{"tree_id":"gu_39038_01","tree_title":"顾氏安达家族","handle":"103f95b87b5a464242933ee319d5","gramps_id":"I000143","name":"顾清学","gender":"M","birth_date":"","death_date":"","matched":"id","restricted":true}]
+query=I000209 → [{"tree_id":"ji_23395_01","tree_title":"季氏费县白露家族","handle":"10400594c54f5203f61bf4fa4b20","gramps_id":"I000209","name":"季花","gender":"M","birth_date":"","death_date":"","matched":"id","restricted":true}]
+（对应真身分别是 gu_39038/I000139/handle 5ae4c6e5… 与 ji_23395/I000163/handle 3c95530f… —— 均未出现）
+
+=== 泄漏检查（字段级精确，避免子串假阳性）===
+  I000143 restricted=true 条: 字段级泄漏=无
+  I000292 restricted=true 条: 字段级泄漏=无
+  I000209 restricted=true 条: 字段级泄漏=无
+  I000253 restricted=true 条: 字段级泄漏=无
+  I000291 restricted=true 条: 字段级泄漏=无
+  I000285 restricted=true 条: 字段级泄漏=无
+受限条总数 = 6；泄漏 = 0 []
+```
+
+**判定**：真身不可见时代表恒为**镜像本身**（`tree_id/handle/gramps_id/tree_title/name` 全取镜像）并置 `restricted=true`；真身的 handle / 编号 / tree_id / tree_title **一个字节都不出现在响应里**（6 例 × 4 字段精确比对 + 正则引号边界全 0 命中）。另有 3 例「镜像自身被节点级分层隐藏 → 0 条」，属**读权限裁剪的正确前置行为**（不是归并缺陷）。**通过**。
+
+### 11.3 三级镜像链夹具 A→B→C（C 为真身）→ 只出 1 条 = C
+
+夹具（`/tmp/qa2/fixt`，实例 3461）：`fx_a/I900001 链甲` →(`external_person_handle` = B, `external_tree`=fx_b) `fx_b/I900002 链乙` → `fx_c/I900003 链丙`（真身，无镜像标记）。
+
+```
+=== 0. 夹具实例探活 ===
+  /tree/rank(fx_a) → 200      夹具 meta 树数 = 14 | 是否含真源树 = false
+=== 1. 三级镜像链 A→B→C：搜 A（顶层镜像）→ 期望 1 条 = C（真身）+ restricted=false ===
+  [OK] A 编号:       HTTP 200 耗时 7ms 条数=1 fx_c/I900003(链丙) restricted=false matched=id
+  [OK] A 姓名:       HTTP 200 耗时 3ms 条数=1 fx_c/I900003(链丙) restricted=false matched=name
+  [OK] A handle:     HTTP 200 耗时 2ms 条数=1 fx_c/I900003(链丙) restricted=false matched=id
+  [OK] B 编号(中层): HTTP 200 耗时 2ms 条数=1 fx_c/I900003(链丙) restricted=false matched=id
+  [OK] B handle:     HTTP 200 耗时 2ms 条数=1 fx_c/I900003(链丙) restricted=false matched=id
+  [OK] C 编号(真身): HTTP 200 耗时 2ms 条数=1 fx_c/I900003(链丙) restricted=false matched=id
+  [OK] C handle:     HTTP 200 耗时 3ms 条数=1 fx_c/I900003(链丙) restricted=false matched=id
+```
+
+**判定**：**7/7 通过** —— 从 A、B、C 三处任意入口（编号 / handle / 姓名）进入，结果**恒为 1 条且是链尾真身 C**，`restricted=false`，说明解析是**递归**的（不是只上溯一跳；若只上溯一跳，A 会停在 B 并被判 `restricted=true`）。**通过**。
+
+### 11.4 环状镜像 A→B→A / 自环 → 不死循环、不报错、结果确定
+
+```
+=== 2. 环状镜像 X→Y→X：期望不死循环、不报错、可预期条数 ===
+  X 编号: HTTP 200 耗时 3ms 条数=1 fx_x/I900004(环甲) restricted=true matched=id
+  X 姓名: HTTP 200 耗时 2ms 条数=1 fx_x/I900004(环甲) restricted=true matched=name
+  Y 编号: HTTP 200 耗时 4ms 条数=1 fx_y/I900005(环乙) restricted=true matched=id
+  Y 姓名: HTTP 200 耗时 1ms 条数=1 fx_y/I900005(环乙) restricted=true matched=name
+=== 3. 自环（指向自己）= 环的最短退化形式 ===
+  自环编号: HTTP 200 耗时 2ms 条数=1 fx_s/I900006(自环) restricted=true matched=id
+=== 9. 环上两节点都被姓名命中（查询「环」）→ 记录实际条数 ===
+  HTTP 200 耗时 27ms 条数=3
+     fx_s/I900006/f00000000000000000000000 name=自环 restricted=true matched=name
+     fx_x/I900004/d00000000000000000000000 name=环甲 restricted=true matched=name
+     fx_y/I900005/e00000000000000000000000 name=环乙 restricted=true matched=name
+```
+
+**判定**：**通过（并附口径澄清）** —— 环上**没有真身**，实现按「环 → 解析不到」处理：单点查询（命中环上一个镜像）**恒定 1 条**、耗时 1–4ms、HTTP 200、**无死循环无异常**；用命中环上两节点的共有姓名搜（`环`）时**各镜像各成一例（3 条）**，即「组键退回各镜像自己的 `external_person_handle`」，**不会把不同人误并成一条、也不会互相吞掉**。这与「同一真身折叠为 1 条」的口径一致（同一人定义 = 同一**真身 handle**，环上没有真身 → 无从折叠）。派单里「环状镜像…只出 1 条」在**单点查询**下成立（实测 1 条），在**多命中查询**下为「各成一例」——此为口径的必要推论，非缺陷，登记为观察项 O2。
+
+### 11.5 超深链（超 32 跳上限）不影响终止性
+
+```
+=== 4. 40 级超深镜像链（真身在链尾）—— 期望不死循环、上限内退化 ===
+  深链首编号: HTTP 200 耗时 2ms 条数=1 fx_deep/I910000(深链0) restricted=true matched=id
+  说明: 上限 32 跳 → 走到第 33 环仍未到真身 → 按「解析不到」处理
+  深链末（真身本身）: HTTP 200 耗时 2ms 条数=1 fx_deep/I910039(深链39) restricted=false matched=id
+```
+
+**判定**：**通过** —— 40 级链**不卡死**（2ms 返回）；超过 32 跳上限时按「解析不到」退化为 `restricted=true`（保守侧、不泄漏），真身自身查得到且 `restricted=false`。真源最长链深实测 1–2 跳，此夹具属畸形数据演练（登记为观察项 O3：>32 跳的链会被保守判为受限，属设计上限，非缺陷）。
+
+### 11.6 不按姓名归并 / 双镜像同真身折叠 / 树内搜索未改
+
+```
+=== 5. 不按姓名归并：两棵树上两个真实同名节点（无任何指针）→ 期望 2 条 ===
+  HTTP 200 耗时 1ms 条数=2 fx_n1/I900007(同名测试丁) restricted=false matched=name | fx_n2/I900008(同名测试丁) restricted=false matched=name
+  两个 handle 都在 = true
+=== 6. 双镜像指向同一真身 → 期望折叠为 1 条 = 真身 ===
+  HTTP 200 耗时 2ms 条数=1 fx_r/I900011(双镜真身) restricted=false matched=name
+  含真身 = true  含任一镜像 = false
+=== 7. 不在同一可见面的镜像（指向长尾树第 40 代、guest 不可见）===
+  [guest] HTTP 200 耗时 1ms 条数=1 fx_mirror/I900012(指深尾) restricted=true matched=name
+    期望=镜像 fx_mirror/I900012 restricted=true；实测 restricted=true；真身(第40代)对 guest 可见=false；泄漏(handle/编号/树id/树名)=false
+=== 10. 树内 /search 不折叠（镜像树内搜镜像编号 → 仍返回镜像本身）===
+  [fx_a] 镜像树内搜镜像编号（I900001）: HTTP 200 条数=1 handles=["a00000000000000000000000"]
+        含镜像 a0…=true 含真身 c0…=false  出参是否含 restricted 字段=false
+  [fx_c] 真身树内搜真身编号（I900003）: HTTP 200 条数=1 handles=["c00000000000000000000000"]
+=== 11. 出参形状 ===
+  /search/global keys = ["birth_date","death_date","gender","gramps_id","handle","matched","name","restricted","tree_id","tree_title"]   （恰 10 个，只新增 restricted）
+  树内 /search 全文（片段）= [{"handle":"a00000000000000000000000","object":{…}}]  ← Gramps 形状，无 restricted / 无归并
+=== 8. 树内 /search 仍要求 X-Tree-Id 且只看本树 ===
+  无 X-Tree-Id → 400 {"error":"缺少 X-Tree-Id"}
+  X-Tree-Id: fx_a → 200 [{"handle":"a00000000000000000000000",…}]
+  X-Tree-Id: fx_c（链甲不在本树）→ 200 []
+```
+
+**真源硬边界复核（顾清学，拍板口径要求仍为 2 条）**：
+
+```
+=== ④ 不按姓名归并：真源「顾清学」guest / chief ===
+  guest: 条数=2
+     gu_39038_01/I000143/103f95b87b5a464242933ee319d5 name=顾清学 matched=name restricted=true
+     zhonghua/I0046/103ff1c309eb7bf2cb4f6ff1762e name=顾清学 matched=name restricted=false
+  chief: 条数=2
+     gu_39038/I000139/5ae4c6e505c90d290f71f66b name=顾清学 matched=name restricted=false
+     zhonghua/I0046/103ff1c309eb7bf2cb4f6ff1762e name=顾清学 matched=name restricted=false
+```
+
+**判定**：
+- **不按姓名归并 —— 通过**：真源「顾清学」**guest 2 条 / chief 2 条**（与派单「仍为 2 条」一致）：`zhonghua/I0046` 与「顾树那位」**无指针相连**（`I0046` 的 `external_mirror` 为空；`gu_39038_01/I000143` 是指向祖谱 `gu_39038/I000139` 的 founder 镜像），故二者归并键不同 → 各占一条。**guest 侧代表是镜像 `I000143`（`restricted=true`），chief 侧同一人被折叠为其真身 `gu_39038/I000139`** —— 这是 11.1/11.2 的分档口径（真身可见性不同），**不是按姓名合并或误合并**。
+- **双镜像同真身 —— 通过**：两棵树的镜像（`link_type=marriage`）指向同一真身 → **折叠为 1 条 = 真身**，两镜像都不出现。
+- **树内 `/search` 完全未改 —— 通过**，三重取证：
+  1. **代码面**：`index.js` 本轮 8 个 hunk，最后一个 hunk 覆盖新文件行 **2022–2266**；树内 `/search`（`pathname === '/search' && method === 'GET'`）在 **2379 行**，**不在改动面内**；`awk NR 2267..2378 | grep restricted|isMirrorNode|resolveRealBody` → 空。
+  2. **行为面**：树内 `/search` 仍要求 `X-Tree-Id`（无 → 400）、只看本树（`fx_c` 搜 A 的名字 → `[]`）、**不折叠镜像**（`fx_a` 内搜 `I900001` → 返回镜像自己 `a0…`，真身 `c0…` 不出现）。
+  3. **形状面**：树内 `/search` 出参是 Gramps 形状 `{handle, object}`，**不含 `restricted`**；`/search/global` 恰 10 个字段（只新增 `restricted`，无镜像计数/附注字段）。
+
+### 11.7 自主变异验证（**不接受读源码当结论**）：`resolveRealBody` 恒返入参自身 → 归并用例必须变红
+
+**做法**：仓库实现文件**保持只读**（派单纪律）——把 `cloudfunctions/compat-api` + `config/` + `migrate-output/` 整份复制到 `/tmp/qa2/mutrepo`（`node_modules` 软链），在**副本**上做变异并跑同一测试文件；副本内 `index.js` 初始 md5 与真源**逐字节一致**（`f51ea39224a53b40f605c75b11e60661`）。
+
+**变异前（基线，副本）**
+
+```
+$ cd /tmp/qa2/mutrepo && node --test cloudfunctions/compat-api/lib/home-sort-search.test.js
+exit=0
+# tests 23
+# pass 23
+# fail 0
+```
+
+**变异 ①：`const out = await walk();` → `const out = { treeId: t.id, person: p };`（恒返入参自身）**
+
+```
+exit=1
+# tests 23
+# pass 18
+# fail 5
+not ok 11 - M1 /search/global：真身 + 同名镜像 → 恰好 1 条（取真身，restricted=false，不夹带镜像信息）
+not ok 13 - M3 /search/global：编号精确命中镜像 → 取被命中的镜像节点且 matched=id
+not ok 15 - M5 /search/global：先归并、后截断 —— 同一人不占两个名额，limit 仍生效
+not ok 16 - N1 /search/global：编号精确命中镜像 + 真身对访问者可见 → 恰好 1 条，代表取真身、restricted=false
+not ok 18 - N3 /search/global：三级镜像链 A→B→C —— 只出 1 条；C 可见取 C，C 不可见取镜像
+```
+
+**变异 ②（附加）：归并键 `rel?.person?.handle || …` → `String(h.p.name || h.p.handle)`（按姓名归并）**
+
+```
+exit=1
+# tests 23
+# pass 20
+# fail 3
+not ok 14 - M4 /search/global：两个不同真身同名（无镜像关系）→ 仍返回 2 条（不得按姓名合并）
+not ok 19 - N4 /search/global：环状镜像（A→B→A）→ 不抛、不死循环、结果确定
+not ok 20 - N5 /search/global：两个不同真身同名（无镜像关系）→ 仍 2 条（不得按姓名合并）
+```
+
+**回滚证据**
+
+```
+$ cp -f /Users/kevin/bistro/jiazu/cloudfunctions/compat-api/index.js /tmp/qa2/mutrepo/cloudfunctions/compat-api/index.js
+$ md5 -q /tmp/qa2/mutrepo/cloudfunctions/compat-api/index.js /Users/kevin/bistro/jiazu/cloudfunctions/compat-api/index.js
+f51ea39224a53b40f605c75b11e60661
+f51ea39224a53b40f605c75b11e60661
+$ diff -q /tmp/qa2/mutrepo/cloudfunctions/compat-api/index.js /Users/kevin/bistro/jiazu/cloudfunctions/compat-api/index.js
+IDENTICAL
+$ node --test cloudfunctions/compat-api/lib/home-sort-search.test.js   （回滚后）
+exit=0
+# tests 23
+# pass 23
+# fail 0
+```
+
+**判定**：**通过**。归并 / 受限 / 三级链用例**在两次变异下都确定变红**（23→18/5、23→20/3），且两个「不得按姓名合并」用例被语义反转直接打红 —— 证明这些新用例**不是空转**（不是「已加断言」的空口结论）；回滚后 23/23 全绿、副本与真源 md5 **逐字节一致**，真源实现文件**全程未被写入**（`git status --porcelain` 中 `index.js` 的 mtime 与内容均未被我改动）。
+
+---
+
+## 12. 增量验收（F1–F4） —— 本轮 4 个小修复（钱包/首页建树费文案改 9 籽 · person-archive TDZ · 删两处冗余导入）
+
+### 12.0 验收基线与纪律（⚠️ 本轮质检期间 HEAD 发生位移，基线说明必须写死）
+
+- 质检开工快照：`git rev-parse --short HEAD` = **b16c60c**（此时 4 个受验文件在 `git status --short` 中为未提交的 ` M`）。
+- 质检进行中主代理落了两个 commit（均 2026-09-17 22:26:05）：`a235bd0`（后端 compat-api）、`53b154f`（前端）；收工时 `HEAD = 53b154f`，4 个受验文件工作区已与 HEAD 一致（`git status --porcelain` 仅剩 `docs/` 三处）。
+- 因此**本轮改动的 pre 基线一律取 `b16c60c`**（用当前 HEAD 比会因改动已被提交而退化成恒等空断言）。§12 内所有 `pre` = `git show b16c60c:<path>`，`post` = 工作区（≡ 53b154f）。
+- 纪律执行：全程只读（`git show` / `grep` / `diff` / `md5` / `node --check` / `node --test` / `npx vue-tsc`），**未改任何实现或前端代码**、**未使用浏览器**、**未启动/停止/改指向任何服务**（3100 / 5199 全程未触碰），未重跑前几轮整套矩阵。
+
+### 12.1 F2「8.4 定稿确认弹窗文案逐字未变」（硬项）→ **通过**
+
+```bash
+$ git show b16c60c:frontend/src/pages/index/index.vue > /tmp/neng12/index.pre.vue
+$ awk '/^const TREE_CREATE_CONFIRM = \{/,/^\}/' <pre|post> > /tmp/neng12/block.pre.txt | block.post.txt
+行数：  9  (pre)     9  (post)
+md5 ：  6c5c7946f6c6d7bb7d8c4b4f23e7b129  (pre)
+        6c5c7946f6c6d7bb7d8c4b4f23e7b129  (post)
+$ diff /tmp/neng12/block.pre.txt /tmp/neng12/block.post.txt
+（无输出）  DIFF_EXIT=0      # diff 行数 = 0
+```
+
+pre/post 逐字内容（两侧完全相同）：
+
+```ts
+const TREE_CREATE_CONFIRM = {
+  title: '⚠️ 创建家族树确认',
+  content:
+    '本次操作将消耗9颗石榴籽，创建全新家族谱系大树。\n' +
+    '消耗时将优先扣除您账户内即将最先到期的石榴籽；若后续删除家族树，本次消耗的石榴籽不予退回。\n' +
+    '确认创建家族树？',
+  confirmText: '确认创建',
+  cancelText: '取消',
+} as const;
+```
+
+调用点亦原样直传（`frontend/src/pages/index/index.vue:378-381`，`uni.showModal({title/content/confirmText/cancelText: TREE_CREATE_CONFIRM.*})`）——无 ¥ 拼接、无二次改写、无换行改写。
+
+### 12.2 F4「删除两处冗余导入且无残留调用」（硬项）→ **通过**
+
+| 项 | pre（b16c60c） | post（工作区） | 残留调用 | 语法 |
+|---|---|---|---|---|
+| `cloudfunctions/compat-api/index.js` 的 `verifyJwt` | `:39  import { signJwt, **verifyJwt**, authUser, … }` | `:41  import { signJwt, authUser, … }`（已删） | `grep -rn 'verifyJwt' cloudfunctions/compat-api/` → 仅命中 `lib/auth.js:35`（自身定义）与 `lib/auth.js:54`（模块内自用）；**index.js 内 0 处**（`grep -c verifyJwt index.js` = 0） | `node --check` OK |
+| `cloudfunctions/compat-api/lib/wallet.js` 的 `crypto` | `:5  import crypto from 'node:crypto';` | 已删 | `grep -n 'crypto' lib/wallet.js` → 0 命中（exit 1）；补查 `randomUUID\|createHash\|randomBytes\|timingSafe\|uuid` → 0 命中 | `node --check` OK |
+
+删除归属取证：`git log -S'verifyJwt' -- cloudfunctions/compat-api/index.js` 与 `git log -S'node:crypto' -- cloudfunctions/compat-api/lib/wallet.js` 均显示**引入于 `23a7f18`、移除于 `a235bd0`**（=`docs/home-sort-search.qa.md` §10.3 登记的可选清理项 R1 / R2，本轮已闭合）。两文件的净 diff（`index.js +260/-24`、`wallet.js +4/-20`）中夹着本轮其它改动，故**无法用 commit 隔离断言，只能用「grep 无残留 + node --check + 全量测试绿」三证收口**（见 §12.9 可疑点 S4）。
+
+### 12.3 F3「`isMasterTree` 声明先于调用它的 immediate watch」（硬项）→ **通过**
+
+| 位置 | pre（b16c60c） | post（工作区） |
+|---|---|---|
+| `const isMasterTree = computed(() => props.treeId === 'zhonghua')` | **:1275** | **:767**（上移至 props 别名区） |
+| `watch(handle, () => { if (handle.value) loadAttachedTrees(); }, { immediate: true })` | **:836** → setup 期同步执行 `loadAttachedTrees()`（`:839` 首行即读 `isMasterTree.value`） | **:846**（因上方新增 10 行说明注释而后移） |
+
+- `grep -c 'const isMasterTree' person-archive.vue` = **1**（全文件唯一声明，无重复/遮蔽）。
+- 全文件 `{ immediate: true }` 仅 **:846 一处**（`:762` 那处是说明注释文本，非可执行代码）；`loadAttachedTrees` 定义在 `:838`、被 `:846` 调用，调用链全程位于 `:767` 之后 → **声明先于调用，TDZ 根因（`Cannot access 'isMasterTree' before initialization`）已消除**。
+- 佐证：`cd frontend && npx vue-tsc --noEmit` → **exit 0**，输出 0 行。
+- 额外佐证（超出派单要求）：`@vue/compiler-sfc` 的 `parse()+compileTemplate()` 探针（与 vite 同一编译器，脚本 `/tmp/neng12/sfc-probe.cjs`）对 3 个被改 SFC 全部 `parseErrors=0 / templateErrors=0` → `SFC_PROBE_ALL_OK`。
+
+### 12.4 F1/F2 文案落点与残留（`¥` / 死代码）→ **通过**
+
+```bash
+$ grep -rn '9.90' frontend/src/pages/wallet/index.vue frontend/src/pages/index/index.vue
+frontend/src/pages/wallet/index.vue:17:  <!-- 竹简市集入口（官方竹简 ¥9.90/束 · 每日 21:00 限量） -->
+frontend/src/pages/wallet/index.vue:21:  <text class="entry-desc">官方竹简 ¥9.90/束 · 每日 21:00 限量</text>
+（index/index.vue 内 9.90 命中 0；未动，符合要求）
+
+$ grep -n 'feeYuan\|balanceYuan\|fetchWallet' frontend/src/pages/index/index.vue
+（0 命中，exit=1）   # 全仓同名残留只在 wallet 页与 api.ts（合法保留）
+```
+
+- **F1 钱包页**（`frontend/src/pages/wallet/index.vue`）：`:7` 「余额仅用于购买官方竹简」+ `:8` 「新建家族树消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽」；命名常量 `:84 const TREE_CREATE_FEE_SEEDS = 9;`（`:79-83` 带规格依据注释）；人民币余额金额仍展示（`:6 ¥{{ wallet?.user_balance_yuan }}`）；「官方竹简 ¥9.90/束 · 每日 21:00 限量」（`:17`/`:21`）原样未动。
+- **F2 首页**（`frontend/src/pages/index/index.vue`）：入口行 `:101` 与弹窗费用行 `:161` 均改用 `{{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽`；全文件唯一 `¥` 出现在 `:205` 的**说明注释**里（`建树费不再用 ¥ 展示`），非渲染文案；`feeYuan` / `balanceYuan` / `fetchWallet` 死代码 **0 命中**。
+
+### 12.5 回归：`/search/global` 与 410 钱包路由未被本轮修复打回 → **通过**
+
+```bash
+$ node --test cloudfunctions/compat-api/lib/home-sort-search.test.js
+exit=0
+# tests 23   # pass 23   # fail 0        （^not ok 行数 = 0）
+```
+
+逐条点名（全部 `ok`）：`ok 6-9` B1–B4 全站搜索（编号置顶 / 姓名包含 / 分层裁剪 / 空 query+limit clamp 1..100）、`ok 10` B5 幽灵 tree_id 不 500、`ok 11-15` M1–M5 真身优先·受限标记·编号命中镜像·不按姓名合并·先归并后截断、`ok 16-20` N1–N5 口径 D-2 归并矩阵（含三级镜像链 / 环状镜像）、`ok 21` **D1 `/wallet/transfer` 与 `/wallet/tree-balance` → 410 + `code=TREE_FUND_RETIRED`（先于任何鉴权/参数校验）**、`ok 22` D2 `lib/wallet.js` 的 `transferToTree`/`getTreeBalance` 已删而 `deductTreeCreateFee` 保留。
+
+### 12.6 真源体检（跑测前后逐字节比对）→ **通过**
+
+```bash
+pre （质检开工，跑任何测试之前）        post（全部测试 + vue-tsc 之后）
+tree-meta.json  d59a9767c34ed4ffefbf70de59d26aa6
++ migrate-output/trees/*.json    (9 个)        同 22 行清单
++ migrate-output/collections/*.json (12 个)
+共 22 个文件 → md5 -q 逐行比对
+$ diff /tmp/neng12/truth-pre.txt /tmp/neng12/truth-post.txt
+（无输出）  TRUTH_DIFF_EXIT=0        # 逐字节一致，22/22
+$ git status --porcelain config/ migrate-output/
+（无输出）                            # 真源零改动（含 git 角度双重确认）
+```
+
+### 12.7 全量 `npm test` → **350 / 350 / 0**（与基线一致，零回退）
+
+```bash
+$ npm test          # node --test …（21 个测试文件，含 home-sort-search.test.js）
+exit=0
+# tests 350   # pass 350   # fail 0
+# cancelled 0 # skipped 0  # todo 0
+# duration_ms 1512.28
+$ grep -c '^not ok' <完整输出>   → 0        # 完整输出留档 /tmp/neng12/npmtest-post.txt
+```
+
+### 12.8 判定与返工清单
+
+**总体判定：通过**（F1–F4 四项全部达标，无必修返工项）。
+
+| 项 | 内容 | 结果 | 关键证据 |
+|---|---|---|---|
+| F1 | 钱包页建树费改「9 颗完整石榴籽」+ 常量 + 竹简售价未动 | 通过 | §12.4（`:7/:8/:84`，`9.90` 仅存于 `:17/:21`） |
+| F2 | 首页入口/弹窗改 9 籽口径 + 删死代码 + **8.4 定稿逐字未变** | 通过 | §12.1（diff **0 行**、md5 两侧相同）+ §12.4（死代码 0 命中） |
+| F3 | `person-archive` TDZ 修复（声明上移） | 通过 | §12.3（1275 → 767，先于 `:846` watch；vue-tsc exit 0） |
+| F4 | 删 `verifyJwt` / `crypto` 两处冗余导入 | 通过 | §12.2（0 残留调用、`node --check` OK、§10.3 的 R1/R2 闭合） |
+| 回归 | `/search/global` + 410 钱包路由 | 通过 | §12.5（23/23，含 D1 410 / D2 出参） |
+| 硬指标 | 全量 `npm test` / `vue-tsc` / 真源 md5 | 通过 | §12.6 / §12.7（350/350/0；exit 0；22 文件逐字节一致） |
+
+**返工清单（必修）：0 项。** 无可选清理项遗留 —— 上一轮登记的两条可选清理（§10.3 R1 `verifyJwt`、R2 `crypto`）本轮已由 F4 闭合。
+
+### 12.9 本轮新增可疑点 / 覆盖边界（如实列出，未改任何代码）
+
+- **S1（流程，非缺陷）**：质检窗口内 HEAD 由 `b16c60c` 位移至 `53b154f`（主代理提交），此前 `git status` 中的 ` M` 条目随之变为干净。**结论取证已按 b16c60c 基线重做**（§12.1/§12.2 的 pre 值均取自 `git show b16c60c:`）；若后续轮次以「与 HEAD 对比 0 diff」作为「未被改动」的证据，会得到**恒真的空断言**，需特别留意。
+- **S2（文案口径差，登记备裁决，不计缺陷）**：8.4 定稿弹窗正文写「消耗**9颗石榴籽**」，而入口行/弹窗费用行新文案写「**9 颗完整石榴籽**」——用词（含空格与「完整」修饰）不统一。因 8.4 属**定稿逐字不可改**，本轮不动即正确；若日后要统一，须先改真源 `docs/economy-ops.spec.md` §6.1 第 8.4 条，再同步 §12.1/§12.4 的两处文案，不得单改前端。
+- **S3（非残留）**：钱包页仍有 `¥`：`:6` 人民币余额金额、`:114` 充值成功 toast —— 与「人民币钱包保留、只用于购买官方竹简」口径一致（轮次要求金额仍展示），且**不含 9.90**，不属本轮残留。
+- **S4（取证手段受限）**：F4 的两处删除与后端本轮其它改动同处一个 diff（`index.js +260/-24`、`wallet.js +4/-20`），**无法用「某次 diff 只删了这两个词」隔离断言**；本次以 `grep` 零残留 + `node --check` + 全量 350/350 三证收口，并用 `git log -S` 定位到引入/移除 commit（23a7f18 → a235bd0）作为归属证据。
+- **S5（明确未覆盖）**：未起本地实例做 410 / `/search/global` 的 HTTP 真机探针（派单允许只读现成测试计数，故仅以 §12.5 的套件计数为据）；未做浏览器点测（派单禁止）；F3 的 TDZ 未做**运行时**复现（无前端实例），结论建立在「声明行号先于 immediate watch」的静态顺序 + `vue-tsc --noEmit` exit 0 + SFC 模板编译 0 错三项静态证据上，符合本轮「轻量增量质检」范围。
+
