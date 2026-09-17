@@ -135,12 +135,18 @@ function ensureUser(doc, phone) {
 
 /**
  * 资产不足错误：`status=409` / `code='ASSET_INSUFFICIENT'` / `need` / `current` / `unit`
- * 文案：「资产不足，需 X 颗石榴籽，当前 Y 颗」（竹片用「片」）
+ * 文案：「资产不足，需 X颗石榴籽，当前 Y 颗」（竹片用「片」）。
+ *
+ * 籽域口径（docs/economy-fee.spec.md §8 建树行 / 用户拍板）：数字与量词**连写** —— 建树籽不足报
+ * 「资产不足，需 9颗石榴籽，当前 N 颗」，不带空格、不带「完整」；竹片 / 玉域沿用既有「X 片竹片」
+ * 空格写法（该行文案真源未变，勿混改）。`need` / `current` / `unit` 字段语义与取值一律不变。
  */
 export function assetInsufficient(need, current, unit = 'seed') {
-  const label = ASSET_LABEL[unit] || ASSET_LABEL.seed;
-  const u = ASSET_UNIT[unit] || ASSET_UNIT.seed;
-  const e = new Error(`资产不足，需 ${need} ${u}${label}，当前 ${current} ${u}`);
+  const key = ASSET_LABEL[unit] ? unit : 'seed';
+  const label = ASSET_LABEL[key];
+  const u = ASSET_UNIT[key];
+  const needText = key === 'seed' ? `${need}${u}${label}` : `${need} ${u}${label}`;
+  const e = new Error(`资产不足，需 ${needText}，当前 ${current} ${u}`);
   e.status = 409;
   e.code = ASSET_INSUFFICIENT;
   e.need = need;

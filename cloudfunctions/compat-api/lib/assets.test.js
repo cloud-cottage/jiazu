@@ -193,7 +193,7 @@ test('不足整单拒绝：抛 409 ASSET_INSUFFICIENT，一颗粒都不取、绝
   assert.equal(err.need, 10);
   assert.equal(err.current, 4);
   assert.equal(err.unit, 'seed');
-  assert.match(err.message, /资产不足，需 10 颗石榴籽，当前 4 颗/);
+  assert.match(err.message, /资产不足，需 10颗石榴籽，当前 4 颗/);
   assert.deepEqual(snapshot(u), before, '整单拒绝：资产一字节不得变');
   assert.throws(() => el.chargeLots(u.seeds, 10, 'seed'), /资产不足/);
 

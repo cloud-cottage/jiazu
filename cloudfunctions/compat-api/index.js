@@ -1925,7 +1925,7 @@ async function handleRequest(event) {
       }
     }
 
-    // 新建家族树（chief_editor）：校验通过 → 扣 9 颗完整石榴籽 → 写树 JSON + 始祖 + tree-meta
+    // 新建家族树（chief_editor）：校验通过 → 扣 9颗石榴籽 → 写树 JSON + 始祖 + tree-meta
     // （P1：原 ¥9.90 `wallet.deductTreeCreateFee` 钩子废弃 → 资产侧扣籽；删树不退）
     if (pathname === '/admin/create-tree' && method === 'POST') {
       const u = await authUser(headers);
@@ -1945,7 +1945,7 @@ async function handleRequest(event) {
           origin: body.origin,
           description: body.description,
           initiatorPhone: u.phone,
-          // 校验全部通过后、落库前扣 9 颗完整石榴籽（不足 409 → 不建树、不扣籽）
+          // 校验全部通过后、落库前扣 9颗石榴籽（不足 409 → 不建树、不扣籽）
           onBeforeWrite: async (plannedTreeId) => {
             charged = await eco.chargeSeeds(u.phone, eco.FEE.tree_create_seeds, {
               op: 'tree_create',

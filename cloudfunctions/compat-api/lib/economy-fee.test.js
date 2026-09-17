@@ -280,7 +280,7 @@ test('单价表 FEE 与 feeOf 矩阵穷举：1 / 1 / 9（与人数无关）/ 3N 
   assert.equal(dry.free, true, 'dry_run 必须标 free（不写资产）');
   assert.equal(eco.feeOf('delete_node', { people_count: 5, scope_changed: true }).pieces, 0);
 
-  // #8 建树 9 颗完整石榴籽（非竹片）
+  // #8 建树 9颗石榴籽（非竹片）
   assert.deepEqual(eco.feeOf('create_tree'), { unit: 'seeds', pieces: 9, tx_type: 'tree_create' });
 
   // #34 立支 9999 颗石榴籽（复用既有 Tx.type='tree_create'；后台 config.branch_fee_seeds 可覆盖）
@@ -336,7 +336,7 @@ test('409 错误回显：ASSET_INSUFFICIENT 全字段（need / current / unit / 
   const seedBody = eco.errorPayload(eco.feeInsufficient(9, 0, 'seeds'));
   assert.equal(seedBody.unit, 'seeds');
   assert.equal(seedBody.current, 0);
-  assert.match(seedBody.error, /需 9 颗石榴籽，当前 0 颗/);
+  assert.match(seedBody.error, /需 9颗石榴籽，当前 0 颗/);
 
   const scopeErr = Object.assign(new Error('删除范围已变化（当前 5 人，确认时 4 人），请重新确认'), {
     status: 409,
@@ -485,7 +485,7 @@ test('不足整单拒绝 409：批次 qty 一字节不动、无流水（竹片�
   assert.equal(seedErr.status, 409);
   assert.equal(seedErr.need, 9);
   assert.equal(seedErr.current, 8);
-  assert.match(seedErr.message, /需 9 颗石榴籽，当前 8 颗/);
+  assert.match(seedErr.message, /需 9颗石榴籽，当前 8 颗/);
   assert.deepEqual(await readAssets(P), before, '籽不足同样一字节不写');
 });
 
@@ -828,11 +828,12 @@ test('POST /admin/create-tree：不足 8 籽 409 不建树；9 籽建树扣 tree
   assert.equal(pb.need, 9);
   assert.equal(pb.current, 8);
   assert.equal(pb.unit, 'seeds');
+  assert.equal(pb.error, '资产不足，需 9颗石榴籽，当前 8 颗', '建树 409 文案口径：9颗石榴籽（不带空格 / 不带「完整」，用户拍板）');
   assert.deepEqual(newTreesIn(), beforeMeta, '不足 → 不建树');
   assert.equal(bagOf(await readAssets(CHIEF)), beforeBag, '不足 → 籽一字节不动');
   assert.deepEqual(txTypes(await readAssets(CHIEF)), []);
 
-  // ② 9 籽 → 建树成功，扣 9 颗完整石榴籽（非竹片），写 tree_create 流水
+  // ② 9 籽 → 建树成功，扣 9颗石榴籽（非竹片），写 tree_create 流水
   await scene({ phone: CHIEF, seeds: 9 });
   const okRes = await call('/admin/create-tree', 'POST', bee(CHIEF), {}, { surname_char: '雷', founder_name: '震' });
   assert.equal(okRes.statusCode, 200);

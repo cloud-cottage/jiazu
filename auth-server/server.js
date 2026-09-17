@@ -803,41 +803,6 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    // 转账到家族树（仅入账，不支持转出）
-    if (urlPath === '/api/wallet/transfer' && req.method === 'POST') {
-      const u = authUser(req);
-      if (!u) return json(res, 401, { error: '未登录或登录已过期' });
-      const body = await readBody(req);
-      const treeId = String(body.tree_id || '').trim();
-      const amount = Number(body.amount);
-      if (!treeId) return json(res, 400, { error: '缺少 tree_id' });
-      if (!amount || amount <= 0) return json(res, 400, { error: '请输入正确的金额' });
-      // 校验 tree 存在
-      const meta = readTreeMeta();
-      const treeExists = Object.values(meta.trees).some((t) => t.tree_id === treeId);
-      if (!treeExists) return json(res, 404, { error: `家族树不存在: ${treeId}` });
-      try {
-        const result = wallet.transferToTree(u.phone, treeId, Math.round(amount * 100));
-        return json(res, 200, {
-          ok: true,
-          user_balance_yuan: (result.user_balance / 100).toFixed(2),
-          tree_balance_yuan: (result.tree_balance / 100).toFixed(2),
-        });
-      } catch (e) {
-        return json(res, 400, { error: e.message });
-      }
-    }
-
-    // 查询某家族树余额（公开）
-    if (urlPath === '/api/wallet/tree-balance' && req.method === 'GET') {
-      const treeId = new URL(req.url, 'http://x').searchParams.get('tree_id') || '';
-      if (!treeId) return json(res, 400, { error: '缺少 tree_id' });
-      return json(res, 200, {
-        tree_id: treeId,
-        balance_yuan: (wallet.getTreeBalance(treeId) / 100).toFixed(2),
-      });
-    }
-
     // 管理：设置新建家族树费用（仅 admin）
     if (urlPath === '/api/admin/wallet-fee' && req.method === 'PUT') {
       const u = authUser(req);

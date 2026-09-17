@@ -16,7 +16,7 @@
  *
  * 单价一览（片 = 竹片，唯一例外是建树的「颗」）：
  *   人物内容修改 1 片 / 节点；同树改父 1 片 / 节点；跨树迁移 **9 片 / 次（与后代人数无关）**；
- *   删除节点 3 片 / 节点（subtree = 3N，promote = 3）；建树 9 颗完整石榴籽；新增 / 关系类 = 0 片（不接闸门）。
+ *   删除节点 3 片 / 节点（subtree = 3N，promote = 3）；建树 9颗石榴籽；新增 / 关系类 = 0 片（不接闸门）。
  */
 import {
   ASSET_INSUFFICIENT,
@@ -39,7 +39,7 @@ export const FEE = {
   reparent_same_tree: 1, // POST /admin/reparent 不带 new_parent_tree_id：1 片 / 节点
   reparent_cross_tree: 9, // 带 new_parent_tree_id：9 片 / 次（**绝不是 9 × 人数**）
   delete_node_per_person: 3, // 删除节点：3 片 / 节点（subtree = 3N；promote = 1 × 3）
-  tree_create_seeds: 9, // 建树：9 颗完整石榴籽（非竹片）
+  tree_create_seeds: 9, // 建树：9颗石榴籽（非竹片）
   // 立支（POST /admin/establish-branch）：9999 颗完整石榴籽 / 次（docs/branch-clan-ops.spec.md §3-4 / §6-1-7）；
   // 默认值唯一真源 —— 运行时可被 `jiazu_wallets.config.branch_fee_seeds` 覆盖（见 lib/wallet.js getBranchFeeSeeds）
   branch_fee_seeds: 9999,

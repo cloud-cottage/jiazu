@@ -1,16 +1,17 @@
 /**
- * 钱包模块 — 用户余额 / 家族树余额 / 交易流水
+ * 钱包模块 — 用户余额 / 交易流水
  *
  * 规则:
  * - 单位: 人民币元（金额以「分」存储整数，避免浮点误差）
  * - 用户余额: 注册用户个人钱包（充值/消费）
- * - 树余额: 独立账目，转账进入，仅展示，不支持转出/提现
+ * - 家族树资金功能**已下线**（遗留的入账与树余额查询入口已移除，本模块不再提供树余额读写；
+ *   口径同 docs/economy.spec.md §12-3「¥ 钱包收缩为只用于购买官方竹简」）
  * - 新建家族树费用: 从发起人用户余额扣除（管理面板可调）
  *
  * 存储: data/wallets.json
  * {
  *   "users": { "13800138000": { "balance_cents": 0 } },
- *   "trees": { "ji_23395_01": { "balance_cents": 0 } },
+ *   "trees": { "ji_23395_01": { "balance_cents": 0 } },   // 历史遗留字段：仅原样往返，已无读写入口
  *   "transactions": [ { id, type, user, tree, amount_cents, desc, ts } ],
  *   "config": { "tree_create_fee_cents": 990 }
  * }
@@ -57,10 +58,6 @@ export function getUserBalance(phone) {
   return wallets.users[phone]?.balance_cents || 0;
 }
 
-export function getTreeBalance(treeId) {
-  return wallets.trees[treeId]?.balance_cents || 0;
-}
-
 export function getTreeCreateFeeCents() {
   return wallets.config.tree_create_fee_cents ?? DEFAULT_FEE_CENTS;
 }
@@ -85,32 +82,6 @@ export function recharge(phone, amountCents, note = '充值') {
   });
   persist();
   return getUserBalance(phone);
-}
-
-// ---- 转账到家族树（仅入账，不支持转出） ----
-
-export function transferToTree(phone, treeId, amountCents) {
-  if (amountCents <= 0) throw new Error('转账金额必须大于 0');
-  const balance = getUserBalance(phone);
-  if (balance < amountCents) {
-    throw new Error(`余额不足：当前 ¥${(balance / 100).toFixed(2)}`);
-  }
-  // 扣用户
-  wallets.users[phone].balance_cents -= amountCents;
-  // 加树
-  if (!wallets.trees[treeId]) wallets.trees[treeId] = { balance_cents: 0 };
-  wallets.trees[treeId].balance_cents += amountCents;
-  wallets.transactions.push({
-    id: `tx_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    type: 'transfer',
-    user: phone,
-    tree: treeId,
-    amount_cents: amountCents,
-    desc: `转账到家族树 ${treeId}`,
-    ts: new Date().toISOString(),
-  });
-  persist();
-  return { user_balance: getUserBalance(phone), tree_balance: getTreeBalance(treeId) };
 }
 
 // ---- 新建家族树扣费（从发起人余额扣除） ----
