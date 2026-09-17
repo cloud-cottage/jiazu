@@ -416,7 +416,7 @@ export async function fetchFamilyList(
   }));
 }
 
-// ---- 钱包（余额/充值/转账/建树费） ----
+// ---- 钱包（余额/充值/建树费） ----
 
 export interface WalletTransaction {
   id: string;
@@ -460,36 +460,6 @@ export async function rechargeWallet(
     const err = await res.json().catch(() => ({}));
     throw new Error(err?.error || `充值失败 (${res.status})`);
   }
-  return res.json();
-}
-
-/** 转账到家族树（仅入账） */
-export async function transferToTree(
-  token: string,
-  treeId: string,
-  amount: number,
-): Promise<{ ok: boolean; user_balance_yuan: string; tree_balance_yuan: string }> {
-  const res = await fetch(`${API_BASE}/wallet/transfer`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ tree_id: treeId, amount }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.error || `转账失败 (${res.status})`);
-  }
-  return res.json();
-}
-
-/** 查询家族树余额（公开） */
-export async function fetchTreeBalance(
-  treeId: string,
-): Promise<{ tree_id: string; balance_yuan: string }> {
-  const res = await fetch(`${API_BASE}/wallet/tree-balance?tree_id=${treeId}`);
-  if (!res.ok) throw new Error(`查询树余额失败 (${res.status})`);
   return res.json();
 }
 
@@ -603,6 +573,13 @@ export interface TreeRankInfo {
   root_count: number;
   person_count: number;
   explicit: boolean;
+  /**
+   * 家族活跃度（可选：后端可能未下发；前端一律按 0 兜底处理，不得据此报错或显示 NaN）。
+   * 用于首页「综合 / 活跃度」排序。
+   */
+  activity?: number;
+  /** 家族数据最后更新时刻（ISO 串，可选：缺失按空串处理）；用于首页综合排序的新近度项 */
+  updated_at?: string;
   /** 节点级可见分层元信息（docs/permission-tier.spec.md §6） */
   access?: TreeAccessInfo;
 }
@@ -1688,6 +1665,56 @@ export async function searchPeople(
     people: raw.map((r) => toPersonSummary((r.object || r) as RawPerson)),
     total: raw.length,
   };
+}
+
+/** 全站搜索命中的人物条目（GET /search/global；跨全部家族树） */
+export interface GlobalPersonHit {
+  /** 所属家族树 tree_id */
+  tree_id: string;
+  /** 所属家族树名称 */
+  tree_title: string;
+  handle: string;
+  gramps_id: string;
+  name: string;
+  gender: string;
+  birth_date: string;
+  death_date: string;
+  /** 命中方式：id=按编号命中 / name=按姓名命中 */
+  matched: 'id' | 'name';
+  /**
+   * true = 该条代表的是镜像（真身落在别树）、真身因节点级可见分层对当前访问者不可见
+   * → 本条仍显示姓名/编号/所属树，但不可查看详情（前端点击只提示，不跳转）。
+   * 后端未重启出参不含该字段时值为 undefined，一律按「非受限」处理。
+   */
+  restricted?: boolean;
+}
+
+/**
+ * 全站搜索人物（跨家族树；姓名 / 编号）。
+ * - 路由 `GET /search/global?query=&limit=`；**不发送 X-Tree-Id**（跨树检索）；
+ * - 有登录 token 时携带 Authorization（读路径按登录态分档裁剪），无 token 即公开读；
+ * - 非 2xx → throw（文案含状态码）。
+ */
+export async function searchPeopleGlobal(
+  query: string,
+  limit = 30,
+): Promise<GlobalPersonHit[]> {
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const res = await fetch(
+    `${API_BASE}/search/global?query=${encodeURIComponent(query)}&limit=${limit}`,
+    { headers },
+  );
+  if (!res.ok) {
+    throw new Error(`全站搜索失败 (${res.status})`);
+  }
+  const raw = await res.json();
+  // 出参兼容：裸数组 / { people } / { list } / { results }
+  const list = Array.isArray(raw) ? raw : raw?.people || raw?.list || raw?.results || [];
+  return list as GlobalPersonHit[];
 }
 
 // ---- 元数据 ----

@@ -8,6 +8,62 @@
     <!-- 双视图：家族列表 / 中华世本（浮动按钮切换，无 t-tabs） -->
     <!-- 视图1：普通家族树列表（不含 zhonghua） -->
     <view v-if="!showMaster" class="hall-list">
+      <!-- 全站人物搜索（跨家族树：姓名 / 编号；回车或点「搜索」触发） -->
+      <view class="person-search">
+        <t-input
+          :value="personQuery"
+          placeholder="搜索人物（姓名 / 编号）"
+          class="person-search-input"
+          @update:value="onPersonQueryChange"
+          @confirm="doSearchPeople"
+        />
+        <t-button size="small" theme="primary" @click="doSearchPeople">搜索</t-button>
+      </view>
+      <view v-if="personSearched" class="person-search-panel">
+        <view v-if="personSearching" class="ps-tip">搜索中…</view>
+        <view v-else-if="personSearchError" class="ps-tip ps-error">{{ personSearchError }}</view>
+        <template v-else>
+          <view
+            v-for="hit in personHits"
+            :key="`${hit.tree_id}:${hit.handle}`"
+            class="ps-result"
+            :class="{ 'ps-result-restricted': hit.restricted }"
+            @click="goPersonHit(hit)"
+          >
+            <text class="ps-name">{{ hit.name }}</text>
+            <text class="ps-id">{{ personIdDisplay(hit.gramps_id) }}</text>
+            <text class="ps-tree">{{ hit.tree_title }}</text>
+            <text v-if="hit.restricted" class="ps-restricted">权限受限，不可见详情</text>
+          </view>
+          <view v-if="personHits.length === 0" class="ps-tip">未找到匹配人物</view>
+        </template>
+      </view>
+
+      <!-- 排序分段控件（综合 / 人数 / 活跃度；只用已加载的等级数据，不新增请求） -->
+      <view class="sort-bar">
+        <view
+          class="sort-btn"
+          :class="{ active: sortMode === 'comprehensive' }"
+          @click="sortMode = 'comprehensive'"
+        >
+          <text class="sort-text">综合</text>
+        </view>
+        <view
+          class="sort-btn"
+          :class="{ active: sortMode === 'members' }"
+          @click="sortMode = 'members'"
+        >
+          <text class="sort-text">人数</text>
+        </view>
+        <view
+          class="sort-btn"
+          :class="{ active: sortMode === 'activity' }"
+          @click="sortMode = 'activity'"
+        >
+          <text class="sort-text">活跃度</text>
+        </view>
+      </view>
+
       <!-- 加载态（与卡片同形，避免先闪「暂无」空态、避免布局跳动） -->
       <view v-if="loading" class="loading">
         <t-loading theme="spinner" text="加载中…" />
@@ -15,7 +71,7 @@
 
       <t-cell-group v-else-if="normalHalls.length > 0" :bordered="false">
         <t-cell
-          v-for="card in normalHalls"
+          v-for="card in sortedHalls"
           :key="card.tree_id"
           :title="card.title"
           :description="`发源地：${card.origin || '待完善'}`"
@@ -42,7 +98,7 @@
       <view v-if="canCreateTree" class="create-entry" @click="openCreateTree">
         <text class="create-icon">＋</text>
         <text class="create-text">新建家族树</text>
-        <text class="create-hint">费用 ¥{{ feeYuan }}</text>
+        <text class="create-hint">消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽</text>
       </view>
     </view>
 
@@ -102,7 +158,7 @@
             @update:value="(v: any) => (form.origin = v)"
           />
           <view class="ct-fee">
-            <text class="ct-fee-text">建树费用 ¥{{ feeYuan }}（余额 ¥{{ balanceYuan }}）</text>
+            <text class="ct-fee-text">建树消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽（可用籽数见「我的资产」）</text>
             <text class="ct-fee-sub">tree_id 自动生成（姓氏拼音_码点_序号），创建后可立即新增人物</text>
           </view>
           <text v-if="createError" class="ct-error">{{ createError }}</text>
@@ -121,10 +177,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { fetchTreeMetaRemote, buildTreeUrl, fetchTreeRank, openTreeHome, clearMetaCache, fetchWallet, createTree, feeText, isAssetInsufficientError, showAssetInsufficientGuide } from '@/business';
+import { fetchTreeMetaRemote, buildTreeUrl, fetchTreeRank, openTreeHome, clearMetaCache, createTree, feeText, isAssetInsufficientError, showAssetInsufficientGuide, searchPeopleGlobal, personIdDisplay } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
-import type { TreeRankInfo } from '@/business/api';
+import type { TreeRankInfo, GlobalPersonHit } from '@/business/api';
 import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
 
 /**
@@ -141,6 +197,15 @@ const TREE_CREATE_CONFIRM = {
   cancelText: '取消',
 } as const;
 
+/**
+ * 建树费籽数（颗完整石榴籽）。
+ * 规格依据：`docs/economy.spec.md` §5-5「建树扣 9 颗石榴籽」+ §9 前端落点表；
+ * 单价真源：`cloudfunctions/compat-api/lib/economy-fee.js` 的 `FEE.tree_create_seeds: 9`
+ * （前端无可读接口，故以命名常量承载，勿在模板里散写数字）。
+ * 展示口径：建树费**不再用 ¥ 展示**（人民币余额只用于购买官方竹简）。
+ */
+const TREE_CREATE_FEE_SEEDS = 9;
+
 const halls = ref<DigitalHallCard[]>([]);
 const meta = ref<TreeMeta | null>(null);
 /** 列表加载态（纯视觉：首屏不再先闪「暂无…」空态） */
@@ -149,8 +214,99 @@ const loading = ref(true);
 // ---- 双视图切换（浮动按钮） ----
 const showMaster = ref(false);
 
-/** 普通家族树列表（不含总谱 zhonghua） */
-const normalHalls = computed(() => halls.value.filter((h) => !h.isMaster));
+/**
+ * 普通家族树列表：排除中华世本（is_master）与祖谱（kind='clan'）。
+ * 旧 meta 条目缺 kind 字段 → 按 family 兼容（`kind !== 'clan'` 天然放行 undefined）。
+ */
+const normalHalls = computed(() => halls.value.filter((h) => !h.isMaster && h.kind !== 'clan'));
+
+// ---- 排序（综合 / 人数 / 活跃度）：数据只用 rankMap，不新增网络请求 ----
+
+type SortMode = 'comprehensive' | 'members' | 'activity';
+
+/** 当前排序档（默认「综合」） */
+const sortMode = ref<SortMode>('comprehensive');
+
+/** 综合分权重（写死：人数 0.4 / 活跃度 0.4 / 新近度 0.2） */
+const SCORE_WEIGHT_MEMBERS = 0.4;
+const SCORE_WEIGHT_ACTIVITY = 0.4;
+const SCORE_WEIGHT_RECENCY = 0.2;
+
+/** 本次列表内极值归一化；max === min 时一律记 1（不记 0、不除零） */
+function norm(v: number, min: number, max: number): number {
+  if (max === min) return 1;
+  return (v - min) / (max - min);
+}
+
+/** 人数（rankMap 缺失 → 0） */
+function membersOf(treeId: string): number {
+  const n = rankMap.value[treeId]?.person_count;
+  return typeof n === 'number' && !Number.isNaN(n) ? n : 0;
+}
+
+/** 活跃度（rankMap 缺失 → 0；后端未下发该字段时同样按 0，不显示 NaN） */
+function activityOf(treeId: string): number {
+  const n = rankMap.value[treeId]?.activity;
+  return typeof n === 'number' && !Number.isNaN(n) ? n : 0;
+}
+
+/** 新近度：updated_at 的毫秒时间戳；缺失 / 无法解析 → 0 */
+function recencyOf(treeId: string): number {
+  const ts = Date.parse(rankMap.value[treeId]?.updated_at || '');
+  return Number.isNaN(ts) ? 0 : ts;
+}
+
+/** 综合分（仅「综合」档用）：0.4×人数 + 0.4×活跃度 + 0.2×新近度，三项各自在本次列表内极值归一化 */
+const scoreMap = computed<Record<string, number>>(() => {
+  const list = normalHalls.value;
+  const members = list.map((h) => membersOf(h.tree_id));
+  const activity = list.map((h) => activityOf(h.tree_id));
+  const recency = list.map((h) => recencyOf(h.tree_id));
+  const bounds = (arr: number[]) => ({ min: Math.min(...arr), max: Math.max(...arr) });
+  const m = bounds(members);
+  const a = bounds(activity);
+  const r = bounds(recency);
+  const map: Record<string, number> = {};
+  list.forEach((h, i) => {
+    map[h.tree_id] =
+      SCORE_WEIGHT_MEMBERS * norm(members[i], m.min, m.max) +
+      SCORE_WEIGHT_ACTIVITY * norm(activity[i], a.min, a.max) +
+      SCORE_WEIGHT_RECENCY * norm(recency[i], r.min, r.max);
+  });
+  return map;
+});
+
+/**
+ * 三档统一 tie-break：主指标降序 → 其余两项指标降序 → updated_at 降序 → tree_id 升序。
+ * 显式写全，不依赖列表原始顺序（原始顺序随 meta 文件顺序变化）。
+ */
+function compareHalls(a: DigitalHallCard, b: DigitalHallCard): number {
+  let d = 0;
+  if (sortMode.value === 'members') {
+    d = membersOf(b.tree_id) - membersOf(a.tree_id);
+    if (d) return d;
+    d = activityOf(b.tree_id) - activityOf(a.tree_id);
+    if (d) return d;
+  } else if (sortMode.value === 'activity') {
+    d = activityOf(b.tree_id) - activityOf(a.tree_id);
+    if (d) return d;
+    d = membersOf(b.tree_id) - membersOf(a.tree_id);
+    if (d) return d;
+  } else {
+    d = (scoreMap.value[b.tree_id] || 0) - (scoreMap.value[a.tree_id] || 0);
+    if (d) return d;
+    d = membersOf(b.tree_id) - membersOf(a.tree_id);
+    if (d) return d;
+    d = activityOf(b.tree_id) - activityOf(a.tree_id);
+    if (d) return d;
+  }
+  d = recencyOf(b.tree_id) - recencyOf(a.tree_id);
+  if (d) return d;
+  return a.tree_id < b.tree_id ? -1 : a.tree_id > b.tree_id ? 1 : 0;
+}
+
+/** 渲染用列表（排序只作用于渲染；卡片模板 / 等级徽章 / 新建入口 / 切换按钮均不变） */
+const sortedHalls = computed(() => normalHalls.value.slice().sort(compareHalls));
 
 function toggleView() {
   showMaster.value = !showMaster.value;
@@ -169,6 +325,7 @@ async function loadHalls() {
       origin: entry.origin,
       description: entry.description,
       isMaster: !!entry.is_master,
+      kind: entry.kind,
       url: buildTreeUrl(entry.tree_id, meta.value!) || `/tree/${entry.tree_id}`,
     }));
     loadRanks();
@@ -189,8 +346,6 @@ onMounted(async () => {
 const showCreate = ref(false);
 const creating = ref(false);
 const createError = ref('');
-const feeYuan = ref('9.90');
-const balanceYuan = ref('0.00');
 const form = ref({ surname: '', founder_name: '', gender: 'M' as 'M' | 'F' | 'U', display_title: '', origin: '' });
 
 const canCreateTree = computed(() => isAuthenticated() && authState.role === 'chief_editor');
@@ -198,18 +353,9 @@ const canSubmitCreate = computed(
   () => /^[\u4e00-\u9fa5]$/.test(form.value.surname.trim()) && !!form.value.founder_name.trim(),
 );
 
-async function openCreateTree() {
+function openCreateTree() {
   createError.value = '';
   showCreate.value = true;
-  const token = getAuthToken();
-  if (!token) return;
-  try {
-    const w = await fetchWallet(token);
-    feeYuan.value = w.tree_create_fee_yuan;
-    balanceYuan.value = w.user_balance_yuan;
-  } catch {
-    /* 钱包读取失败不阻塞；提交时服务端仍会校验余额 */
-  }
 }
 
 function closeCreate() {
@@ -303,6 +449,56 @@ function rankTheme(treeId: string): string {
   }
 }
 
+// ---- 全站人物搜索（跨家族树；GET /search/global，limit 30） ----
+
+const personQuery = ref('');
+const personHits = ref<GlobalPersonHit[]>([]);
+const personSearching = ref(false);
+/** 结果区开关：输入清空即收起 */
+const personSearched = ref(false);
+const personSearchError = ref('');
+
+/** 输入变化：清空 → 清结果并收起结果区 */
+function onPersonQueryChange(v: string) {
+  personQuery.value = v;
+  if (!v.trim()) {
+    personHits.value = [];
+    personSearchError.value = '';
+    personSearched.value = false;
+  }
+}
+
+async function doSearchPeople() {
+  const q = personQuery.value.trim();
+  if (!q) {
+    onPersonQueryChange('');
+    return;
+  }
+  personSearching.value = true;
+  personSearched.value = true;
+  personSearchError.value = '';
+  personHits.value = [];
+  try {
+    personHits.value = await searchPeopleGlobal(q, 30);
+  } catch (e: any) {
+    // 不静默吞掉：错误文案直接显示在结果区
+    personSearchError.value = e?.message || '搜索失败';
+  } finally {
+    personSearching.value = false;
+  }
+}
+
+/** 点结果 → 既有薄壳人物详情页；受限条（真身不可见）只提示、不跳转 */
+function goPersonHit(hit: GlobalPersonHit) {
+  if (hit.restricted) {
+    uni.showToast({ title: '权限受限，不可见详情', icon: 'none' });
+    return;
+  }
+  uni.navigateTo({
+    url: `/pages/person/detail?tree_id=${hit.tree_id}&handle=${hit.handle}`,
+  });
+}
+
 function goToHall(card: DigitalHallCard) {
   openTreeHome(card.tree_id);
 }
@@ -329,6 +525,42 @@ function goToPage(path: string) {
 
 /* ---- 家族馆卡片列表 ---- */
 .hall-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* ---- 全站人物搜索（跨家族树；暖棕同族样式） ---- */
+.person-search { display: flex; gap: 8px; align-items: center; }
+.person-search-input { flex: 1; }
+.person-search-panel {
+  background: #FFFDF8; border: 1px solid #E0D5C8; border-radius: 14px;
+  padding: 6px 14px; box-shadow: 0 2px 10px rgba(62, 39, 35, 0.05);
+}
+.ps-result {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 2px; border-bottom: 1px solid #F0E8DE;
+}
+.ps-result:last-of-type { border-bottom: none; }
+/* 受限条：追加一行中性辅助色小字（仅该类生效，不影响其它结果行） */
+.ps-result-restricted { flex-wrap: wrap; }
+.ps-restricted { flex-basis: 100%; font-size: 11px; color: #A1887F; line-height: 1.4; }
+.ps-name { font-size: 14px; font-weight: 500; color: #3E2723; }
+.ps-id { font-size: 11px; color: #A1887F; }
+.ps-tree {
+  margin-left: auto; max-width: 42%;
+  font-size: 11px; color: #A1887F;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.ps-tip { text-align: center; font-size: 13px; color: #A1887F; padding: 14px 0; }
+.ps-error { color: #C62828; }
+
+/* ---- 排序分段控件（综合 / 人数 / 活跃度） ---- */
+.sort-bar { display: flex; gap: 8px; }
+.sort-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 8px 0;
+  background: #FFFDF8; border: 1px solid #E0D5C8; border-radius: 999px;
+}
+.sort-text { font-size: 13px; color: #8B4513; }
+.sort-btn.active { background: #8B4513; border-color: #8B4513; }
+.sort-btn.active .sort-text { color: #fff; }
 
 /* 卡片容器：暖米底 + 暖棕描边 + 14 圆角 + 极轻投影（与「新建家族树」入口同族） */
 .hall-list :deep(.t-cell-group) {

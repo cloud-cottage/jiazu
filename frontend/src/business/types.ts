@@ -171,6 +171,8 @@ export interface DigitalHallCard {
   description: string;
   /** 是否中华世本总谱 */
   isMaster?: boolean;
+  /** 层级（master=世本 / clan=祖谱 / family=普通家族树；缺省按 family 兼容） */
+  kind?: string;
   url: string;
   person_count?: number;
   cover_url?: string;

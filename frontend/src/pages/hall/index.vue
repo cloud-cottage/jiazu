@@ -148,13 +148,6 @@
         </view>
       </view>
 
-    <!-- 家族树资金（公开可见） -->
-    <view class="tree-fund" v-if="treeBalance !== null">
-      <text class="fund-label">家族树资金</text>
-      <text class="fund-value">¥{{ treeBalance }}</text>
-      <text v-if="isAuthenticated()" class="fund-action" @click="goTransfer">转账支持</text>
-    </view>
-
     <!-- 申请加入弹窗（申请-审批制；docs/permission-tier.spec.md §9） -->
     <view v-if="showJoin" class="modal-mask" @click.self="showJoin = false">
       <view class="modal" @click.stop>
@@ -344,7 +337,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { onLoad } from '@dcloudio/uni-app';
-import { fetchTreeMetaRemote, updateTreeMeta, fetchTreeBalance, fetchTreeRank, searchPeople, submitJoinRequest, fetchMyAnchor, submitClanRequest, fetchPerson, fetchPersonList } from '@/business';
+import { fetchTreeMetaRemote, updateTreeMeta, fetchTreeRank, searchPeople, submitJoinRequest, fetchMyAnchor, submitClanRequest, fetchPerson, fetchPersonList } from '@/business';
 import { fetchSpirit, stateTextPrimary } from '@/business/api';
 import type { TreeAccessInfo, SpiritInfo } from '@/business/api';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
@@ -360,7 +353,6 @@ import PersonDetailModal from '@/components/person-detail-modal/person-detail-mo
 const treeId = ref('');
 const spiritInfo = ref<SpiritInfo | null>(null);
 const hallInfo = ref<TreeEntry | null>(null);
-const treeBalance = ref<string | null>(null);
 // 节点级可见分层（rank 返回 access 元信息；full=全可见无提示）
 const accessInfo = ref<TreeAccessInfo | null>(null);
 
@@ -713,16 +705,6 @@ onMounted(async () => {
     console.error('加载数字馆信息失败:', e);
   }
 
-  // 家族树资金（公开；总谱页与祖谱页不展示）
-  if (!isMaster.value && !isClan.value) {
-    try {
-      const fund = await fetchTreeBalance(treeId.value);
-      treeBalance.value = fund.balance_yuan;
-    } catch (e) {
-      console.error('加载家族树资金失败:', e);
-    }
-  }
-
   // 时流子域入口状态（guest 亦可读摘要；失败只降级文案，不影响首页渲染）
   if (!isMaster.value) {
     try {
@@ -776,11 +758,6 @@ function goSpirit() {
     return;
   }
   uni.navigateTo({ url: `/pages/spirit/index?tree_id=${treeId.value}` });
-}
-
-function goTransfer() {
-  // 跳转钱包页，预填 tree_id
-  uni.navigateTo({ url: `/pages/wallet/index?tree_id=${treeId.value}` });
 }
 
 function openEdit() {
@@ -963,18 +940,6 @@ async function saveEdit() {
 .spirit-entry-title { font-size: 14px; font-weight: bold; color: #8B4513; display: block; }
 .spirit-entry-sub { font-size: 12px; color: #B5A594; display: block; margin-top: 2px; }
 .spirit-entry-arrow { font-size: 18px; color: #B5A594; }
-
-/* 家族树资金 */
-.tree-fund {
-  margin-top: 14px; padding: 16px; background: #E8F5E9;
-  border-radius: 8px; text-align: center;
-}
-.fund-label { font-size: 13px; color: #2E7D32; display: block; }
-.fund-value { font-size: 24px; font-weight: bold; color: #1B5E20; display: block; margin: 4px 0; }
-.fund-action {
-  display: inline-block; margin-top: 6px; padding: 4px 14px;
-  background: #2E7D32; color: #fff; border-radius: 12px; font-size: 12px;
-}
 
 /* 编辑模态框 */
 .modal-mask {

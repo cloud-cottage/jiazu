@@ -120,7 +120,7 @@
         />
         <t-cell
           title="💰 我的钱包"
-          description="余额 / 充值 / 转账"
+          description="余额 / 充值 / 交易流水"
           arrow
           @click="go('/pages/wallet/index')"
         />

@@ -756,6 +756,16 @@ const emit = defineEmits<{
 const treeId = computed(() => props.treeId);
 const handle = computed(() => props.handle);
 
+/**
+ * 是否中华世本（总谱）树。
+ * ⚠️ **声明必须留在 props 别名区**：本文件后段的
+ * `watch(handle, () => { … loadAttachedTrees() … }, { immediate: true })` 在 setup 期
+ * 同步执行，`loadAttachedTrees()` 读 `isMasterTree.value`；该 computed 原先声明在文件后段
+ * （接汇宗逻辑处）→ 触发 TDZ `Cannot access 'isMasterTree' before initialization`，
+ * 「始祖挂载」列表首屏加载不出来。故上移到此，语义不变（props.treeId === 'zhonghua'）。
+ */
+const isMasterTree = computed(() => props.treeId === 'zhonghua');
+
 const person = ref<PersonDetail | null>(null);
 const loadError = ref('');
 
@@ -1271,8 +1281,6 @@ async function startConvergeClan() {
     converging.value = false;
   }
 }
-
-const isMasterTree = computed(() => props.treeId === 'zhonghua');
 
 // ===== 删除节点（危险区；总谱 / 始祖 / 镜像不可删；跨树引用一律拒绝，不级联改对方树）=====
 /** 外树镜像节点（嫁娶/认祖生成的「对方在本树的代表」）→ 删除须到真身所在树 */

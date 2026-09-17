@@ -4,7 +4,8 @@
     <view class="balance-card">
       <text class="balance-label">我的余额</text>
       <text class="balance-value">¥{{ wallet?.user_balance_yuan || '0.00' }}</text>
-      <text class="balance-hint">新建家族树费用：¥{{ wallet?.tree_create_fee_yuan || '9.90' }}</text>
+      <text class="balance-hint">余额仅用于购买官方竹简</text>
+      <text class="balance-hint">新建家族树消耗 {{ TREE_CREATE_FEE_SEEDS }} 颗完整石榴籽</text>
     </view>
 
     <view v-if="!isAuthenticated()" class="not-logged">
@@ -41,33 +42,6 @@
         <text class="dev-tip">开发阶段模拟充值，上线后接入微信支付</text>
       </view>
 
-      <view class="section">
-        <text class="section-title">转账到家族树</text>
-        <view class="transfer-form">
-          <t-input
-            @update:value="(v: any) => transferTree = v"
-            :value="transferTree"
-            placeholder="家族树 ID（如 gu_39038_01）"
-            clearable
-            class="input"
-          />
-          <t-input
-            @update:value="(v: any) => transferAmount = v"
-            :value="transferAmount"
-            type="number"
-            placeholder="金额"
-            clearable
-            class="input"
-          />
-          <t-button theme="primary" :loading="busy" :disabled="busy" block @click="doTransfer">
-            转账
-          </t-button>
-        </view>
-        <view v-if="transferResult" class="transfer-result">
-          <text>{{ transferResult }}</text>
-        </view>
-      </view>
-
       <!-- 交易流水 -->
       <view class="section">
         <text class="section-title">交易流水</text>
@@ -94,28 +68,25 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { onLoad } from '@dcloudio/uni-app';
 import {
   fetchWallet,
   rechargeWallet,
-  transferToTree,
 } from '@/business/api';
 import { isAuthenticated, getAuthToken } from '@/business/auth';
 import type { WalletOverview } from '@/business/api';
 
+/**
+ * 建树费籽数（颗完整石榴籽）。
+ * 规格依据：`docs/economy.spec.md` §9 前端落点表（钱包行）——「建树费文案由人民币金额改为「9 颗完整石榴籽」」；
+ * 单价真源：`cloudfunctions/compat-api/lib/economy-fee.js` 的 `FEE.tree_create_seeds: 9`
+ * （前端无可读接口，故以命名常量承载，勿在模板里散写数字）。
+ */
+const TREE_CREATE_FEE_SEEDS = 9;
+
 const wallet = ref<WalletOverview | null>(null);
 const rechargeAmount = ref('');
-const transferTree = ref('');
-const transferAmount = ref('');
-const transferResult = ref('');
 const busy = ref(false);
 const error = ref('');
-
-onLoad((options: any) => {
-  if (options?.tree_id) {
-    transferTree.value = options.tree_id;
-  }
-});
 
 onMounted(async () => {
   await loadWallet();
@@ -145,27 +116,6 @@ async function doRecharge() {
     await loadWallet();
   } catch (e: any) {
     error.value = e.message || '充值失败';
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function doTransfer() {
-  const amount = Number(transferAmount.value);
-  if (!transferTree.value.trim() || !amount || amount <= 0) {
-    error.value = '请输入家族树 ID 和正确金额';
-    return;
-  }
-  busy.value = true;
-  error.value = '';
-  transferResult.value = '';
-  try {
-    const res = await transferToTree(getAuthToken(), transferTree.value.trim(), amount);
-    transferResult.value = `转账成功：树余额 ¥${res.tree_balance_yuan}`;
-    transferAmount.value = '';
-    await loadWallet();
-  } catch (e: any) {
-    error.value = e.message || '转账失败';
   } finally {
     busy.value = false;
   }
@@ -211,14 +161,12 @@ function goMarket() {
 .section-title { font-size: 15px; font-weight: bold; color: #3E2723; display: block; margin-bottom: 12px; }
 .row { display: flex; gap: 8px; align-items: center; }
 .row .input { flex: 1; }
-.transfer-form { display: flex; flex-direction: column; gap: 12px; }
 .dev-tip { font-size: 11px; color: #B5A594; margin-top: 8px; display: block; }
 .entry { display: flex; align-items: center; justify-content: space-between; }
 .entry-left { flex: 1; }
 .entry-title { font-size: 15px; font-weight: bold; color: #3E2723; display: block; }
 .entry-desc { font-size: 12px; color: #B5A594; display: block; margin-top: 4px; }
 .entry-arrow { font-size: 20px; color: #B5A594; }
-.transfer-result { margin-top: 10px; color: #2E7D32; font-size: 13px; }
 .empty { text-align: center; color: #999; padding: 20px; font-size: 13px; }
 .tx-item {
   display: flex; justify-content: space-between; align-items: center;
