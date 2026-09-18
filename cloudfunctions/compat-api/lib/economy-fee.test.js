@@ -614,7 +614,9 @@ test('PUT /people/<handle>：401 / 403 / 400（无内容字段）/ 409（不足�
   assert.deepEqual(await readAssets(STEWARD), afterOk, '409 资产逐字节不变');
 
   // ⑦ 零资产账号直接 409（一字节不写）
-  const poorAnon = await call(path0, 'PUT', H('fee_put', POOR), {}, putBody);
+  //    注意 body 必须带**真实差异**：第 ⑤ 步已把节点改成「甲改名 / M」，直接复用 putBody 就是
+  //    no-op → 新版路由按契约回 200 unchanged（不扣费也就用不到余额），那条路径另有专门用例覆盖。
+  const poorAnon = await call(path0, 'PUT', H('fee_put', POOR), {}, { ...putBody, birth_date: '1900' });
   assert.equal(poorAnon.statusCode, 409);
   assert.equal(txCount(await readAssets(POOR)), 0);
 });
@@ -1069,6 +1071,7 @@ const ZERO_FEE_ROUTES = [
   '/admin/add-child',
   '/admin/add-spouse',
   '/admin/chain-append',
+  '/admin/chain-append-batch',
   '/admin/founder-request',
   '/admin/decide-founder',
   '/admin/attach-founder',
@@ -1097,7 +1100,7 @@ const ZERO_FEE_ROUTES = [
   '/wallet/transfer',
 ];
 
-test('0 片穷举：矩阵里 29 条 0 片路由均未接闸门（源码级）+ POST /people 实跑资产逐字节不变', async () => {
+test('0 片穷举：矩阵里 30 条 0 片路由均未接闸门（源码级）+ POST /people 实跑资产逐字节不变', async () => {
   const offenders = [];
   const missing = [];
   let checked = 0;
@@ -1111,11 +1114,11 @@ test('0 片穷举：矩阵里 29 条 0 片路由均未接闸门（源码级）+ 
     for (const b of branches) if (GATE_RE.test(b)) offenders.push(p);
   }
   assert.deepEqual(offenders, [], `这些 0 片路由被误接了闸门（矩阵即契约）：${offenders.join(', ')}`);
-  assert.ok(checked >= 29, `实际扫描到的 0 片路由分支片段仅 ${checked} 个`);
+  assert.ok(checked >= 30, `实际扫描到的 0 片路由分支片段仅 ${checked} 个`);
   // 清单必须与 index.js 实际路由逐条对上：**一条都不许缺**（幽灵路由 / 改名漏改一律红灯，
   // 不得为了跑绿把断言放松 —— P1 质检已删掉不存在的 POST /admin/reject-leave）
   assert.equal(missing.length, 0, `0 片清单与 index.js 对不上的路由（幽灵或改名）：${missing.join(', ')}`);
-  assert.equal(ZERO_FEE_ROUTES.length, 29, '0 片清单条数固定（矩阵即契约）');
+  assert.equal(ZERO_FEE_ROUTES.length, 30, '0 片清单条数固定（矩阵即契约）');
 
   // 正向对照：4 条计费路由都确实接了闸门
   for (const p of ['/admin/reparent', '/admin/delete-node', '/admin/create-tree']) {

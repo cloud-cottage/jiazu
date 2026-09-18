@@ -44,6 +44,14 @@ export const EXTERNAL_KEYS = [
 ];
 /** 源流链属性（写详情文档；时间轴按 external_chain_gen 排序展示） */
 export const CHAIN_ATTR_KEYS = ['external_chain_gen', 'external_chain_aggregate', 'external_chain_from'];
+/**
+ * 批量续编的每批上限（用户拍板：一次最多 10 代；`POST /admin/chain-append-batch`）。
+ * **只限「一次操作」的批大小，不得被当成本项目任何形式的世数 / 深度上限**——
+ * 总谱源流链实测已到第 90 世（见技能「中华世本总谱续编」），72 是「世乘级」等级阈值而非写入上限。
+ */
+export const MAX_BATCH_CHAIN = 10;
+/** 单个名字的长度上限（批量续编入参校验；单位 = 码点，前端解析后逐条传入） */
+const MAX_BATCH_NAME_LEN = 20;
 
 function genHandle() {
   return crypto.randomBytes(12).toString('hex');
@@ -134,9 +142,16 @@ export function applyLifespan(person, body = {}, opts = {}) {
  * 应用人物更新（PUT /people/<handle>）
  * body = Gramps RawPerson 形状（primary_name/gender/attribute_list/...）
  * 结构字段 → 树 JSON；非 external 的 attributes → 详情文档（全量替换）
+ *
+ * 写序（缺陷 B 修正）：详情文档（档案真源）**必须等树 JSON 落盘成功之后再写** ——
+ * 树 JSON 是结构真源，先写详情会在树被拒（EACCES / 乐观锁 / 业务 403）时留下
+ * 「详情已改、树没改」的跨文件发散；反过来详情写失败**不回滚树、不抛业务失败**
+ * （已提交的树改动不能被撕成失败并退费 —— 那等于送一次免费更改），只在返回里带
+ * `detailSaved:false` 供路由回 `detail_warning`。
  */
 export async function updatePerson(treeId, handle, body, opts = {}) {
-  return updateTree(treeId, async (tree) => {
+  let pendingDetail = null;
+  const result = await updateTree(treeId, async (tree) => {
     const person = tree.people[handle];
     if (!person) throw new Error('person not found');
 
@@ -178,13 +193,24 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
     // 避免前端 PUT 未回传时把跨树链接 / 婚姻字段清空
     for (const k of EXTERNAL_KEYS) if (k in ext) person[k] = ext[k];
 
-    // 详情文档（档案字段：attributes 全量替换；events 保持现状）
+    // 详情文档（档案字段：attributes 全量替换；events 保持现状）——闭包内**只组装**，不落盘
     const detail = (await getDetail(treeId, handle)) || { tree_id: treeId, handle, events: [], media: [], citations: [], notes: [], attributes: [] };
     detail.attributes = others;
     detail.updated_at = new Date().toISOString();
-    await saveDetail(detail);
+    pendingDetail = detail;
     return { ok: true, handle };
   });
+
+  // 树已落盘（结构真源已提交）→ 再写详情；详情写失败只降级为 warning，不撕毁已完成的改动
+  let detailSaved = true;
+  if (pendingDetail) {
+    try {
+      await saveDetail(pendingDetail);
+    } catch {
+      detailSaved = false;
+    }
+  }
+  return { ...result, detailSaved };
 }
 
 /** 新建人物（POST /people/），body = {primary_name, gender, attribute_list?, inherit_surname_from?} */
@@ -399,6 +425,105 @@ export async function chainSiblings(treeId, gen, excludeHandle = '') {
 }
 
 /**
+ * 新建链节点的人员字段（逐字沿用单节点续编 mode='new' 的口径）：
+ * 姓 = 调用方算好的继承姓、名 = given、name = 姓 + 名；生卒/地点空串、总谱节点一律已故。
+ */
+function newChainPerson({ handle, grampsId, surname, given, gender = 'U' }) {
+  const sn = String(surname || '').trim();
+  const gn = String(given || '').trim();
+  return {
+    handle,
+    gramps_id: grampsId,
+    name: `${sn}${gn}` || '未知',
+    surname: sn,
+    given: gn,
+    gender: ['M', 'F', 'U'].includes(gender) ? gender : 'U',
+    birth_date: '',
+    death_date: '',
+    birth_place: '',
+    death_place: '',
+    parent_family: '',
+    spouse_families: [],
+    external_tree: '',
+    external_person_handle: '',
+    external_link_type: '',
+    is_living: false, // 总谱节点一律已故（续编仅适用于中华世本总谱）
+  };
+}
+
+/** 链属性 → 详情文档 attributes（单节点 / 批量续编共用；保留既有其它属性） */
+function chainDetailAttributes({ gen, treeId, mode = 'new', note = '', extraAttributes = [], existing = [] }) {
+  const attributes = (existing || []).filter((a) => !CHAIN_ATTR_KEYS.includes(a.key));
+  attributes.push({ key: 'external_chain_gen', value: String(gen), type: 'external_chain_gen' });
+  // 新建节点补链归属标记；挂接节点不动其自身跨树链接（external_tree 结构字段）
+  if (mode === 'new') {
+    attributes.push({ key: 'external_tree', value: treeId, type: 'external_tree' });
+  }
+  if (note) attributes.push({ key: 'external_relation_note', value: note, type: 'external_relation_note' });
+  // 称号等档案属性（号/封号/谥号）随新建一并写入
+  for (const a of extraAttributes || []) {
+    const key = String(a?.key || '').trim();
+    if (!key || CHAIN_ATTR_KEYS.includes(key)) continue;
+    const value = String(a?.value ?? '').trim();
+    if (!value) continue;
+    attributes.push({ key, value, type: key });
+  }
+  return attributes;
+}
+
+/** 组装链节点详情文档（单节点 / 批量续编共用；既有文档按原样更新 gramps_id/name/updated_at） */
+function chainDetailDoc({ treeId, handle, person, gen, mode = 'new', note = '', extraAttributes = [], existing = null }) {
+  const detail = existing || {
+    tree_id: treeId,
+    handle,
+    gramps_id: person.gramps_id,
+    name: person.name,
+    events: [],
+    media: [],
+    citations: [],
+    notes: [],
+    attributes: [],
+  };
+  detail.attributes = chainDetailAttributes({
+    gen,
+    treeId,
+    mode,
+    note,
+    extraAttributes,
+    existing: detail.attributes || [],
+  });
+  detail.gramps_id = person.gramps_id;
+  detail.name = person.name;
+  detail.updated_at = new Date().toISOString();
+  return detail;
+}
+
+/** 家族挂接（单节点 / 批量续编共用）：父节点已有配偶家族 → 追加 child_ref（同世并列）；否则新建家族 */
+async function linkChildToParent(tree, parentHandle, childHandle) {
+  const famHandles = tree.people[parentHandle].spouse_families || [];
+  const fam = famHandles.length ? tree.families[famHandles[0]] : null;
+  if (fam) {
+    if (!(fam.child_handles || []).includes(childHandle)) {
+      fam.child_handles = [...(fam.child_handles || []), childHandle];
+    }
+    tree.people[childHandle].parent_family = fam.handle;
+    return fam.handle;
+  }
+  const fh = genHandle();
+  const parentIsMother = tree.people[parentHandle].gender === 'F';
+  tree.families[fh] = {
+    handle: fh,
+    gramps_id: await nextFamilyId(),
+    father_handle: parentIsMother ? '' : parentHandle,
+    mother_handle: parentIsMother ? parentHandle : '',
+    child_handles: [childHandle],
+  };
+  tree.people[parentHandle].spouse_families = [fh];
+  tree.people[childHandle].parent_family = fh;
+  return fh;
+}
+
+/**
  * 总谱续编（chief_editor）：把节点续编为父节点的第 N+1 世
  * - mode='new'：新建节点（name/surname/gender）并挂到链上
  * - mode='attach'：把树内已有节点（childHandle）挂接为链上第 N+1 世
@@ -451,83 +576,33 @@ export async function appendChainNode({
       h = genHandle();
       // 姓缺省 → 随父姓（挂接节点所在家族父亲优先）
       const sn = String(surname || '').trim() || inheritedSurname(tree, parentHandle);
-      const given = String(name || '').trim();
-      tree.people[h] = {
+      tree.people[h] = newChainPerson({
         handle: h,
-        gramps_id: await nextPersonId(),
-        name: `${sn}${given}` || '未知',
+        grampsId: await nextPersonId(),
         surname: sn,
-        given,
-        gender: ['M', 'F', 'U'].includes(gender) ? gender : 'U',
-        birth_date: '',
-        death_date: '',
-        birth_place: '',
-        death_place: '',
-        parent_family: '',
-        spouse_families: [],
-        external_tree: '',
-        external_person_handle: '',
-        external_link_type: '',
-        is_living: false, // 总谱节点一律已故（续编仅适用于中华世本总谱）
-      };
+        given: String(name || '').trim(),
+        gender,
+      });
       created.name = tree.people[h].name;
     }
     const person = tree.people[h];
 
     // 链属性 → 详情文档（档案真源）；保留原有 relation note
-    const detail = (await getDetail(treeId, h)) || {
-      tree_id: treeId,
-      handle: h,
-      gramps_id: person.gramps_id,
-      name: person.name,
-      events: [],
-      media: [],
-      citations: [],
-      notes: [],
-      attributes: [],
-    };
-    const attributes = (detail.attributes || []).filter((a) => !CHAIN_ATTR_KEYS.includes(a.key));
-    attributes.push({ key: 'external_chain_gen', value: String(gen), type: 'external_chain_gen' });
-    // 新建节点补链归属标记；挂接节点不动其自身跨树链接（external_tree 结构字段）
-    if (mode === 'new') {
-      attributes.push({ key: 'external_tree', value: treeId, type: 'external_tree' });
-    }
-    if (note) attributes.push({ key: 'external_relation_note', value: note, type: 'external_relation_note' });
-    // 称号等档案属性（号/封号/谥号）随新建一并写入
-    for (const a of extraAttributes || []) {
-      const key = String(a?.key || '').trim();
-      if (!key || CHAIN_ATTR_KEYS.includes(key)) continue;
-      const value = String(a?.value ?? '').trim();
-      if (!value) continue;
-      attributes.push({ key, value, type: key });
-    }
-    detail.attributes = attributes;
-    detail.gramps_id = person.gramps_id;
-    detail.name = person.name;
-    detail.updated_at = new Date().toISOString();
-    await saveDetail(detail);
+    await saveDetail(
+      chainDetailDoc({
+        treeId,
+        handle: h,
+        person,
+        gen,
+        mode,
+        note,
+        extraAttributes,
+        existing: await getDetail(treeId, h),
+      }),
+    );
 
     // 家族挂接：父节点已有配偶家族 → 追加 child_ref（同世并列）；否则新建家族
-    const famHandles = tree.people[parentHandle].spouse_families || [];
-    const fam = famHandles.length ? tree.families[famHandles[0]] : null;
-    if (fam) {
-      if (!(fam.child_handles || []).includes(h)) {
-        fam.child_handles = [...(fam.child_handles || []), h];
-      }
-      person.parent_family = fam.handle;
-    } else {
-      const fh = genHandle();
-      const parentIsMother = tree.people[parentHandle].gender === 'F';
-      tree.families[fh] = {
-        handle: fh,
-        gramps_id: await nextFamilyId(),
-        father_handle: parentIsMother ? '' : parentHandle,
-        mother_handle: parentIsMother ? parentHandle : '',
-        child_handles: [h],
-      };
-      tree.people[parentHandle].spouse_families = [fh];
-      person.parent_family = fh;
-    }
+    await linkChildToParent(tree, parentHandle, h);
     return h;
   });
 
@@ -544,6 +619,124 @@ export async function appendChainNode({
     siblings,
     branch: siblings.length > 0,
     message: `已续编第 ${gen} 世：${childName}`,
+  };
+}
+
+/**
+ * 批量续编入参校验（纯函数）：把 names 规范化为 trim 后的数组；任一条不合规即抛错（→ 整批不写）。
+ * 口径：names 必须是长度 1..max 的数组；每个名字 trim 后非空、长度 ≤ 20 字（码点）。
+ */
+export function normalizeBatchNames(names, max = MAX_BATCH_CHAIN) {
+  if (!Array.isArray(names) || names.length < 1) throw new Error('请提供要添加的名字');
+  if (names.length > max) throw new Error(`一次最多添加 ${max} 代，当前 ${names.length} 代`);
+  return names.map((raw, i) => {
+    const s = String(raw ?? '').trim();
+    if (!s) throw new Error(`第 ${i + 1} 个名字为空`);
+    if ([...s].length > MAX_BATCH_NAME_LEN) {
+      throw new Error(`第 ${i + 1} 个名字过长（最多 ${MAX_BATCH_NAME_LEN} 字）`);
+    }
+    return s;
+  });
+}
+
+/**
+ * 把树对象还原到操作前的快照（`updateTree` 未导出「失效进程内缓存」接口 → 失败时就地还原，
+ * 否则 `saveTree` 落盘失败会把**进程内缓存对象**改脏，同进程后续 `getTree` 读回盘上不存在的幻影节点）。
+ */
+function restoreTreeInPlace(tree, snap) {
+  if (!tree || !snap) return;
+  tree.people = snap.people;
+  tree.families = snap.families;
+  tree.version = snap.version;
+  tree.updated_at = snap.updated_at;
+}
+
+/**
+ * 总谱批量续编（chief_editor）：按**已解析好的名字数组**，为 parentHandle 沿「一条线」依次续编
+ * 最多 `MAX_BATCH_CHAIN` 代子孙（第 k 个的父 = 第 k-1 个；k=1 时为 parentHandle）。
+ *
+ * 单事务语义（整批成功或整批不写）：
+ * - 全部 N 个新节点 + N 个详情文档 + N 个家族挂接都在**同一次** `updateTree(treeId, …)` 回调内完成；
+ * - 回调抛错（含最后落库失败）→ 树 JSON 不落盘，同时 ① 回收本批已写出的详情文档
+ *   ② 就地还原进程内树对象（不留幻影节点）。
+ *
+ * 口径（不得自行更改）：姓随父姓继承（**不接受 surname 入参**）、新建性别固定 'M'、总谱节点锁已故、
+ * 不做同名去重；本上限只限「一次操作」的批大小，**不是世数 / 深度上限**。
+ *
+ * @returns {Promise<{ok:true,start_gen:number,end_gen:number,count:number,added:Array,message:string}>}
+ */
+export async function appendChainBatch({ treeId, parentHandle, names, masterTreeId }) {
+  if (masterTreeId && treeId !== masterTreeId) throw new Error('续编仅适用于中华世本总谱');
+  const list = normalizeBatchNames(names);
+  const tree0 = await getTree(treeId);
+  if (!tree0) throw new Error(`树不存在: ${treeId}`);
+  if (!tree0.people[parentHandle]) throw new Error('父节点不存在于总谱');
+
+  const parentInfo = await getChainInfo(treeId, parentHandle);
+  if (!parentInfo.onChain) throw new Error('该节点不在中华世本源流链上（无世数），无法续编下一世');
+  // 第 1 个新节点的世数 = nextChainGen 的口径（父世数 + 1）；第 k 个 = 父世数 + k
+  const startGen = nextChainGen(parentInfo.gen, { aggregate: parentInfo.aggregate });
+  const handles = list.map(() => genHandle());
+
+  let mutatedTree = null;
+  let snapshot = null;
+  const writtenDetails = [];
+  let added = [];
+  try {
+    added = await updateTree(treeId, async (tree) => {
+      mutatedTree = tree;
+      snapshot = {
+        people: JSON.parse(JSON.stringify(tree.people || {})),
+        families: JSON.parse(JSON.stringify(tree.families || {})),
+        version: tree.version,
+        updated_at: tree.updated_at,
+      };
+      const out = [];
+      let parentOfCurrent = parentHandle;
+      for (let k = 0; k < list.length; k++) {
+        const gen = startGen + k;
+        const h = handles[k];
+        // 姓一律随父姓继承（父 = 上一个节点；链上首个的父 = parentHandle）
+        const sn = inheritedSurname(tree, parentOfCurrent);
+        tree.people[h] = newChainPerson({
+          handle: h,
+          grampsId: await nextPersonId(),
+          surname: sn,
+          given: list[k],
+          gender: 'M', // 新建默认男（与既有单节点续编口径一致）
+        });
+        const person = tree.people[h];
+        await saveDetail(chainDetailDoc({ treeId, handle: h, person, gen, mode: 'new' }));
+        writtenDetails.push(h);
+        await linkChildToParent(tree, parentOfCurrent, h);
+        out.push({ handle: h, name: person.name, gramps_id: person.gramps_id, gen });
+        parentOfCurrent = h;
+      }
+      return out;
+    });
+  } catch (e) {
+    // 整批不写：① 回收本批已写出的详情文档（句柄皆为本批新建 → 删除安全）
+    for (const h of writtenDetails) {
+      try {
+        await deleteDetail(treeId, h);
+      } catch {
+        /* best-effort：删不掉也绝不掩盖原始错误 */
+      }
+    }
+    // ② 还原进程内树对象（中途失败 / saveTree 落盘失败都会把它改脏）
+    restoreTreeInPlace(mutatedTree, snapshot);
+    throw e;
+  }
+
+  const count = list.length;
+  const endGen = startGen + count - 1;
+  return {
+    ok: true,
+    start_gen: startGen,
+    end_gen: endGen,
+    count,
+    added,
+    message: count === 1 ? `已续编第 ${startGen} 世` : `已续编第 ${startGen}–${endGen} 世，共 ${count} 代`,
   };
 }
 

@@ -30,6 +30,11 @@ import {
   sweep,
   withAssets,
 } from './economy-ledger.js';
+// 跨树登记字段清单的**唯一真源**在 lib/tree-write.js（写路径的属性分流也用它）；
+// 值级比对要按同一份清单把 external_* 从详情属性里剔出去，禁止另抄一套键名。
+// CHAIN_ATTR_KEYS（源流链属性：external_chain_gen / aggregate / from）同属「可能只在详情文档里」
+// 的键，有效现值合并要一并覆盖（中华世本链节点就是这种形态）。
+import { EXTERNAL_KEYS, CHAIN_ATTR_KEYS } from './tree-write.js';
 
 // ---- ① 单价表（唯一真源；路由内禁止写魔法数字）----
 
@@ -131,6 +136,194 @@ export function hasPersonChanges(body) {
   }
   if (Array.isArray(b.attribute_list) && b.attribute_list.length > 0) return true;
   return false;
+}
+
+// ---- ①′ 值级比对（no-op 编辑：请求体与现值逐字段规范化后完全相同 → 不扣费、不写库）----
+
+/**
+ * 参与值级比对的树 JSON 结构字段（口径 = docs/economy-fee.spec.md §3-1 #1「节点内容修改」的
+ * 姓名 / 性别 / 生卒 / 健在，称号三字段落在详情文档 attributes 里另行比对）。
+ */
+export const PERSON_VALUE_FIELDS = ['name', 'surname', 'given', 'gender', 'birth_date', 'death_date', 'birth_place', 'death_place', 'is_living'];
+
+/** 详情文档里的称号三字段（键名同 docs/data-model.md §4；存储层键 = 号 / 封号 / 谥号） */
+export const TITLE_ATTR_KEYS = ['封号', '谥号', '号'];
+
+/** 规范化：字符串 trim；`''` / `undefined` / `null` 视为同一空值 */
+const emptyText = (v) => (v === undefined || v === null ? '' : String(v).trim());
+
+/** 性别归一：数字枚举 1/2/0 与 M/F/U 同一口径（大小写不敏感） */
+function normGender(v) {
+  const s = emptyText(v).toUpperCase();
+  if (s === '1') return 'M';
+  if (s === '2') return 'F';
+  if (s === '0') return 'U';
+  return s;
+}
+
+/** 健在归一（统一布尔） */
+const normLiving = (v) => v === true || v === 'true' || v === 1 || v === '1';
+
+/**
+ * 树里「现值」的健在口径：已记录布尔 → 用记录值；缺省 → 按有无卒年推导
+ * （与前端档案 / 树图的 `is_living !== undefined ? is_living : !death` 完全同口径）。
+ */
+function currentLiving(person) {
+  const p = person || {};
+  return typeof p.is_living === 'boolean' ? p.is_living : !emptyText(p.death_date);
+}
+
+/** 属性键提取（Gramps 形状：`type` 可能是字符串或 `{string}`，兼容 `key`）；取不到 → '' */
+function attrKeyOf(a) {
+  return typeof a?.type === 'string' ? a.type : a?.type?.string || (typeof a?.key === 'string' ? a.key : '');
+}
+
+/**
+ * 已由结构字段 / 专门路由分流的属性键：
+ *   - `EXTERNAL_KEYS` 由本路由写成**树节点结构字段**（tree-write.updatePerson 第 189/194 行）；
+ *   - `CHAIN_ATTR_KEYS`（源流链）只由续编路由维护，本路由写路径**不写**它们（tree-write 第 456/466 行）。
+ * 二者都不得参与详情 attributes 的「全量替换」比对（否则链节点原样回传会被判差异 → 误扣 1 片）。
+ */
+const STRUCTURAL_ATTR_KEYS = [...EXTERNAL_KEYS, ...CHAIN_ATTR_KEYS];
+
+/** 属性表（Gramps 形状 `[{type|key, value}]`）→ 规范化键值表；空值 = 未录入（与缺省同一口径） */
+function attrMapOf(list, skipStructural = false) {
+  const map = new Map();
+  for (const a of list || []) {
+    const key = attrKeyOf(a);
+    if (!key) continue;
+    if (skipStructural && STRUCTURAL_ATTR_KEYS.includes(key)) continue;
+    const val = emptyText(a?.value);
+    if (!val) continue;
+    map.set(key, val);
+  }
+  return map;
+}
+
+function sameAttrMap(a, b) {
+  if (a.size !== b.size) return false;
+  for (const [k, v] of a) if (b.get(k) !== v) return false;
+  return true;
+}
+
+/**
+ * 有效现值（**纯函数，无 IO**）：树节点字段为底，叠加详情文档 `attributes` 里的键
+ * （称号三字段 + `external_*` / `external_chain_gen` 等），树节点上**非空**的 `external_*` 再覆盖详情值。
+ * 口径来源 = **读路径** `index.js` → `toRawPerson(tree, person, detail)`（`GET /people/<handle>` 用它拼
+ * `attribute_list`）：先 push 详情 `detail.attributes`，再 push 树节点上非空的 `EXTERNAL_KEYS`（后写优先）。
+ *
+ * 为什么要它：中华世本**链节点**的 `external_tree` / `external_chain_gen` 只存在于详情文档 attributes、
+ * 树节点上是空串；前端 GET（合并后）原样 PUT 回来时，若只比树节点字段就会判出 `fields:['external_tree']`
+ * → 原样保存被误扣 1 片（真 HTTP 复现：风甲 / 风丙链节点）。
+ *
+ * @param {object} person 树 JSON 里的现值
+ * @param {object|null} detail 详情文档现值（attributes 承载 external_* 与称号）
+ * @returns {object} 有效现值（键值表；仅结构与详情派生字段，不做规范化）
+ */
+export function effectivePersonValues(person = {}, detail = null) {
+  const p = person || {};
+  const out = { ...p };
+  for (const a of detail?.attributes || []) {
+    const key = attrKeyOf(a);
+    if (key) out[key] = a.value;
+  }
+  for (const k of EXTERNAL_KEYS) if (p[k]) out[k] = p[k]; // 读路径里树节点值后写 → 非空即优先
+  return out;
+}
+
+/**
+ * 值级比对（**纯函数，无 IO**）：请求体 `body` 与现值（树 JSON `person` + 详情文档 `detail`）
+ * 在内容字段上规范化后是否完全相同 —— 完全相同 = 本次 PUT 为 no-op（路由不扣费、不写库）。
+ *
+ * 候选值一律按**写入语义**推导（lib/tree-write.js `updatePerson` 的行为）：
+ *   - `name` / `surname` / `given` 只认 `primary_name`（`name` = surname + given，空则「未知」）；
+ *   - `gender` 仅在 body 为 0/1/2 数字枚举时才写（字符串形态不写 → 该字段不参与比对）；
+ *   - `is_living=true` 会**清空卒年**；给了非空 `death_date` 而没给布尔 `is_living` 会置 `is_living=false`；
+ *   - 详情文档 `attributes` 是**全量替换**（body 未带的属性键会被删掉）→ 用键值表整体比对。
+ * 只比内容字段；`external_*` 按契约不属于本路由（另有专门路由维护），仅做**值级保守追加**
+ * （body 显式给了且与现值不同才算差异，绝不因「未提供」算差异；绝不静默吞掉一次真实写入）。
+ *
+ * @param {object} body PUT 请求体（Gramps RawPerson 形状）
+ * @param {object} person 树 JSON 里的现值
+ * @param {object|null} detail 详情文档现值（attributes 承载称号三字段）
+ * @returns {{changed:boolean, fields:string[]}} `fields` = 判定有差异的字段名（便于测试 / 排查）
+ */
+export function personValueDiff(body = {}, person = {}, detail = null) {
+  const b = body || {};
+  const p = person || {};
+  const fields = [];
+
+  // ① 姓名三字段：body 未带任何姓名字段 → 视为「保持现值」，不参与比对
+  //    （否则「只改称号」这类请求会被判成「把名字写成 未知」的差异）
+  const hasName = !!b.primary_name || ['name', 'surname', 'given'].some((k) => b[k] !== undefined && b[k] !== null);
+  if (hasName) {
+    const pn = b.primary_name || {};
+    const list = Array.isArray(pn.surname_list) ? pn.surname_list : [];
+    const surname = emptyText(((list.find((s) => s && s.primary) || list[0] || {}).surname));
+    const given = emptyText(pn.first_name);
+    const cand = {
+      name: b.name !== undefined && b.name !== null ? emptyText(b.name) : emptyText(`${surname}${given}` || '未知'),
+      surname: b.surname !== undefined && b.surname !== null ? emptyText(b.surname) : surname,
+      given: b.given !== undefined && b.given !== null ? emptyText(b.given) : given,
+    };
+    for (const k of ['name', 'surname', 'given']) if (cand[k] !== emptyText(p[k])) fields.push(k);
+  }
+
+  // ② 性别：写入侧只吃 0/1/2 数字枚举（字符串形态一律不写 → 不参与比对）
+  if ([0, 1, 2].includes(b.gender)) {
+    if (normGender(b.gender) !== normGender(p.gender)) fields.push('gender');
+  }
+
+  // ③ 生卒地（顶层约定字段；写入侧只落 birth_date / death_date）
+  if (b.birth_date !== undefined && emptyText(b.birth_date) !== emptyText(p.birth_date)) fields.push('birth_date');
+  if (b.birth_place !== undefined && emptyText(b.birth_place) !== emptyText(p.birth_place)) fields.push('birth_place');
+  if (b.death_place !== undefined && emptyText(b.death_place) !== emptyText(p.death_place)) fields.push('death_place');
+
+  // ④ 卒年：`is_living=true` 时写入侧会清空卒年 → 候选值取 ''
+  const hasLiving = typeof b.is_living === 'boolean';
+  if (b.death_date !== undefined || hasLiving) {
+    const candDeath = b.is_living === true ? '' : emptyText(b.death_date !== undefined ? b.death_date : p.death_date);
+    if (candDeath !== emptyText(p.death_date)) fields.push('death_date');
+  }
+
+  // ⑤ 健在：统一布尔；body 未给布尔 → 只有「给了非空卒年」（写入侧会置 false）才可能产生差异
+  const curLiving = currentLiving(p);
+  if (hasLiving) {
+    if (normLiving(b.is_living) !== curLiving) fields.push('is_living');
+  } else if (b.death_date !== undefined && emptyText(b.death_date) !== '' && curLiving) {
+    fields.push('is_living');
+  }
+
+  // ⑥ 详情文档属性（称号三字段 + 其余属性）：全量替换语义 → 键值表整体比对
+  //    **硬口径**：请求体**未提供** `attribute_list` ≠ 提供空表 → 属性维度视为「未提供」，不判变更
+  //    （窄 body 只带姓名/生卒时不得因属性表被判差异；显式给了 `[]` 仍算真实清空 → 照旧计费）。
+  //    排除 `STRUCTURAL_ATTR_KEYS`（EXTERNAL_KEYS + CHAIN_ATTR_KEYS）：它们由结构字段 / 续编路由分流，
+  //    本路由写路径不写详情里的这两类键（tree-write.updatePerson 第 456/466 行）→ 不得判差异。
+  if (b.attribute_list !== undefined && b.attribute_list !== null) {
+    const candAttrs = attrMapOf(b.attribute_list, true);
+    const curAttrs = attrMapOf(detail?.attributes, true);
+    if (!sameAttrMap(candAttrs, curAttrs)) fields.push('attributes');
+  }
+
+  // ⑦ 跨树登记 / 源流链字段（external_* / external_chain_gen…）：现值基准改用**有效现值**
+  //    （effectivePersonValues = 树节点 ∪ 详情 attributes，与读路径 toRawPerson 同一口径），
+  //    否则链节点（external_* 只在详情里）原样回传会被判「变更」→ 误扣 1 片。
+  //    body 未提供的键一律不参与比对（未提供 ≠ 变更）；显式给了且值不同才保守判差异（绝不静默吞掉真实写入）。
+  const eff = effectivePersonValues(p, detail);
+  const ext = {};
+  for (const a of b.attribute_list || []) {
+    const key = attrKeyOf(a);
+    if (key && STRUCTURAL_ATTR_KEYS.includes(key)) ext[key] = emptyText(a?.value);
+  }
+  for (const k of EXTERNAL_KEYS) if (b[k] !== undefined && b[k] !== null) ext[k] = emptyText(b[k]);
+  for (const [k, v] of Object.entries(ext)) if (v !== emptyText(eff[k])) fields.push(k);
+
+  return { changed: fields.length > 0, fields };
+}
+
+/** 便捷包装：本次 PUT 是否为 no-op（路由用） */
+export function isPersonUnchanged(body, person, detail = null) {
+  return !personValueDiff(body, person, detail).changed;
 }
 
 // ---- ② 只读预检（不写；内部先 sweep 再算余量）----

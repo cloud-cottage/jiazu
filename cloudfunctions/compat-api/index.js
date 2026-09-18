@@ -25,6 +25,7 @@
  *   GET  /admin/users | /admin/get-anchor | /admin/leave-requests
  *   POST /admin/set-role | /admin/set-anchor | /admin/approve-leave
  *   POST /admin/split-tree | /admin/remove-branch-link
+ *   POST /admin/chain-append | /admin/chain-append-batch（总谱续编：单节点续编 / 批量「一条线」最多 10 代·单事务）
  *   POST /admin/delete-node（删除节点：连同全部后代 / 仅本节点·子女上提一级；跨树引用 → 409 拒绝）
  *   POST /admin/establish-branch（立支：祖先链并入宗谱 + 新建家族树；9999 颗石榴籽 · docs/branch-clan-ops.spec.md）
  *   POST /admin/converge-clan（汇宗：源树整体并入他树普通节点；0 片 0 籽 + 灵气折损并入）
@@ -307,18 +308,40 @@ const SYSTEM_ERRNO = new Set([
 const LOCAL_PATH_RE = /\/(?:Users|tmp|var|private|home|opt|etc|usr)\//;
 
 /**
+ * 系统级失败判据（safeError 与计费路由出码共用）：errno 类 code / name（EACCES / ENOENT / …），
+ * 或异常文本里出现本机绝对路径。
+ */
+function isSystemFailure(e) {
+  const err = e || {};
+  const errno = String(err.code || err.name || '');
+  return SYSTEM_ERRNO.has(errno) || LOCAL_PATH_RE.test(String(err.message || ''));
+}
+
+/**
  * @param {Error} e 捕获到的异常
  * @param {number} [fallbackStatus=400] 旧语义下的缺省状态码（普通路由 400；外层兜底 / 拆分类 500）
  * @param {string} [prefix=''] 仅业务错误保留的文案前缀（如旧文案里的「拆分失败: 」）
  */
 function safeError(e, fallbackStatus = 400, prefix = '') {
   const err = e || {};
+  if (isSystemFailure(err)) return send(500, { error: eco.INTERNAL_ERROR_TEXT, status: 500 });
   const status = Number(err.status);
-  const errno = String(err.code || err.name || '');
-  const system = SYSTEM_ERRNO.has(errno) || LOCAL_PATH_RE.test(String(err.message || ''));
-  if (system) return send(500, { error: eco.INTERNAL_ERROR_TEXT, status: 500 });
   const text = String(err.message || '');
   return send(Number.isFinite(status) ? status : fallbackStatus, { error: prefix ? `${prefix}: ${text}` : text });
+}
+
+/**
+ * 计费路由 catch 的**出码**（响应体仍由 `eco.errorPayload` 生成）：
+ * - 业务错误（lib 层 `fail(msg, 4xx)` / `httpError(4xx, msg)`）→ 保持自身 status；
+ * - 系统级失败（EACCES / ENOENT / ERRNO / 异常含本机路径）→ `payload.status`（= 500）——
+ *   旧写法 `send(e.status || 400, …)` 会把系统级 500 报成 HTTP 400（响应体却是 `{"status":500}`）；
+ * - 其余无 status 的裸异常 = lib 层历史业务拒绝（如 `person not found`）→ 沿用旧语义 400。
+ */
+function errorStatusOf(e, payload) {
+  const own = Number((e || {}).status);
+  if (Number.isFinite(own)) return own;
+  if (isSystemFailure(e)) return Number(payload?.status) || 500;
+  return 400;
 }
 
 /**
@@ -2008,6 +2031,29 @@ async function handleRequest(event) {
       }
     }
 
+    // 总谱批量续编（chief_editor）：按**已解析好的名字数组**（前端解析标点/序号）沿「一条线」依次续编
+    // 最多 MAX_BATCH_CHAIN（10）代子孙；全部新节点 + 详情文档 + 家族挂接在**同一次** updateTree 回调内完成
+    // （整批成功或整批不写）。入参 `{ tree_id, parent_handle, names }` —— **不接受 surname**（姓一律随父姓继承），
+    // 也不解析文本（解析在前端）。鉴权档位与 `/admin/chain-append` 完全一致。
+    if (pathname === '/admin/chain-append-batch' && method === 'POST') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      const user = await colGet('jiazu_users', u.phone);
+      if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
+      const body = parseBody(event);
+      try {
+        const result = await tw.appendChainBatch({
+          treeId: body.tree_id,
+          parentHandle: body.parent_handle,
+          names: body.names,
+          masterTreeId: MASTER_TREE_ID,
+        });
+        return send(200, result);
+      } catch (e) {
+        return safeError(e);
+      }
+    }
+
     if (pathname === '/admin/remove-branch-link' && method === 'POST') {
       const u = await authUser(headers);
       if (!u) return send(401, { error: '未登录或登录已过期' });
@@ -2288,7 +2334,23 @@ async function handleRequest(event) {
       if (!eco.hasPersonChanges(body)) {
         return send(400, { error: '请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号）' });
       }
+      // ②′ 值级比对：与现值逐字段规范化后**完全相同** → no-op 编辑（打开弹窗不改东西点保存）：
+      //     不扣费、不写树（version / updated_at 不动）、不写详情、不产生任何 txs 流水，
+      //     返回 200 + `unchanged:true` + `fee.pieces:0`（余额取当前实际值）。
+      const putPerson = putTree?.people?.[peMatch[1]];
+      if (putPerson) {
+        const putDetail = await getDetail(treeId, peMatch[1]);
+        if (eco.isPersonUnchanged(body, putPerson, putDetail)) {
+          const q = await eco.quoteBamboo(u.phone, 0);
+          return send(200, {
+            ok: true,
+            unchanged: true,
+            fee: { unit: 'bamboos', pieces: 0, balance: q.current, balance_after: q.current },
+          });
+        }
+      }
       let charged = null;
+      let detailSaved = true;
       try {
         // ③④ 余额预检 + 扣费（整单拒绝 409 → 一字节不写）；⑤ 落库；⑥ 落库失败 → 冲正
         charged = await eco.chargeBamboo(u.phone, eco.FEE.person_update, {
@@ -2297,12 +2359,17 @@ async function handleRequest(event) {
           person_handle: peMatch[1],
           person_name: putTree?.people?.[peMatch[1]]?.name || '',
         });
-        await tw.updatePerson(treeId, peMatch[1], body, { masterTreeId: MASTER_TREE_ID });
+        const saved = await tw.updatePerson(treeId, peMatch[1], body, { masterTreeId: MASTER_TREE_ID });
+        // 详情文档（称号/档案）在树落盘之后才写；写失败不回滚树、不退费，只回警示（见 lib/tree-write.js）
+        detailSaved = saved?.detailSaved !== false;
       } catch (e) {
         const refunded = await refundQuietly(u.phone, charged, '保存落库失败，已原路返还');
-        return send(e.status || 400, eco.errorPayload(e, refunded ? { fee_refunded: true } : {}));
+        const payload = eco.errorPayload(e, refunded ? { fee_refunded: true } : {});
+        return send(errorStatusOf(e, payload), payload);
       }
-      return send(200, { ok: true, fee: eco.feeResponse(charged) });
+      const okBody = { ok: true, fee: eco.feeResponse(charged) };
+      if (!detailSaved) okBody.detail_warning = '称号/档案信息未保存，请重试';
+      return send(200, okBody);
     }
 
     // POST /families/（新建）

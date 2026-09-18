@@ -323,17 +323,31 @@ export async function saveTree(tree, expectedVersion) {
   if (expectedVersion !== undefined && tree.version !== expectedVersion) {
     throw new Error('并发冲突：树已被其他操作修改，请刷新后重试');
   }
+  // 落盘失败要「不留幻影」：记住自增前的版本与时间戳，失败时**原地还原**（磁盘才是真值），
+  // 并失效进程内缓存 —— 否则同进程后续 getTree 会读到盘上不存在的幻影结构（真实缺陷 B：
+  // chmod 0444 后一次改名被拒、磁盘未变，但同进程读接口已显示新名）。
+  const prevVersion = tree.version;
+  const prevUpdatedAt = tree.updated_at;
   tree.version = (tree.version || 1) + 1;
   tree.updated_at = new Date().toISOString();
-  if (SOURCE === 'local') {
-    const p = assertWriteAllowed(path.join(OUT, 'trees', `${tree.tree_id}.json`));
-    fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(tree, null, 2));
-  } else {
-    const meta = await getMeta();
-    const fileId = meta?.storage_files?.[tree.tree_id];
-    if (!fileId) throw new Error(`storage_files 缺少 ${tree.tree_id}`);
-    await sdkCall(() => getApp().uploadFile({ cloudPath: `trees/${tree.tree_id}.json`, fileContent: Buffer.from(JSON.stringify(tree)) }));
+  try {
+    if (SOURCE === 'local') {
+      const p = assertWriteAllowed(path.join(OUT, 'trees', `${tree.tree_id}.json`));
+      fs.mkdirSync(path.dirname(p), { recursive: true });
+      fs.writeFileSync(p, JSON.stringify(tree, null, 2));
+    } else {
+      const meta = await getMeta();
+      const fileId = meta?.storage_files?.[tree.tree_id];
+      if (!fileId) throw new Error(`storage_files 缺少 ${tree.tree_id}`);
+      await sdkCall(() => getApp().uploadFile({ cloudPath: `trees/${tree.tree_id}.json`, fileContent: Buffer.from(JSON.stringify(tree)) }));
+    }
+  } catch (e) {
+    // 先还原版本号 / 时间戳（调用方可能还持有这棵树对象），再失效缓存
+    tree.version = prevVersion;
+    tree.updated_at = prevUpdatedAt;
+    treeCache.delete(tree.tree_id);
+    eventIndexCache.delete(tree.tree_id);
+    throw e;
   }
   treeCache.set(tree.tree_id, tree);
   eventIndexCache.delete(tree.tree_id); // 树变更 → 事件索引失效
@@ -425,8 +439,18 @@ export async function updateTree(treeId, fn) {
   const lock = treeWriteLocks.get(treeId) || Promise.resolve();
   const run = lock.then(async () => {
     const tree = await getTree(treeId);
-    const result = await fn(tree);
-    await saveTree(tree, tree.version);
+    let result;
+    try {
+      result = await fn(tree);
+      await saveTree(tree, tree.version);
+    } catch (e) {
+      // 失败（落库失败 / 业务校验在闭包内抛错）一律**失效进程内缓存**：闭包是就地改对象，
+      // 磁盘没写、内存已改 —— 不失效就会留下「盘上没有、缓存里有」的幻影结构（缺陷 B）。
+      // 失效后任何调用方的下一次 getTree 都从磁盘读真值（与 updateTrees 的失败处理同一口径）。
+      treeCache.delete(treeId);
+      eventIndexCache.delete(treeId);
+      throw e;
+    }
     return result;
   });
   treeWriteLocks.set(treeId, run.catch(() => {}));
