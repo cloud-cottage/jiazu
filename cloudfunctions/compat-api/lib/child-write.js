@@ -10,11 +10,22 @@
  */
 import crypto from 'node:crypto';
 import { getTree, updateTrees, saveDetail, getDetail, deleteDetail, nextPersonId, nextFamilyId } from './store.js';
+import { treeKindOf, metaEntryOf } from './founder-attach.js';
 import { nextGrampsId, inheritedSurname, parentSlot } from './tree-write.js';
 import { findMarriageSide } from './marriage.js';
 
 /** 镜像子女的跨树链接类型（区别于配偶镜像的 'marriage'） */
 export const MIRROR_CHILD_LINK_TYPE = 'child';
+
+/**
+ * 已故锁（口径 5）：世本（master）与祖谱（clan）的新建节点一律 `is_living=false`；
+ * 普通家族树照旧不写该字段（undefined = 未显式声明）。
+ */
+async function deceasedLockedTree(treeId, masterTreeId) {
+  if (!treeId) return false;
+  if (masterTreeId && treeId === masterTreeId) return true;
+  return treeKindOf(await metaEntryOf(treeId)) === 'clan';
+}
 
 function genHandle() {
   return crypto.randomBytes(12).toString('hex');
@@ -184,6 +195,9 @@ export async function addChildNode({
   let staleDetailHandle = '';
   const ids = mirror ? [treeId, remoteTreeId] : [treeId];
 
+  // 已故锁在事务外先算好（本树 + 跨树真身树各自判定）
+  const localLocked = await deceasedLockedTree(treeId, masterTreeId);
+  const remoteLocked = mirror ? await deceasedLockedTree(remoteTreeId, masterTreeId) : false;
   const result = await updateTrees(ids, async (trees) => {
     const tree = trees[treeId];
     const parent = tree.people[personHandle];
@@ -219,7 +233,7 @@ export async function addChildNode({
           given,
           gender: childGender,
           parentFamily: fam.handle,
-          isLiving: treeId === masterTreeId ? false : undefined,
+          isLiving: localLocked ? false : undefined,
         });
         tree.people[childKey] = child;
         created.name = child.name;
@@ -282,7 +296,7 @@ export async function addChildNode({
         given,
         gender: childGender,
         parentFamily: remoteFam.handle,
-        isLiving: remoteTreeId === masterTreeId ? false : undefined,
+        isLiving: remoteLocked ? false : undefined,
       });
       remote.people[realKey] = real;
       created.name = real.name;

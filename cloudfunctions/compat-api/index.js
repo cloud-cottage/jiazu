@@ -2036,14 +2036,31 @@ async function handleRequest(event) {
     // （整批成功或整批不写）。入参 `{ tree_id, parent_handle, names }` —— **不接受 surname**（姓一律随父姓继承），
     // 也不解析文本（解析在前端）。鉴权档位与 `/admin/chain-append` 完全一致。
     if (pathname === '/admin/chain-append-batch' && method === 'POST') {
-      const u = await authUser(headers);
-      if (!u) return send(401, { error: '未登录或登录已过期' });
-      const user = await colGet('jiazu_users', u.phone);
-      if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
       const body = parseBody(event);
+      const batchTreeId = String(body.tree_id || '').trim();
+      // 目标树白名单（单一真源 tw.isChainBatchTree）：中华世本 或 kind='clan' 祖谱；
+      // 普通家族树（kind='family'）与未知 tree_id 一律 400 —— **绝不向普通家族树开放**
+      const batchKind = await tw.treeKindOfId(batchTreeId, MASTER_TREE_ID);
+      if (!tw.isChainBatchTree(batchKind)) {
+        return send(400, { error: '批量续编仅适用于中华世本与祖谱' });
+      }
+      if (batchKind === 'master') {
+        // 世本：仅 chief_editor（现状不变）
+        const u = await authUser(headers);
+        if (!u) return send(401, { error: '未登录或登录已过期' });
+        const user = await colGet('jiazu_users', u.phone);
+        if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
+      } else {
+        // 祖谱：本树 tree_steward（锚点树）+ chief_editor —— 与祖谱其它写操作同档（未登录恒 401）
+        try {
+          await requireWriteUser(headers, batchTreeId, pathname, body.parent_handle, false);
+        } catch (e) {
+          return safeError(e);
+        }
+      }
       try {
         const result = await tw.appendChainBatch({
-          treeId: body.tree_id,
+          treeId: batchTreeId,
           parentHandle: body.parent_handle,
           names: body.names,
           masterTreeId: MASTER_TREE_ID,
@@ -2359,7 +2376,13 @@ async function handleRequest(event) {
           person_handle: peMatch[1],
           person_name: putTree?.people?.[peMatch[1]]?.name || '',
         });
-        const saved = await tw.updatePerson(treeId, peMatch[1], body, { masterTreeId: MASTER_TREE_ID });
+        // 已故锁（口径 5）：世本 / 祖谱 节点一律已故（文案按树种类措辞：总谱 / 祖谱）
+        const putKind = await tw.treeKindOfId(treeId, MASTER_TREE_ID);
+        const saved = await tw.updatePerson(treeId, peMatch[1], body, {
+          masterTreeId: MASTER_TREE_ID,
+          deceasedLocked: putKind === 'master' || putKind === 'clan',
+          deceasedLockLabel: putKind === 'clan' ? '祖谱' : '总谱',
+        });
         // 详情文档（称号/档案）在树落盘之后才写；写失败不回滚树、不退费，只回警示（见 lib/tree-write.js）
         detailSaved = saved?.detailSaved !== false;
       } catch (e) {

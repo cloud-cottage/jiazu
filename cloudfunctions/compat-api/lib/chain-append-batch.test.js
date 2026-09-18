@@ -126,6 +126,7 @@ const zhonghua = {
     'zh-at0': P('zh-at0', 'I000059', '风', '见证父'),
     'zh-at2': P('zh-at2', 'I000061', '风', '原子二'),
     'zh-at3': P('zh-at3', 'I000062', '风', '原子三'),
+    'zh-dead': P('zh-dead', 'I000065', '风', '已故对照', { is_living: false }),
     'zh-eq1': P('zh-eq1', 'I000063', '姬', '等价一'),
     'zh-eq2': P('zh-eq2', 'I000064', '姬', '等价二'),
   },
@@ -142,9 +143,62 @@ const otherTree = {
   families: {},
 };
 
+/**
+ * 祖谱夹具（kind='clan'）· cb_clan：
+ *   cl-f（始祖位 I000320·姬累镜像·**无详情** → 结构推导第 1 世）
+ *     └ cl-1(2) → cl-2(3) → cl-3(4)        ← 一条实际世系链
+ *     └ cl-self(结构 2，**自带 external_chain_gen=7** → 自身世数以 7 为准)
+ *   cl-loose（无任何家族关系 → **不在祖谱世系内**）
+ */
+const CLAN = 'cb_clan';
+const clanTree = {
+  _schema: '1.0',
+  tree_id: CLAN,
+  founder_gramps_id: 'I000320',
+  version: 1,
+  people: {
+    'cl-f': P('cl-f', 'I000320', '刘', '姬累', { spouse_families: ['cl-fam1'], is_living: false }),
+    'cl-1': P('cl-1', 'I000321', '刘', '一世', { parent_family: 'cl-fam1', spouse_families: ['cl-fam2'] }),
+    'cl-2': P('cl-2', 'I000322', '刘', '二世', { parent_family: 'cl-fam2', spouse_families: ['cl-fam3'] }),
+    'cl-3': P('cl-3', 'I000323', '刘', '三世', { parent_family: 'cl-fam3' }),
+    'cl-self': P('cl-self', 'I000324', '刘', '继承', { parent_family: 'cl-fam1' }),
+    'cl-dead': P('cl-dead', 'I000326', '刘', '已故对照', { is_living: false }),
+    'cl-loose': P('cl-loose', 'I000325', '刘', '断链'),
+  },
+  families: {
+    'cl-fam1': { handle: 'cl-fam1', gramps_id: 'F000090', father_handle: 'cl-f', mother_handle: '', child_handles: ['cl-1', 'cl-self'] },
+    'cl-fam2': { handle: 'cl-fam2', gramps_id: 'F000091', father_handle: 'cl-1', mother_handle: '', child_handles: ['cl-2'] },
+    'cl-fam3': { handle: 'cl-fam3', gramps_id: 'F000092', father_handle: 'cl-2', mother_handle: '', child_handles: ['cl-3'] },
+  },
+};
+
 const writeTree = (t) => fs.writeFileSync(path.join(TREES_DIR, `${t.tree_id}.json`), JSON.stringify(t, null, 2));
 writeTree(zhonghua);
 writeTree(otherTree);
+writeTree(clanTree);
+
+// 祖谱节点「自身世数」（详情 attributes.external_chain_gen）：cl-self 结构上第 2 世，自身第 7 世
+const writeClanDetail = (handle, gen) =>
+  fs.writeFileSync(
+    path.join(DETAILS_DIR, `${CLAN}:${handle}.json`),
+    JSON.stringify(
+      {
+        _id: `${CLAN}:${handle}`,
+        tree_id: CLAN,
+        handle,
+        gramps_id: clanTree.people[handle].gramps_id,
+        name: clanTree.people[handle].name,
+        events: [],
+        media: [],
+        citations: [],
+        notes: [],
+        attributes: [{ key: 'external_chain_gen', value: String(gen), type: 'external_chain_gen' }],
+      },
+      null,
+      2,
+    ),
+  );
+writeClanDetail('cl-self', 7);
 
 const treePath = (id) => path.join(TREES_DIR, `${id}.json`);
 const readTreeDisk = (id) => JSON.parse(fs.readFileSync(treePath(id), 'utf8'));
@@ -215,6 +269,16 @@ fs.writeFileSync(
           surname_char: '华',
           display_title: '中华世本 · 全球华人家谱总谱',
         },
+        [CLAN]: {
+          tree_id: CLAN,
+          kind: 'clan',
+          path_alias: '/z/cb_clan',
+          surname_char: '刘',
+          display_title: '刘氏测试祖谱（批量续编）',
+          master_tree_id: ZH,
+          master_handle: 'zh-fu',
+          master_name: '风伏羲',
+        },
         [OTHER]: {
           tree_id: OTHER,
           kind: 'family',
@@ -234,16 +298,34 @@ fs.writeFileSync(
 const CHIEF = '16600000901';
 const STEWARD = '16600000902';
 const GUEST = '16600000903';
+const USER_ONLY = '16600000904'; // 注册用户（锚点在别树 → 祖谱写权限范围外）
 fs.writeFileSync(
   path.join(COLS_DIR, 'jiazu_users.json'),
   JSON.stringify({
     [CHIEF]: { _id: CHIEF, phone: CHIEF, nickname: '总编辑', role: 'chief_editor' },
     [STEWARD]: { _id: STEWARD, phone: STEWARD, nickname: '主理人', role: 'tree_steward' },
     [GUEST]: { _id: GUEST, phone: GUEST, nickname: '游客', role: 'guest' },
+    [USER_ONLY]: { _id: USER_ONLY, phone: USER_ONLY, nickname: '注册用户', role: 'user' },
   }),
 );
 const SEQ_FILE = path.join(COLS_DIR, 'jiazu_id_seq.json');
 fs.writeFileSync(SEQ_FILE, JSON.stringify({ person: { _id: 'person', next: 500 }, family: { _id: 'family', next: 300 } }));
+
+// ---- 竹片（PUT /people 的扣费闸门需要余额；扣费失败会在已故锁之前 409）----
+const el = await import('./economy-ledger.js');
+const DAY = 86400000;
+const bambooLot = (qty) => ({
+  id: el.nextLotId('bl'),
+  qty,
+  expires_at: new Date(Date.now() + 100 * DAY).toISOString(),
+  source: 'admin',
+  created_at: new Date().toISOString(),
+});
+for (const phone of [CHIEF, STEWARD]) {
+  await el.mutateAssets(phone, (u) =>
+    Object.assign(u, { fragments: 0, seeds: [], bamboos: [bambooLot(9)], jades: [], txs: [], signin_date: '' }),
+  );
+}
 
 // ---- 模块（env 就位后再动态 import）----
 const store = await import('./store.js');
@@ -262,6 +344,17 @@ const call = (p, body, token) =>
   });
 const bodyOf = (res) => JSON.parse(res.body);
 const batch = (parentHandle, names, token = CHIEF_TOKEN) => call(ROUTE, { tree_id: ZH, parent_handle: parentHandle, names }, token);
+/** 祖谱批量续编（body.tree_id = 祖谱） */
+const clanBatch = (parentHandle, names, token = tokenOf(STEWARD, 'tree_steward')) =>
+  call(ROUTE, { tree_id: CLAN, parent_handle: parentHandle, names }, token);
+/** PUT /people/<handle>：树上下文走 X-Tree-Id 头 */
+const callPut = (path, body, token, treeId) =>
+  handleRequest({
+    path,
+    httpMethod: 'PUT',
+    headers: { authorization: `Bearer ${token}`, 'x-tree-id': treeId },
+    body: JSON.stringify(body),
+  });
 
 // 每条用例的父节点互不共用（node:test 顶层用例串行执行，但夹具独立更好复核）
 const at = (tree, handle) => tree.people[handle];
@@ -503,8 +596,8 @@ test('拒绝矩阵：鉴权 / 目标 / 入参逐条 → 400·403·401 + 中文�
     ['未登录', null, { tree_id: ZH, parent_handle: 'zh-fu', names: ['甲'] }, 401, /未登录或登录已过期/],
     ['游客 403', tokenOf(GUEST, 'guest'), { tree_id: ZH, parent_handle: 'zh-fu', names: ['甲'] }, 403, /需要总编辑权限/],
     ['主理人 403', tokenOf(STEWARD, 'tree_steward'), { tree_id: ZH, parent_handle: 'zh-fu', names: ['甲'] }, 403, /需要总编辑权限/],
-    ['非总谱 tree_id', CHIEF_TOKEN, { tree_id: OTHER, parent_handle: 'ot-1', names: ['甲'] }, 400, /续编仅适用于中华世本总谱/],
-    ['tree_id 缺失', CHIEF_TOKEN, { parent_handle: 'zh-fu', names: ['甲'] }, 400, /续编仅适用于中华世本总谱/],
+    ['非总谱 tree_id（普通家族树）', CHIEF_TOKEN, { tree_id: OTHER, parent_handle: 'ot-1', names: ['甲'] }, 400, /仅适用于中华世本与祖谱/],
+    ['tree_id 缺失', CHIEF_TOKEN, { parent_handle: 'zh-fu', names: ['甲'] }, 400, /仅适用于中华世本与祖谱/],
     ['父不存在', CHIEF_TOKEN, { tree_id: ZH, parent_handle: 'zh-no-such', names: ['甲'] }, 400, /父节点不存在于总谱/],
     [
       '父不在链上',
@@ -630,6 +723,192 @@ test('原子性 ③ 铸号计数器落盘失败（回调内抛错）→ 整批�
   assert.deepEqual(orphanDetails(ZH), []);
   const cached = await store.getTree(ZH);
   assert.deepEqual(Object.keys(cached.people).sort(), Object.keys(readTreeDisk(ZH).people).sort(), '缓存无幻影节点');
+});
+
+// ================= ⑩ 祖谱：纯函数 clanGenerationOf（始祖 = 第 1 世） =================
+
+test('clanGenerationOf：始祖（founder_handle → founder_gramps_id → I0001）= 第 1 世；BFS 递 1；自带 external_chain_gen 优先；断链 false', () => {
+  const fam = (h, f, kids) => [h, { handle: h, gramps_id: '', father_handle: f, mother_handle: '', child_handles: kids }];
+  const n = (h, gid, extra = {}) => [h, P(h, gid, '刘', h, { gender: 'F', ...extra })];
+  const t = {
+    tree_id: 'clan_pure',
+    people: Object.fromEntries([
+      n('a', 'I0001', { spouse_families: ['F1'] }),
+      n('b', 'I0002', { parent_family: 'F1', spouse_families: ['F2'] }),
+      n('c', 'I0003', { parent_family: 'F2' }),
+      n('z', 'I0009'),
+    ]),
+    families: Object.fromEntries([fam('F1', 'a', ['b']), fam('F2', 'b', ['c'])]),
+  };
+  assert.deepEqual(tw.clanGenerationOf(t, 'a'), { inLineage: true, gen: 1 }, '始祖 = 第 1 世');
+  assert.deepEqual(tw.clanGenerationOf(t, 'b'), { inLineage: true, gen: 2 }, 'BFS 递 1');
+  assert.deepEqual(tw.clanGenerationOf(t, 'c'), { inLineage: true, gen: 3 });
+  assert.deepEqual(tw.clanGenerationOf(t, 'z'), { inLineage: false, gen: 0 }, '断链 → 不在世系内（不得静默按 1 算）');
+  assert.deepEqual(tw.clanGenerationOf(t, 'nope'), { inLineage: false, gen: 0 });
+  // 自身带 external_chain_gen → 该节点世数以它为准（自有段继承世本世数）
+  const selfGen = new Map([['b', 7]]);
+  assert.deepEqual(tw.clanGenerationOf(t, 'b', { selfGen }), { inLineage: true, gen: 7 }, '自身世数优先');
+  assert.deepEqual(tw.clanGenerationOf(t, 'c', { selfGen }), { inLineage: true, gen: 8 }, '其后代按自身世数递推');
+  // 始祖解析：founder_handle 优先 → founder_gramps_id → I0001 兜底
+  assert.equal(tw.clanFounderHandleOf(t, { founder_handle: 'c' }), 'c', 'meta.founder_handle 优先');
+  const t2 = { tree_id: 'x', people: Object.fromEntries([n('p', 'I0007'), n('q', 'I0001', { spouse_families: ['G1'] })]), families: Object.fromEntries([fam('G1', 'q', [])]) };
+  assert.equal(tw.clanFounderHandleOf(t2, { founder_gramps_id: 'I0007' }), 'p', 'meta 无 handle → founder_gramps_id');
+  assert.equal(tw.clanFounderHandleOf({ tree_id: 'y', people: Object.fromEntries([n('q', 'I0001', { spouse_families: ['G1'] })]), families: Object.fromEntries([fam('G1', 'q', [])]) }, null), 'q', 'I0001 兜底');
+  assert.equal(tw.clanFounderHandleOf({ tree_id: 'z', people: {}, families: {} }, null), '', '解析不到 → 空（调用方 400）');
+});
+
+// ================= ⑪ 祖谱正常路：世数 2,3,4 + 不写 external_tree =================
+
+test('祖谱正常路：始祖为父 → 批量 3 代 gen=2,3,4（始祖第 1 世）；随父姓 / 全 M / 全已故；详情有 external_chain_gen 且**无 external_tree**', async () => {
+  const before = { people: peopleCount(CLAN), families: familiesCount(CLAN), details: detailCount() };
+  const res = await clanBatch('cl-f', ['高', '昌', '旦']);
+  assert.equal(res.statusCode, 200, res.body);
+  const body = bodyOf(res);
+  assert.deepEqual(Object.keys(body).sort(), ['added', 'count', 'end_gen', 'message', 'ok', 'start_gen']);
+  assert.equal(body.start_gen, 2, '始祖（姬累镜像，自身无 external_chain_gen）为第 1 世 → 首个子节点第 2 世');
+  assert.equal(body.end_gen, 4);
+  assert.equal(body.count, 3);
+  assert.equal(body.message, '已续编第 2–4 世，共 3 代');
+
+  const tree = readTreeDisk(CLAN);
+  assert.equal(peopleCount(CLAN), before.people + 3);
+  for (const [k, a] of body.added.entries()) {
+    const p = tree.people[a.handle];
+    assert.ok(p, '新节点已落盘');
+    assert.deepEqual([a.name, a.gen], [['刘高', 2], ['刘昌', 3], ['刘旦', 4]][k]);
+    assert.equal(p.surname, '刘', '姓随父姓');
+    assert.equal(p.gender, 'M');
+    assert.equal(p.is_living, false, '祖谱节点一律已故');
+    assert.equal(p.external_tree, '', '祖谱自有段节点不带跨树指针');
+    const d = readDetailDisk(CLAN, a.handle);
+    assert.deepEqual(
+      d.attributes,
+      [{ key: 'external_chain_gen', value: String(2 + k), type: 'external_chain_gen' }],
+      '详情：递 1 的 external_chain_gen，**且无 external_tree**',
+    );
+  }
+  // 一条线：k=1 复用始祖既有家族，k>=2 依次新建
+  const [h1, h2, h3] = body.added.map((a) => a.handle);
+  assert.equal(tree.people[h1].parent_family, 'cl-fam1', 'k=1 追加进始祖既有配偶家族');
+  assert.ok(tree.families['cl-fam1'].child_handles.includes(h1));
+  assert.equal(tree.families[tree.people[h2].parent_family].father_handle, h1);
+  assert.equal(tree.families[tree.people[h3].parent_family].father_handle, h2);
+  assert.equal(detailCount(), before.details + 3);
+  assert.deepEqual(orphanDetails(CLAN), [], '无孤儿详情');
+  // 编号全站唯一
+  const seen = new Set();
+  for (const f of fs.readdirSync(TREES_DIR).filter((x) => x.endsWith('.json'))) {
+    for (const pp of Object.values(JSON.parse(fs.readFileSync(path.join(TREES_DIR, f), 'utf8')).people || {})) seen.add(pp.gramps_id);
+  }
+  for (const a of body.added) assert.ok(seen.has(a.gramps_id));
+  // 多写几代后，始祖镜像自身的 is_living 不受影响
+  assert.equal(tree.people['cl-f'].is_living, false, '祖谱始祖镜像本来已故');
+});
+
+// ================= ⑫ 祖谱世数：结构推导（非始祖父节点）+ 自身世数优先 + 无深度上限 =================
+
+test('祖谱世数结构推导：父 cl-3（结构第 4 世，自身无 external_chain_gen）→ 子第 5 世；祖谱不受任何深度上限约束', async () => {
+  const r1 = await clanBatch('cl-3', ['四']);
+  assert.equal(r1.statusCode, 200, r1.body);
+  assert.equal(bodyOf(r1).start_gen, 5, 'cl-f→cl-1→cl-2→cl-3 结构链第 4 世 → 子第 5 世（**不得**按「无自身世数 → 1」算）');
+  const h5 = bodyOf(r1).added[0].handle;
+
+  const r2 = await clanBatch(h5, ['五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四']);
+  assert.equal(r2.statusCode, 200, r2.body);
+  assert.equal(bodyOf(r2).count, 10);
+  assert.equal(bodyOf(r2).start_gen, 6);
+  assert.equal(bodyOf(r2).end_gen, 15, '一路到第 15 世：祖谱同样不设世数 / 深度上限');
+  assert.equal(readDetailDisk(CLAN, bodyOf(r2).added[9].handle).attributes.length, 1, '仍只写 external_chain_gen');
+});
+
+test('祖谱世数：节点自带 external_chain_gen → 优先用它（cl-self 结构第 2 世，自身第 7 世 → 子第 8 世）', async () => {
+  const res = await clanBatch('cl-self', ['继一']);
+  assert.equal(res.statusCode, 200, res.body);
+  assert.equal(bodyOf(res).start_gen, 8, '自身世数（7）优先于结构推导（2）');
+  assert.equal(readDetailDisk(CLAN, bodyOf(res).added[0].handle).attributes[0].value, '8');
+});
+
+// ================= ⑬ 祖谱拒绝矩阵 =================
+
+test('祖谱拒绝矩阵：普通家族树 400 / 未登录 401 / 非本树账号 403 / 断链 400 —— 树与详情一字未写', async () => {
+  const cases = [
+    ['普通家族树（chief 也不行）', CHIEF_TOKEN, { tree_id: OTHER, parent_handle: 'ot-1', names: ['甲'] }, 400, /批量续编仅适用于中华世本与祖谱/],
+    ['未登录（祖谱）', null, { tree_id: CLAN, parent_handle: 'cl-f', names: ['甲'] }, 401, /请先登录/],
+    ['非本树账号（注册用户·锚点在别树）', tokenOf(USER_ONLY, 'user'), { tree_id: CLAN, parent_handle: 'cl-1', names: ['甲'] }, 403, /您的权限范围仅限/],
+    ['游客', tokenOf(GUEST, 'guest'), { tree_id: CLAN, parent_handle: 'cl-f', names: ['甲'] }, 403, /游客无编辑权限/],
+    ['世本非 chief', tokenOf(STEWARD, 'tree_steward'), { tree_id: ZH, parent_handle: 'zh-fu', names: ['甲'] }, 403, /需要总编辑权限/],
+    ['祖谱父不存在', CHIEF_TOKEN, { tree_id: CLAN, parent_handle: 'cl-none', names: ['甲'] }, 400, /父节点不存在于祖谱/],
+    ['祖谱父不在世系内（断链）', CHIEF_TOKEN, { tree_id: CLAN, parent_handle: 'cl-loose', names: ['甲', '乙'] }, 400, /该节点不在祖谱世系内/],
+  ];
+  for (const [name, token, body, status, re] of cases) {
+    const before = { md5: treeMd5(CLAN), people: peopleCount(CLAN), details: detailCount(), families: familiesCount(CLAN) };
+    const res = await call(ROUTE, body, token);
+    assert.equal(res.statusCode, status, `${name}: 期望 ${status}，实际 ${res.statusCode} / ${res.body}`);
+    assert.match(bodyOf(res).error, re, `${name}: 文案`);
+    assert.equal(treeMd5(CLAN), before.md5, `${name}: 祖谱树逐字节未变（整批不写）`);
+    assert.equal(peopleCount(CLAN), before.people, `${name}: 人数未变`);
+    assert.equal(familiesCount(CLAN), before.families, `${name}: 家族未变`);
+    assert.equal(detailCount(), before.details, `${name}: 无残留详情`);
+    assert.deepEqual(orphanDetails(CLAN), [], `${name}: 无孤儿详情`);
+  }
+});
+
+// ================= ⑭ 已故锁（祖谱 / 世本） =================
+
+test('已故锁：祖谱 PUT /people 显式 is_living=true → 403（文案「祖谱」）；世本同一路径文案逐字不变（「总谱」）', async () => {
+  const put = { primary_name: { surname_list: [{ surname: '刘', primary: true }], first_name: '一世' }, gender: 1, is_living: true };
+  const clanBefore = treeMd5(CLAN);
+  const r1 = await callPut('/people/cl-dead', put, tokenOf(STEWARD, 'tree_steward'), CLAN);
+  assert.equal(r1.statusCode, 403, r1.body);
+  assert.match(r1.body, /祖谱节点一律为「已故」，在世状态不可修改/, '祖谱文案按类型措辞');
+  assert.equal(treeMd5(CLAN), clanBefore, '拒绝后祖谱树一字节未写');
+  assert.equal(readTreeDisk(CLAN).people['cl-dead'].is_living, false, '拒绝后仍是已故');
+
+  const zhBefore = treeMd5(ZH);
+  const r2 = await callPut('/people/zh-dead', put, CHIEF_TOKEN, ZH);
+  assert.equal(r2.statusCode, 403, r2.body);
+  assert.match(r2.body, /总谱节点一律为「已故」，在世状态不可修改/, '世本文案逐字不变');
+  assert.equal(treeMd5(ZH), zhBefore);
+  assert.equal(readTreeDisk(ZH).people['zh-dead'].is_living, false);
+});
+
+test('已故锁：祖谱新建子节点（/admin/add-child）恒 is_living=false；普通家族树不写 is_living（不得越权改口径）', async () => {
+  const r1 = await call('/admin/add-child', { tree_id: CLAN, person_handle: 'cl-2', name: '新子', gender: 'M' }, tokenOf(STEWARD, 'tree_steward'));
+  assert.equal(r1.statusCode, 200, r1.body);
+  assert.equal(readTreeDisk(CLAN).people[bodyOf(r1).child_handle].is_living, false, '祖谱新节点锁死已故');
+
+  const r2 = await call('/admin/add-child', { tree_id: OTHER, person_handle: 'ot-1', name: '普通子', gender: 'M' }, CHIEF_TOKEN);
+  assert.equal(r2.statusCode, 200, r2.body);
+  assert.equal(readTreeDisk(OTHER).people[bodyOf(r2).child_handle].is_living, undefined, '普通家族树不写 is_living');
+});
+
+// ================= ⑮ 祖谱原子性（真实 IO 失败注入） =================
+
+test('祖谱原子性：树文件只读（N 条详情已写出后落库失败）→ 详情全回收 + 缓存还原 + 树字节未变', async () => {
+  const before = { md5: treeMd5(CLAN), people: peopleCount(CLAN), families: familiesCount(CLAN), details: detailCount() };
+  let res;
+  try {
+    fs.chmodSync(treePath(CLAN), 0o444);
+    res = await clanBatch('cl-f', ['原一', '原二', '原三']);
+  } finally {
+    fs.chmodSync(treePath(CLAN), 0o644);
+  }
+  assert.equal(res.statusCode, 500, res.body);
+  assert.equal(bodyOf(res).error, '服务内部错误');
+  assert.equal(treeMd5(CLAN), before.md5, '祖谱树逐字节未变');
+  assert.equal(peopleCount(CLAN), before.people);
+  assert.equal(familiesCount(CLAN), before.families);
+  assert.equal(detailCount(), before.details, '本批写出的 3 条详情必须全部回收');
+  assert.deepEqual(orphanDetails(CLAN), [], '无孤儿详情');
+  const cached = await store.getTree(CLAN);
+  const disk = readTreeDisk(CLAN);
+  assert.deepEqual(Object.keys(cached.people).sort(), Object.keys(disk.people).sort(), '缓存无幻影节点');
+  assert.deepEqual(Object.keys(cached.families).sort(), Object.keys(disk.families).sort());
+  assert.equal(cached.version, disk.version);
+  // 失败后立刻可正常续编（还原的是真实前态）
+  const ok = await clanBatch('cl-f', ['重试']);
+  assert.equal(ok.statusCode, 200, ok.body);
+  assert.equal(bodyOf(ok).start_gen, 2);
 });
 
 // ================= ⑨ 真源护栏（收尾） =================

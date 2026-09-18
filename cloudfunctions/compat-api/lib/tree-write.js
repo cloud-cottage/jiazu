@@ -109,10 +109,11 @@ function attrOf(a) {
  * 未显式给 is_living → 按 death_date 推断（老调用方兼容：有卒年即已故）
  */
 export function applyLifespan(person, body = {}, opts = {}) {
-  // 总谱（中华世本）节点一律已故：字段锁死；显式传 true 直接拒绝
+  // 世本（中华世本）/ 祖谱 节点一律已故：字段锁死；显式传 true 直接拒绝
+  // 文案按树种类措辞（世本「总谱」/ 祖谱「祖谱」）；默认「总谱」= 既有文案逐字不变
   if (opts.lockedDeceased) {
     if (body.is_living === true) {
-      const err = new Error('总谱节点一律为「已故」，在世状态不可修改');
+      const err = new Error(`${String(opts.deceasedLockLabel || '总谱')}节点一律为「已故」，在世状态不可修改`);
       err.status = 403;
       throw err;
     }
@@ -178,7 +179,11 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
     }
 
     // 生卒 + 健在状态（编辑表单约定字段：顶层 birth_date / death_date / is_living）
-    applyLifespan(person, body, { lockedDeceased: !!opts.masterTreeId && treeId === opts.masterTreeId });
+    // 已故锁（口径 5）：世本 / 祖谱一律已故 —— 路由按树种类传 deceasedLocked；兼容老调用方（仅传 masterTreeId）
+    applyLifespan(person, body, {
+      lockedDeceased: !!opts.deceasedLocked || (!!opts.masterTreeId && treeId === opts.masterTreeId),
+      deceasedLockLabel: opts.deceasedLockLabel,
+    });
 
     // 跨树软关联（结构字段）→ 树 JSON；其余属性 → 详情
     const ext = {};
@@ -452,11 +457,12 @@ function newChainPerson({ handle, grampsId, surname, given, gender = 'U' }) {
 }
 
 /** 链属性 → 详情文档 attributes（单节点 / 批量续编共用；保留既有其它属性） */
-function chainDetailAttributes({ gen, treeId, mode = 'new', note = '', extraAttributes = [], existing = [] }) {
+function chainDetailAttributes({ gen, treeId, mode = 'new', note = '', extraAttributes = [], existing = [], writeTreeRef = true }) {
   const attributes = (existing || []).filter((a) => !CHAIN_ATTR_KEYS.includes(a.key));
   attributes.push({ key: 'external_chain_gen', value: String(gen), type: 'external_chain_gen' });
-  // 新建节点补链归属标记；挂接节点不动其自身跨树链接（external_tree 结构字段）
-  if (mode === 'new') {
+  // 新建节点补链归属标记；挂接节点不动其自身跨树链接（external_tree 结构字段）。
+  // 祖谱自有段节点**不带跨树指针**（writeTreeRef=false，与现有数据一致）
+  if (mode === 'new' && writeTreeRef !== false) {
     attributes.push({ key: 'external_tree', value: treeId, type: 'external_tree' });
   }
   if (note) attributes.push({ key: 'external_relation_note', value: note, type: 'external_relation_note' });
@@ -472,7 +478,7 @@ function chainDetailAttributes({ gen, treeId, mode = 'new', note = '', extraAttr
 }
 
 /** 组装链节点详情文档（单节点 / 批量续编共用；既有文档按原样更新 gramps_id/name/updated_at） */
-function chainDetailDoc({ treeId, handle, person, gen, mode = 'new', note = '', extraAttributes = [], existing = null }) {
+function chainDetailDoc({ treeId, handle, person, gen, mode = 'new', note = '', extraAttributes = [], existing = null, writeTreeRef = true }) {
   const detail = existing || {
     tree_id: treeId,
     handle,
@@ -491,6 +497,7 @@ function chainDetailDoc({ treeId, handle, person, gen, mode = 'new', note = '', 
     note,
     extraAttributes,
     existing: detail.attributes || [],
+    writeTreeRef,
   });
   detail.gramps_id = person.gramps_id;
   detail.name = person.name;
@@ -652,6 +659,79 @@ function restoreTreeInPlace(tree, snap) {
 }
 
 /**
+ * 目标树种类（master / clan / family）—— **单一真源**（路由与 lib 共用）：
+ * treeId === masterTreeId → 'master'；其它按 tree-meta.kind（未登记 / 未知 → 'family'）。
+ */
+export async function treeKindOfId(treeId, masterTreeId) {
+  if (masterTreeId && treeId === masterTreeId) return TREE_KIND.MASTER;
+  return treeKindOf(await metaEntryOf(treeId));
+}
+
+/** 批量续编的目标树白名单：中华世本（master）或祖谱（clan）；**普通家族树 / 未知一律拒绝** */
+export const CHAIN_BATCH_KINDS = [TREE_KIND.MASTER, TREE_KIND.CLAN];
+export function isChainBatchTree(kind) {
+  return CHAIN_BATCH_KINDS.includes(String(kind || ''));
+}
+
+/** 祖谱始祖节点 handle：tree-meta.founder_handle → founder_gramps_id → 始祖位编号 I0001（与 lib/clan.js 同序） */
+export function clanFounderHandleOf(tree, entry = null) {
+  const fh = resolveFounderHandle(tree, entry);
+  if (fh) return fh;
+  for (const p of Object.values(tree?.people || {})) {
+    if (String(p?.gramps_id || '') === 'I0001') return p.handle;
+  }
+  return '';
+}
+
+/**
+ * 祖谱世数推导（**纯函数**，导出以便单测）：**始祖 = 第 1 世**。
+ * - 始祖解析顺序与 lib/clan.js 一致（founder_handle → founder_gramps_id → I0001）；
+ * - 从始祖沿 families 的父/母关系向下 BFS（以其为 father/mother 的家族里的 child_handles = 下一代）；
+ * - 节点自带 external_chain_gen（selfGen）→ **该节点世数以它为准**（自有段节点可继承世本世数）；
+ * - 断链 / 解析不到 → `inLineage:false`（调用方必须 400「该节点不在祖谱世系内」，**不得静默按 1 算**）。
+ * 不设任何世数 / 深度上限。
+ * @param {{entry?: object, selfGen?: Map<string, number>}} [opts]
+ * @returns {{inLineage: boolean, gen: number}}
+ */
+export function clanGenerationOf(tree, handle, opts = {}) {
+  const miss = { inLineage: false, gen: 0 };
+  if (!tree?.people?.[handle]) return miss;
+  const founder = clanFounderHandleOf(tree, opts.entry || null);
+  if (!founder) return miss;
+  const selfGen = opts.selfGen instanceof Map ? opts.selfGen : new Map();
+  const selfOf = (h, fallback) => {
+    const g = parseInt(selfGen.get(h), 10);
+    return Number.isFinite(g) ? g : fallback;
+  };
+  const genOf = new Map([[founder, selfOf(founder, 1)]]); // 始祖 = 第 1 世
+  const queue = [founder];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const fh of tree.people[cur]?.spouse_families || []) {
+      const fam = tree.families?.[fh];
+      if (!fam) continue;
+      if (fam.father_handle !== cur && fam.mother_handle !== cur) continue; // 该家族不是以 cur 为亲本
+      for (const c of fam.child_handles || []) {
+        if (!c || !tree.people[c] || genOf.has(c)) continue;
+        genOf.set(c, selfOf(c, genOf.get(cur) + 1));
+        queue.push(c);
+      }
+    }
+  }
+  return genOf.has(handle) ? { inLineage: true, gen: genOf.get(handle) } : miss;
+}
+
+/** 祖谱：树内节点「自身世数」（详情 attributes.external_chain_gen）→ Map（供 clanGenerationOf 优先取用） */
+async function clanSelfGenMap(treeId) {
+  const map = new Map();
+  for (const d of await getAllDetails(treeId)) {
+    const g = parseInt(attrMap(d).external_chain_gen || '', 10);
+    if (Number.isFinite(g)) map.set(d.handle, g);
+  }
+  return map;
+}
+
+/**
  * 总谱批量续编（chief_editor）：按**已解析好的名字数组**，为 parentHandle 沿「一条线」依次续编
  * 最多 `MAX_BATCH_CHAIN` 代子孙（第 k 个的父 = 第 k-1 个；k=1 时为 parentHandle）。
  *
@@ -666,16 +746,28 @@ function restoreTreeInPlace(tree, snap) {
  * @returns {Promise<{ok:true,start_gen:number,end_gen:number,count:number,added:Array,message:string}>}
  */
 export async function appendChainBatch({ treeId, parentHandle, names, masterTreeId }) {
-  if (masterTreeId && treeId !== masterTreeId) throw new Error('续编仅适用于中华世本总谱');
+  const kind = await treeKindOfId(treeId, masterTreeId);
+  // 目标树白名单：中华世本 或 kind='clan' 祖谱；普通家族树（kind='family'）与未知 → 400
+  if (!isChainBatchTree(kind)) throw new Error('批量续编仅适用于中华世本与祖谱');
+  const isClan = kind === TREE_KIND.CLAN;
   const list = normalizeBatchNames(names);
   const tree0 = await getTree(treeId);
   if (!tree0) throw new Error(`树不存在: ${treeId}`);
-  if (!tree0.people[parentHandle]) throw new Error('父节点不存在于总谱');
+  if (!tree0.people[parentHandle]) throw new Error(`父节点不存在于${isClan ? '祖谱' : '总谱'}`);
 
-  const parentInfo = await getChainInfo(treeId, parentHandle);
-  if (!parentInfo.onChain) throw new Error('该节点不在中华世本源流链上（无世数），无法续编下一世');
-  // 第 1 个新节点的世数 = nextChainGen 的口径（父世数 + 1）；第 k 个 = 父世数 + k
-  const startGen = nextChainGen(parentInfo.gen, { aggregate: parentInfo.aggregate });
+  // 世数分岔：世本 = 链上世数 + 1（现状不变）；祖谱 = 结构推导（始祖 = 第 1 世，断链 400）
+  let startGen;
+  if (isClan) {
+    const entry = await metaEntryOf(treeId);
+    const info = clanGenerationOf(tree0, parentHandle, { entry, selfGen: await clanSelfGenMap(treeId) });
+    if (!info.inLineage) throw new Error('该节点不在祖谱世系内');
+    startGen = info.gen + 1;
+  } else {
+    const parentInfo = await getChainInfo(treeId, parentHandle);
+    if (!parentInfo.onChain) throw new Error('该节点不在中华世本源流链上（无世数），无法续编下一世');
+    // 第 1 个新节点的世数 = nextChainGen 的口径（父世数 + 1）；第 k 个 = 父世数 + k
+    startGen = nextChainGen(parentInfo.gen, { aggregate: parentInfo.aggregate });
+  }
   const handles = list.map(() => genHandle());
 
   let mutatedTree = null;
@@ -706,7 +798,8 @@ export async function appendChainBatch({ treeId, parentHandle, names, masterTree
           gender: 'M', // 新建默认男（与既有单节点续编口径一致）
         });
         const person = tree.people[h];
-        await saveDetail(chainDetailDoc({ treeId, handle: h, person, gen, mode: 'new' }));
+        // 祖谱自有段节点不带跨树指针（不写 external_tree）；世本照旧写 external_tree=本树
+        await saveDetail(chainDetailDoc({ treeId, handle: h, person, gen, mode: 'new', writeTreeRef: !isClan }));
         writtenDetails.push(h);
         await linkChildToParent(tree, parentOfCurrent, h);
         out.push({ handle: h, name: person.name, gramps_id: person.gramps_id, gen });
