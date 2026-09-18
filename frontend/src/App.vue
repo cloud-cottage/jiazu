@@ -13,6 +13,13 @@ const CLAN_PATH_RE = /^\/z\/([a-z0-9_]+)$/;
 /** hash 形式祖谱别名：#/z/<tree_id> */
 const CLAN_HASH_RE = /^z\/([a-z0-9_]+)$/;
 
+/** 中华世本（总谱）tree_id 与其**独立**可读 uri：/z/（原 /zhonghua 弃用） */
+const MASTER_TREE_ID = 'zhonghua';
+const MASTER_PATH = '/z/';
+/** 旧世本地址（path 形式 /zhonghua、hash 形式 #/zhonghua）→ 客户端重定向到 /z/，不留旧地址 */
+const LEGACY_MASTER_PATH_RE = /^\/zhonghua$/;
+const LEGACY_MASTER_HASH_RE = /^zhonghua$/;
+
 /**
  * 家族树可读 uri 解析：
  * - 路径形式  /ji_23395_01          → 家族树首页（地址栏保持可读 uri）
@@ -24,10 +31,27 @@ function resolveTreeAlias() {
   const hashPath = location.hash.replace(/^#\/?/, '');
   const onInternalRoute = hashPath.startsWith('pages/') || pathname.startsWith('/pages/');
 
+  // 中华世本独立地址：/z/（含 /z、#/z、#/z/）与 /z/zhonghua（等价）→ 世本首页，地址栏保持 /z/
+  // ⚠️ 必须先于祖谱正则判定：/z/zhonghua 也命中 CLAN_PATH_RE（会被当成 tree_id='zhonghua' 的祖谱）
+  if (pathname === '/z' || pathname === `/z/${MASTER_TREE_ID}`) {
+    if (!onInternalRoute) openMasterHome();
+    return;
+  }
   const clanPath = pathname.match(CLAN_PATH_RE);
   if (clanPath) {
     // 已有内部路由 hash（如 #/pages/pedigree/index）时尊重该路由，不劫持
     if (!onInternalRoute) openAlias(clanPath[1], false, true);
+    return;
+  }
+  // 旧世本地址 /zhonghua（path 形式）→ 重定向到 /z/，不留旧地址
+  if (LEGACY_MASTER_PATH_RE.test(pathname)) {
+    if (!onInternalRoute) openMasterHome();
+    return;
+  }
+  // hash 形式：#/z、#/z/、#/z/zhonghua 及旧 #/zhonghua —— 须先于祖谱 hash 判定（/z/zhonghua 含在祖谱正则里）
+  const hashAlias = hashPath.replace(/\/+$/, '');
+  if (hashAlias === 'z' || hashAlias === `z/${MASTER_TREE_ID}` || LEGACY_MASTER_HASH_RE.test(hashAlias)) {
+    if (!onInternalRoute) openMasterHome();
     return;
   }
   const clanHash = hashPath.match(CLAN_HASH_RE);
@@ -103,9 +127,30 @@ function gotoAlias(treeId: string, alias: string, isHash: boolean, isClan = fals
     location.replace(`#/pages/hall/index?tree_id=${treeId}`);
     return;
   }
-  // 路径形式：reLaunch 到首页，地址栏保持可读 uri（祖谱带 /z/ 前缀）
+  // 路径形式：reLaunch 到首页，地址栏保持可读 uri（世本固定 /z/；祖谱带 /z/ 前缀）
   uni.reLaunch({ url: `/pages/hall/index?tree_id=${treeId}` });
-  keepAliasUrl(alias, treeId, isClan ? `/z/${alias}` : `/${alias}`);
+  const readablePath = treeId === MASTER_TREE_ID ? MASTER_PATH : isClan ? `/z/${alias}` : `/${alias}`;
+  keepAliasUrl(alias, treeId, readablePath);
+}
+
+/**
+ * 打开中华世本（总谱）首页：内部路由 + 地址栏改写为独立地址 /z/
+ * （与 /z/ 直达、首页卡片点击同一条路径，保证「世本地址 /z/」口径一致）
+ */
+function openMasterHome() {
+  uni.reLaunch({ url: `/pages/hall/index?tree_id=${MASTER_TREE_ID}` });
+  keepMasterUrl();
+}
+
+/** 等待内部路由提交后把地址栏改写为 /z/（旧地址 /zhonghua 至此被替换掉） */
+function keepMasterUrl(tries = 0) {
+  if (location.hash.includes(`pages/hall/index?tree_id=${MASTER_TREE_ID}`)) {
+    history.replaceState(null, '', MASTER_PATH);
+    return;
+  }
+  if (tries < 30) {
+    setTimeout(() => keepMasterUrl(tries + 1), 60);
+  }
 }
 
 /** 等待内部路由提交后，把地址栏改写为可读 uri（/ji_23395_01 或祖谱 /z/ji_23395） */

@@ -283,6 +283,7 @@
         :tree-kind="treeKind"
         :is-founder="isFounderNode"
         :is-mirror="isExternalMirror || founderMirror"
+        :is-chain-mirror="isChainMirror"
         @tree-changed="onManageTreeChanged"
       />
     </view>
@@ -355,10 +356,10 @@
           />
 
           <text class="field-label">是否健在</text>
-          <!-- 总谱（中华世本）节点一律已故：字段锁死，仅展示不可改 -->
-          <view v-if="isMasterTree" class="living-locked">
-            <t-tag theme="default" variant="light">已故（总谱锁定）</t-tag>
-            <text class="field-hint">总谱节点一律为「已故」，此字段不可修改</text>
+          <!-- 总谱（中华世本）与祖谱节点一律已故：字段锁死，仅展示不可改（普通家族树仍可编辑） -->
+          <view v-if="livingLocked" class="living-locked">
+            <t-tag theme="default" variant="light">{{ livingLockTag }}</t-tag>
+            <text class="field-hint">{{ livingLockHint }}</text>
           </view>
           <t-radio-group v-else :value="editForm.is_living ? '1' : '0'" placement="horizontal" class="field"
           @update:value="(v: any) => editForm.is_living = v === '1'">
@@ -816,6 +817,8 @@ const founderMirror = computed(() => {
   const m = attrMapOf((person.value as any)?.attributes);
   return m['external_link_type'] === 'founder';
 });
+/** 顶端世系链镜像态（external_link_type='chain'）：真身在中华世本，本层只读 → 不可作批量父节点 */
+const isChainMirror = computed(() => attrMapOf(person.value?.attributes)['external_link_type'] === 'chain');
 /** 空白占位始祖（未挂载 / 已解除） */
 const founderLocked = computed(() => isFounderNode.value && (founderMirror.value || !founderMirror.value));
 const founderLockHint = computed(() =>
@@ -1292,6 +1295,15 @@ async function startConvergeClan() {
 const isExternalMirror = computed(() => attrMapOf(person.value?.attributes)['external_mirror'] === 'true');
 /** 祖谱（tree-meta.kind='clan'）：自有支系常是多棵普通家族树的认祖落点，删除风险高 */
 const isClanTree = computed(() => treeKind.value === 'clan');
+/**
+ * 在世状态锁死：总谱（中华世本）**或**祖谱节点一律「已故」（新建/保存均强制 false，后端同口径保证）。
+ * 普通家族树不受影响（仍可编辑在世状态）。
+ */
+const livingLocked = computed(() => isMasterTree.value || isClanTree.value);
+const livingLockTag = computed(() => (isMasterTree.value ? '已故（总谱锁定）' : '已故（本谱锁定）'));
+const livingLockHint = computed(() =>
+  isMasterTree.value ? '总谱节点一律为「已故」，此字段不可修改' : '祖谱节点一律为「已故」，此字段不可修改',
+);
 const canDeleteNode = computed(
   () =>
     canEdit.value &&
@@ -1809,7 +1821,7 @@ async function openEdit() {
       surname,
       gender: genderStr,
       birth_date: birth,
-      is_living: isMasterTree.value ? false : living,
+      is_living: livingLocked.value ? false : living,
       death_date: death,
       hao: attrByKey['号'] || '',
       feng: attrByKey['封号'] || '',
@@ -1900,7 +1912,7 @@ async function doSave() {
       raw.gender = genderNumMap[editForm.value.gender] ?? raw.gender;
       // 生卒 + 健在（约定顶层字段；compat 写树 JSON；auth-server 转发前剥离，不影响 Gramps）
       raw.birth_date = (editForm.value.birth_date || '').trim();
-      raw.is_living = isMasterTree.value ? false : editForm.value.is_living;
+      raw.is_living = livingLocked.value ? false : editForm.value.is_living;
       // 健在 ⇒ 无离世时间；已故 ⇒ 可留空（卒年不详）
       raw.death_date = editForm.value.is_living ? '' : (editForm.value.death_date || '').trim();
       // 称号三字段（号/封号/谥号）：合并进 attribute_list —— 保留其它属性，清空即删除该项

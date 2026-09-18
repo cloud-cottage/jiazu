@@ -6,6 +6,14 @@
 
 import type { TreeMeta } from './types';
 
+/** 中华世本（总谱）tree_id */
+export const MASTER_TREE_ID = 'zhonghua';
+/**
+ * 中华世本的可读 uri：独立地址 `/z/`（产品口径）。
+ * tree-meta 真源里的 path_alias `/zhonghua` 视为 **legacy**：只在前端映射为 `/z/`，不改真源。
+ */
+export const MASTER_PATH = '/z/';
+
 /**
  * 根据 tree-id 生成对外访问 URL
  * 优先级：平台子域 (subdomain + _root_domain) > 自定义域名 (custom_domains) > 路径别名
@@ -14,6 +22,8 @@ export function buildTreeUrl(treeId: string, meta: TreeMeta): string | null {
   // 查找匹配的元配置
   for (const entry of Object.values(meta.trees)) {
     if (entry.tree_id === treeId) {
+      // 中华世本（is_master）：统一输出独立可读 uri /z/（meta 里 /zhonghua 为 legacy，不改真源）
+      if (entry.is_master || treeId === MASTER_TREE_ID) return MASTER_PATH;
       // 平台子域（如 shiben.jiapu100.com）
       if (entry.subdomain && meta._root_domain) {
         return `https://${entry.subdomain}.${meta._root_domain}`;
@@ -61,6 +71,8 @@ export function resolveTreeIdByHost(host: string, meta: TreeMeta): string | null
 /** 从 tree-meta 中查找 tree_id 对应的可读 path_alias（如 /ji_23395_01） */
 export function treePathAlias(treeId: string, meta: TreeMeta | null): string {
   const entry = meta?.trees?.[treeId] || Object.values(meta?.trees || {}).find((t) => t.tree_id === treeId);
+  // 中华世本（is_master）：独立地址 /z/（meta 里 /zhonghua 视为 legacy）；祖谱维持 /z/<tree_id>
+  if (treeId === MASTER_TREE_ID || entry?.is_master) return MASTER_PATH;
   if (entry?.path_alias) return entry.path_alias;
   // 祖谱固定走 /z/<tree_id>（docs/clan-tree.spec.md §6）
   if (entry?.kind === 'clan') return `/z/${treeId}`;
@@ -97,7 +109,8 @@ export function buildCrossTreePersonUrl(
   personHandle: string,
   meta: TreeMeta,
 ): string | null {
-  const base = buildTreeUrl(targetTreeId, meta);
+  // 总谱基址是 /z/（带尾斜杠）：拼人物深链前去掉尾斜杠，避免出现 /z//person/…
+  const base = (buildTreeUrl(targetTreeId, meta) || '').replace(/\/$/, '');
   if (!base) return null;
   // 如果是完整 URL（自定义域名）
   if (base.startsWith('http')) {

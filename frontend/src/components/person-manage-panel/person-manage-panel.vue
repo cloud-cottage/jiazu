@@ -66,6 +66,15 @@
           :loading="establishing"
           @click="confirmEstablishBranch"
         >{{ establishing ? '处理中...' : '🌱 立支（新家族树）' }}</t-button>
+        <!-- 祖谱（clan）：批量添加子孙——自有段节点可用（世系链镜像节点不可作父节点，故不显示） -->
+        <t-button
+          v-if="canAppendClanBatch"
+          size="small"
+          variant="outline"
+          theme="primary"
+          @click="openAddNode('child', 'batch')"
+        >＋ 批量添加子孙</t-button>
+        <text v-else-if="clanBatchBlockedHint" class="mp-hint">{{ clanBatchBlockedHint }}</text>
       </template>
 
       <!-- 加配偶（总谱/普通树通用）：同树配偶；已有家族补空位，已满则新建家族 -->
@@ -294,6 +303,12 @@ const props = defineProps<{
   isFounder?: boolean;
   /** 当前节点是否外树镜像节点（external_mirror='true' / 指向别树的始祖镜像 → 不可立支） */
   isMirror?: boolean;
+  /**
+   * 当前节点是否**顶端世系链镜像**（external_link_type='chain'）：
+   * 祖谱里该镜像段的真身在中华世本、本层只读 → 不可作批量的父节点；
+   * 注意 `founder` 镜像**可以**（祖谱自有段就从始祖之下长出来）。
+   */
+  isChainMirror?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -328,6 +343,22 @@ const chainBlockedHint = computed(() => {
   if (props.chainAggregate) return '聚合虚位节点代表多世（如「伏羲氏诸世」2–44 世），请在其后继节点上续编';
   return '该节点不在源流链上（无世数），无法续编下一世';
 });
+
+// ---- 祖谱（kind='clan'）：批量添加子孙适用面（口径 B）----
+/** 本树是否祖谱 */
+const isClanTree = computed(() => (props.treeKind || 'family') === 'clan');
+/**
+ * 祖谱可批量添加子孙：本树写权（canAddNode，tree_steward/chief_editor）
+ * 且该节点**不是**顶端世系链镜像（external_link_type='chain' 的真身在世本、本层只读；
+ * founder 镜像可以——祖谱自有段正是从始祖之下长出来）。普通家族树不显示（只有世本与祖谱可以）。
+ */
+const canAppendClanBatch = computed(() => isClanTree.value && canAddNode.value && !props.isChainMirror);
+/** 祖谱批量被阻断的唯一情形提示（链镜像节点；无权限时整面板不渲染） */
+const clanBatchBlockedHint = computed(() =>
+  isClanTree.value && canAddNode.value && props.isChainMirror
+    ? '该节点是中华世本世系链镜像（只读）：请在祖谱自有段的节点上批量添加子孙'
+    : '',
+);
 const panelTitle = computed(() => {
   if (addPickMode.value === 'batch') return `为「${props.personName}」批量添加子孙`;
   if (isMasterChain.value && addMode.value !== 'spouse') return `为「${props.personName}」续编第 ${nextGen.value} 世`;
@@ -336,6 +367,10 @@ const panelTitle = computed(() => {
 });
 const panelHint = computed(() => {
   if (addPickMode.value === 'batch') {
+    // 祖谱：拿不到结构世数（后端才推），文案按「相对序号」口径，不猜世数
+    if (isClanTree.value) {
+      return `按「一条线单传」依次续编：最多 1 次添加 ${BATCH_MAX_GEN} 代；姓随父姓继承，批量录入不可改姓；新建节点均为已故（与世本同口径）。`;
+    }
     return `按「一条线单传」依次续编：第 1 个名字为第 ${nextGen.value} 世，最多 1 次添加 ${BATCH_MAX_GEN} 代；姓随父姓继承，批量录入不可改姓。`;
   }
   if (addMode.value === 'spouse') {
@@ -387,8 +422,32 @@ const batchNames = computed(() => batchParsed.value.names);
 const batchError = computed(() => batchParsed.value.error);
 /** 可提交：无解析错误、至少 1 个名字、且没有正在提交 */
 const batchCanSubmit = computed(() => !batchError.value && batchNames.value.length > 0 && !batchAdding.value);
-/** 预览：「将按顺序添加 N 代：第 49 世 → 甲；第 50 世 → 乙；…」（起始世数 = nextGen） */
-const batchPreview = computed(() => formatBatchPreview(batchNames.value, nextGen.value));
+/** 预览：「将按顺序添加 N 代：第 49 世 → 甲；…」（起始世数 = nextGen）；祖谱档用相对序号（口径 C） */
+const batchPreview = computed(() =>
+  isClanTree.value
+    ? formatClanBatchPreview(batchNames.value)
+    : formatBatchPreview(batchNames.value, nextGen.value),
+);
+
+/**
+ * 祖谱档预览（相对序号）：祖谱拿不到结构世数（世数由后端按父节点推算后才返回），
+ * 故不猜世数，只按顺序展示「后代 N → 名」。世本文案见 business/chain-batch.ts 的 formatBatchPreview。
+ */
+function formatClanBatchPreview(names: string[]): string {
+  if (!names.length) return '';
+  return `将按顺序添加 ${names.length} 代：${names.map((n, i) => `后代 ${i + 1} → ${n}`).join('；')}`;
+}
+
+/**
+ * 祖谱档二次确认正文（与世本同口径：前 5 项 + 「…等共 N 代」+ 姓氏/已故说明；
+ * 唯一差异是不写「第 A–B 世」——祖谱世数由后端推）。
+ */
+function buildClanBatchConfirmContent(names: string[]): string {
+  if (!names.length) return '';
+  const head = names.slice(0, 5).map((n, i) => `后代 ${i + 1} → ${n}`).join('\n');
+  const more = names.length > 5 ? `\n…等共 ${names.length} 代` : '';
+  return `请输入一条线单传的后代，确认按序添加：\n${head}${more}\n姓随父姓继承（批量录入不可改姓）。新建节点均为已故（与世本同口径）。`;
+}
 
 /** 姓继承提示文案（父姓不详时提示手填；配偶姓不继承） */
 const surnameHint = computed(() => {
@@ -580,7 +639,7 @@ async function doBatchAdd() {
   const confirmed = await new Promise<boolean>((resolve) => {
     uni.showModal({
       title: '批量添加子孙确认',
-      content: buildBatchConfirmContent(names, startGen),
+      content: isClanTree.value ? buildClanBatchConfirmContent(names) : buildBatchConfirmContent(names, startGen),
       confirmText: '确认添加',
       cancelText: '取消',
       success: (res) => resolve(!!res.confirm),
@@ -597,7 +656,10 @@ async function doBatchAdd() {
     const b = res.end_gen ?? endGen;
     const n = res.count ?? names.length;
     uni.showToast({
-      title: res.message || `已续编第 ${a}–${b} 世，共 ${n} 代`,
+      // 统一用后端返回的 message（祖谱形如「已续编第 2–4 世，共 3 代」）；缺失时按档位回落
+      title:
+        res.message
+        || (isClanTree.value ? `已按顺序添加 ${n} 代` : `已续编第 ${a}–${b} 世，共 ${n} 代`),
       icon: 'success',
       duration: 3000,
     });

@@ -94,7 +94,14 @@
             📄 本宗支系入口节点档案
           </t-button>
         </view>
-        <TreePedigree :tree-id="treeId" default-layout="vertical" />
+        <!-- tree-manage：本段节点档案内启用「谱系管理」（加父 / 加子 / 加配偶 / 批量添加子孙）；
+             @tree-changed：谱系结构变动后刷新本祖谱信息（自有/镜像人数等） -->
+        <TreePedigree
+          :tree-id="treeId"
+          default-layout="vertical"
+          tree-manage
+          @tree-changed="load"
+        />
       </view>
 
       <!-- ③ 底部：支系入口列表（认本祖谱为祖的普通家族树） -->

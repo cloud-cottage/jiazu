@@ -88,7 +88,7 @@
     </view>
 
     <!-- 唯一人物弹窗（点击节点/支始祖直达；档案内可内联编辑 + 谱系管理，不叠弹窗） -->
-    <PersonDetailModal ref="archiveModal" tree-manage @tree-changed="onTreeChanged" />
+    <PersonDetailModal ref="archiveModal" :tree-manage="treeManage" @tree-changed="onTreeChanged" />
   </view>
 </template>
 
@@ -119,6 +119,11 @@ const props = withDefaults(
      * 命中节点在卡片内加一行「★标签」并把卡面文字改为主题色；缺省空对象 = 与原有行为完全一致。
      */
     keyMarkers?: Record<string, { label: string; color?: string }>;
+    /**
+     * 档案弹窗内是否启用「谱系管理」操作区（加父/加子/加配偶/续编/批量添加子孙；缺省 true = 与原行为一致）。
+     * 宿主想在自己那层知道谱系改动（刷新人数/统计）时监听 `@tree-changed`。
+     */
+    treeManage?: boolean;
   }>(),
   {
     defaultLayout: 'vertical',
@@ -126,15 +131,22 @@ const props = withDefaults(
     hideExternalMarkers: false,
     genMap: () => ({}),
     keyMarkers: () => ({}),
+    treeManage: true,
   },
 );
+
+const emit = defineEmits<{
+  /** 树结构已被修改（加父/加子/加配偶/拆分/续编/批量）：宿主按需刷新自己加载的数据 */
+  (e: 'tree-changed'): void;
+}>();
 
 // 完整档案弹窗（点节点/支始祖直达；档案内内联编辑 + 谱系管理，唯一弹窗层）
 const archiveModal = ref<InstanceType<typeof PersonDetailModal> | null>(null);
 
-/** 档案内谱系管理操作完成（加父加子/拆分）：刷新树图（PersonArchive 已自行刷新档案） */
+/** 档案内谱系管理操作完成（加父加子/拆分/续编/批量）：刷新树图（PersonArchive 已自行刷新档案）+ 通知宿主 */
 function onTreeChanged() {
   loadData();
+  emit('tree-changed');
 }
 
 // 指定始祖 gramps_id（来自 tree-meta.json）：以始祖为根构建世系
