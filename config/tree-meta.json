@@ -63,7 +63,7 @@
     },
     "zhonghua": {
       "tree_id": "zhonghua",
-      "path_alias": "/zhonghua",
+      "path_alias": "/z/",
       "surname_char": "华",
       "display_title": "中华世本 · 全球华人家谱总谱",
       "hall_name": "中华世本",
@@ -138,6 +138,26 @@
       "founder_handle": "",
       "enable_custom_domain": false,
       "created_at": "2026-09-16T05:56:24.838Z",
+      "created_by": "16601061656"
+    },
+    "liu_21016": {
+      "tree_id": "liu_21016",
+      "kind": "clan",
+      "path_alias": "/z/liu_21016",
+      "surname": "刘",
+      "surname_char": "刘",
+      "display_title": "刘氏祖谱",
+      "genealogy_name": "刘氏祖谱",
+      "archive_url": "",
+      "hall_name": "刘氏宗祠",
+      "origin": "",
+      "description": "新建祖谱，始祖：姬累（中华世本）",
+      "master_tree_id": "zhonghua",
+      "master_handle": "09c3abdb283715fec6897456",
+      "master_name": "姬累",
+      "founder_handle": "",
+      "enable_custom_domain": false,
+      "created_at": "2026-09-18T06:31:37.089Z",
       "created_by": "16601061656"
     }
   }
