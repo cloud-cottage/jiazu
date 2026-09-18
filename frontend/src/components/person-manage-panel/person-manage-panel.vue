@@ -22,6 +22,13 @@
             theme="primary"
             @click="openAddNode('child', 'pick')"
           >＋ 挂接已有节点为第 {{ nextGen }} 世</t-button>
+          <!-- 批量添加子孙：一次按「一条线单传」依次续编最多 10 代（姓随父姓，不可改姓） -->
+          <t-button
+            size="small"
+            variant="outline"
+            theme="primary"
+            @click="openAddNode('child', 'batch')"
+          >＋ 批量添加子孙</t-button>
         </template>
         <text v-else class="mp-hint">{{ chainBlockedHint }}</text>
       </template>
@@ -71,7 +78,7 @@
       >＋ 添加配偶</t-button>
     </view>
     <!-- 计费口径提示（docs/economy-fee.spec.md §7 / §3-1 #9–#18）：新增类一律 0 片，避免用户因删改计费而不敢新增 -->
-    <text v-if="canAddNode" class="mp-hint">新增类操作（加父 / 加子 / 加配偶 / 挂接已有节点 / 续编）不消耗竹片</text>
+    <text v-if="canAddNode" class="mp-hint">新增类操作（加父 / 加子 / 加配偶 / 挂接已有节点 / 续编 / 批量添加子孙）不消耗竹片</text>
     <text v-if="panelError" class="mp-error">{{ panelError }}</text>
 
     <!-- 加父/加子/续编/加配偶 内联面板 -->
@@ -82,7 +89,8 @@
       </view>
       <view class="mp-sub">{{ panelHint }}</view>
 
-      <view class="mode-switch">
+      <!-- 新建 / 挂接切换：批量档不渲染（批量内容绝不会走单节点表单提交路径） -->
+      <view v-if="addPickMode !== 'batch'" class="mode-switch">
         <view
           class="mode-btn"
           :class="{ active: addPickMode === 'new' }"
@@ -149,7 +157,7 @@
           />
         </view>
       </template>
-      <template v-else>
+      <template v-else-if="addPickMode === 'pick'">
         <view class="search-row" style="margin-top: 8px;">
           <t-input
             :value="addQuery"
@@ -176,8 +184,46 @@
         <view v-else-if="addSearched" class="join-tip">未找到匹配节点</view>
       </template>
 
+      <!-- 批量添加子孙（总谱续编）：粘贴文本 → 实时解析预览 → 确认后按一条线依次续编 -->
+      <template v-else>
+        <view class="batch-tip">
+          请输入一条线单传的后代（每代一人）：只填「名」，用「、」「，」或空格分隔，可带序号（如 1、2、3、）。不要填写分支（同辈多人）。
+        </view>
+        <!-- 姓：随父姓继承 + 锁定（批量录入不允许改姓，故无任何「改姓」开关/链接） -->
+        <view class="name-row">
+          <t-input
+            :value="batchSurname"
+            :disabled="true"
+            placeholder="姓"
+            class="search-input surname-input"
+          />
+        </view>
+        <view class="surname-hint">
+          <text class="sh-text">{{ batchSurnameHint }}</text>
+        </view>
+        <textarea
+          v-model="batchText"
+          class="batch-textarea"
+          placeholder="例如：1、明远 2、承志 3、守拙（也可用「、」「，」或换行分隔）"
+        />
+        <view v-if="batchError" class="batch-error">{{ batchError }}</view>
+        <view v-else-if="batchNames.length" class="batch-preview">
+          <text class="batch-preview-line">{{ batchPreview }}</text>
+        </view>
+      </template>
+
       <view class="mp-panel-actions">
+        <!-- 批量档独立的提交按钮：不复用单节点表单，避免把批量内容当单节点提交 -->
         <t-button
+          v-if="addPickMode === 'batch'"
+          theme="primary"
+          block
+          :loading="batchAdding"
+          :disabled="!batchCanSubmit"
+          @click="doBatchAdd"
+        >确认添加</t-button>
+        <t-button
+          v-else
           theme="primary"
           block
           :loading="addingNode"
@@ -198,6 +244,7 @@ import {
   addParentNode,
   addChildNode,
   appendChainNode,
+  appendChainBatch,
   addSpouseNode,
   postEstablishBranch,
   fetchAssetsSummary,
@@ -206,6 +253,12 @@ import {
 import { isAssetInsufficientError, goMyAssets } from '@/business/asset-guide';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import { personIdDisplay } from '@/business/format';
+import {
+  BATCH_MAX_GEN,
+  buildBatchConfirmContent,
+  formatBatchPreview,
+  parseBatchNames,
+} from '@/business/chain-batch';
 import type { PersonSummary } from '@/business/types';
 
 /**
@@ -276,11 +329,15 @@ const chainBlockedHint = computed(() => {
   return '该节点不在源流链上（无世数），无法续编下一世';
 });
 const panelTitle = computed(() => {
+  if (addPickMode.value === 'batch') return `为「${props.personName}」批量添加子孙`;
   if (isMasterChain.value && addMode.value !== 'spouse') return `为「${props.personName}」续编第 ${nextGen.value} 世`;
   if (addMode.value === 'spouse') return `为「${props.personName}」添加配偶`;
   return `为「${props.personName}」添加${addMode.value === 'parent' ? '父节点' : '子节点'}`;
 });
 const panelHint = computed(() => {
+  if (addPickMode.value === 'batch') {
+    return `按「一条线单传」依次续编：第 1 个名字为第 ${nextGen.value} 世，最多 1 次添加 ${BATCH_MAX_GEN} 代；姓随父姓继承，批量录入不可改姓。`;
+  }
   if (addMode.value === 'spouse') {
     return '配偶将与本人同属一个家族：本人已有家族则补上空位，家族已满则新建家族（再婚/多配偶）。';
   }
@@ -296,7 +353,7 @@ const hasAnyPermission = computed(() => canAddNode.value || canSplit.value);
 // ---- 添加父/子/配偶节点 ----
 const showAddNode = ref(false);
 const addMode = ref<'parent' | 'child' | 'spouse'>('parent');
-const addPickMode = ref<'new' | 'pick'>('new');
+const addPickMode = ref<'new' | 'pick' | 'batch'>('new');
 const addName = ref('');
 const addSurname = ref('');
 /** 姓默认随（父/子）姓锁定；点「改姓」解锁为特例姓氏 */
@@ -311,6 +368,27 @@ const addSearching = ref(false);
 const addSearched = ref(false);
 const addSelected = ref<PersonSummary | null>(null);
 const addingNode = ref(false);
+
+// ---- 批量添加子孙（总谱续编）状态 ----
+/** 粘贴的文本（只填「名」，姓随父姓继承） */
+const batchText = ref('');
+const batchAdding = ref(false);
+/** 批量档展示的姓：预填父姓（来源同单节点表单：childSurnameDefault，父不详取本人姓）并锁定 */
+const batchSurname = computed(() => props.childSurnameDefault || props.personSurname || '');
+/** 姓提示：批量录入**不允许改姓**，故无「改姓」开关/链接 */
+const batchSurnameHint = computed(() =>
+  batchSurname.value
+    ? `姓随父姓「${batchSurname.value}」继承（批量录入不可改姓）`
+    : '姓随父姓继承（批量录入不可改姓；父姓不详时由服务端按父节点继承）',
+);
+/** 实时解析（纯函数；空文本 → names=[] + error「请粘贴要添加的子孙名字」） */
+const batchParsed = computed(() => parseBatchNames(batchText.value, BATCH_MAX_GEN));
+const batchNames = computed(() => batchParsed.value.names);
+const batchError = computed(() => batchParsed.value.error);
+/** 可提交：无解析错误、至少 1 个名字、且没有正在提交 */
+const batchCanSubmit = computed(() => !batchError.value && batchNames.value.length > 0 && !batchAdding.value);
+/** 预览：「将按顺序添加 N 代：第 49 世 → 甲；第 50 世 → 乙；…」（起始世数 = nextGen） */
+const batchPreview = computed(() => formatBatchPreview(batchNames.value, nextGen.value));
 
 /** 姓继承提示文案（父姓不详时提示手填；配偶姓不继承） */
 const surnameHint = computed(() => {
@@ -337,7 +415,7 @@ function titleAttributes(): Array<{ key: string; value: string }> {
   ].filter((a) => a.value);
 }
 
-function openAddNode(mode: 'parent' | 'child' | 'spouse', pickMode: 'new' | 'pick' = 'new') {
+function openAddNode(mode: 'parent' | 'child' | 'spouse', pickMode: 'new' | 'pick' | 'batch' = 'new') {
   panelError.value = '';
   addMode.value = mode;
   addPickMode.value = pickMode;
@@ -354,6 +432,9 @@ function openAddNode(mode: 'parent' | 'child' | 'spouse', pickMode: 'new' | 'pic
   addResults.value = [];
   addSearched.value = false;
   addSelected.value = null;
+  // 批量档：每次打开都清空粘贴文本与解析结果（不复用上次输入）
+  batchText.value = '';
+  batchAdding.value = false;
   showAddNode.value = true;
 }
 function closeAddNode() {
@@ -388,6 +469,11 @@ async function doSearchAddNode() {
 }
 
 async function doAddNode() {
+  // 防御：批量档有独立提交按钮（doBatchAdd），绝不把批量内容当单节点表单提交
+  if (addPickMode.value === 'batch') {
+    await doBatchAdd();
+    return;
+  }
   const token = getAuthToken();
   if (!token) {
     panelError.value = '登录已过期，请重新登录';
@@ -439,15 +525,8 @@ async function doAddNode() {
       uni.showToast({ title: `已续编第 ${res.gen} 世`, icon: 'success' });
       closeAddNode();
       emit('tree-changed');
-      if (res.branch) {
-        const names = res.siblings.map((s) => s.name).join('、');
-        uni.showModal({
-          title: `第 ${res.gen} 世已有节点`,
-          content: `同世并列显示为分支：${names}`,
-          showCancel: false,
-          confirmText: '知道了',
-        });
-      }
+      // 注：同世并列分支（res.branch）不再弹「第 N 世已有节点」提示——属确认类信息，非报错，
+      // 且时间轴已在卡片上打「分支」tag（产品决策：该弹窗不必要，已移除）。
       return;
     }
     const input =
@@ -473,6 +552,74 @@ async function doAddNode() {
     panelError.value = e.message || '添加失败';
   } finally {
     addingNode.value = false;
+  }
+}
+
+// ---- 批量添加子孙（总谱续编；契约见 api.ts 的 appendChainBatch）----
+
+/**
+ * 批量添加子孙：「确认添加」→ 二次确认弹窗（前 5 项 + 共 N 代 + 第 A–B 世）→ `POST /admin/chain-append-batch`。
+ * 只提交「名」序列（姓随父姓继承）；请求中按钮 loading 防重复提交；
+ * 成功 toast 优先用后端 message（缺失时回落「已续编第 A–B 世，共 N 代」）。
+ */
+async function doBatchAdd() {
+  const token = getAuthToken();
+  if (!token) {
+    panelError.value = '登录已过期，请重新登录';
+    return;
+  }
+  const names = batchNames.value;
+  if (batchError.value || !names.length) {
+    // 解析未通过时不允许发请求（预览区也据此不展示可提交状态）
+    panelError.value = batchError.value || '请粘贴要添加的子孙名字';
+    return;
+  }
+  const startGen = nextGen.value;
+  const endGen = startGen + names.length - 1;
+
+  const confirmed = await new Promise<boolean>((resolve) => {
+    uni.showModal({
+      title: '批量添加子孙确认',
+      content: buildBatchConfirmContent(names, startGen),
+      confirmText: '确认添加',
+      cancelText: '取消',
+      success: (res) => resolve(!!res.confirm),
+      fail: () => resolve(false),
+    });
+  });
+  if (!confirmed) return;
+
+  batchAdding.value = true;
+  panelError.value = '';
+  try {
+    const res = await appendChainBatch(props.treeId, props.handle, names, token);
+    const a = res.start_gen ?? startGen;
+    const b = res.end_gen ?? endGen;
+    const n = res.count ?? names.length;
+    uni.showToast({
+      title: res.message || `已续编第 ${a}–${b} 世，共 ${n} 代`,
+      icon: 'success',
+      duration: 3000,
+    });
+    closeAddNode();
+    emit('tree-changed');
+  } catch (e: any) {
+    // 失败不静默：文案落面板错误区（资产不足沿用既有弹窗 + 「去我的资产」分支）
+    const msg = e?.message || '批量添加失败';
+    panelError.value = msg;
+    if (isAssetInsufficientError(e)) {
+      uni.showModal({
+        title: '⚠️ 批量添加失败',
+        content: msg,
+        confirmText: '去我的资产',
+        cancelText: '稍后再说',
+        success: (r) => { if (r.confirm) goMyAssets(); },
+      });
+      return;
+    }
+    uni.showModal({ title: '批量添加失败', content: msg, showCancel: false });
+  } finally {
+    batchAdding.value = false;
   }
 }
 
@@ -695,4 +842,22 @@ async function confirmEstablishBranch() {
 .title-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .gender-row { margin-top: 8px; }
 .join-tip { text-align: center; color: #999; font-size: 13px; padding: 12px 0; }
+
+/* 批量添加子孙：提示 / 文本域 / 解析预览（沿用原生 textarea，与 hall 页 .textarea 同风格，不引新依赖） */
+.batch-tip {
+  font-size: 12px; color: #5D4037; line-height: 1.7;
+  background: #FBF6EF; border-radius: 8px; padding: 8px 10px; margin-top: 8px;
+}
+.batch-textarea {
+  min-height: 88px; width: 100%; box-sizing: border-box;
+  border: 1px solid #E0D5C8; border-radius: 8px;
+  padding: 10px 12px; font-size: 14px; background: #FBF8F4;
+  margin-top: 8px; color: #3E2723;
+}
+.batch-error { color: #C62828; font-size: 12px; margin-top: 8px; line-height: 1.6; }
+.batch-preview {
+  margin-top: 8px; padding: 8px 10px;
+  background: #F4F9F4; border: 1px solid #DCEBDC; border-radius: 8px;
+}
+.batch-preview-line { font-size: 12px; color: #2E5D34; line-height: 1.7; }
 </style>

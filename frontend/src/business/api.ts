@@ -1023,6 +1023,36 @@ export async function appendChainNode(
 }
 
 /**
+ * 批量续编（chief_editor）：按「一条线单传」在父节点下**依次**续编最多 10 代
+ *
+ * 契约（已冻结，与后端 `/admin/chain-append-batch` 逐字对齐）：
+ * - 入参 `{ tree_id, parent_handle, names }` —— **只传「名」**：姓统一随父姓继承，
+ *   刻意不传 `surname`（批量录入不允许改姓；空串会被服务端当显式姓提交，故整个字段都不发）。
+ * - 出参 `{ ok, start_gen, end_gen, count, added:[{handle,name,gramps_id,gen}], message }`；
+ *   错误体沿用统一 `{ error }` 形状（由 authedFetch 抛 ApiStatusError）。
+ * - 世数：第 1 个名字 = 父节点世数 + 1，其余依次 +1（服务端写入 `external_chain_gen`）。
+ */
+export async function appendChainBatch(
+  treeId: string,
+  parentHandle: string,
+  names: string[],
+  token: string,
+): Promise<{
+  ok: boolean;
+  start_gen: number;
+  end_gen: number;
+  count: number;
+  added: Array<{ handle: string; name: string; gramps_id: string; gen: number }>;
+  message: string;
+}> {
+  return authedFetch(treeId, '/admin/chain-append-batch', 'POST', token, {
+    tree_id: treeId,
+    parent_handle: parentHandle,
+    names,
+  });
+}
+
+/**
  * 新建家族树（chief_editor）：写树 JSON + 始祖节点 + tree-meta 注册，并从发起人余额扣建树费
  * tree_id 由服务端生成（拼音_码点_两位序号），返回后可直接进入新树首页
  */

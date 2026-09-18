@@ -39,28 +39,47 @@
         </template>
       </view>
 
-      <!-- 排序分段控件（综合 / 人数 / 活跃度；只用已加载的等级数据，不新增请求） -->
+      <!-- 一行两段：左＝排序分段控件（综合 / 人数 / 活跃度，仅「家族」tab 有）；
+           右＝列表切换（家族 | 祖谱）。只用已加载的等级数据，不新增请求 -->
       <view class="sort-bar">
-        <view
-          class="sort-btn"
-          :class="{ active: sortMode === 'comprehensive' }"
-          @click="sortMode = 'comprehensive'"
-        >
-          <text class="sort-text">综合</text>
+        <view v-if="listTab === 'family'" class="sort-group">
+          <view
+            class="sort-btn"
+            :class="{ active: sortMode === 'comprehensive' }"
+            @click="sortMode = 'comprehensive'"
+          >
+            <text class="sort-text">综合</text>
+          </view>
+          <view
+            class="sort-btn"
+            :class="{ active: sortMode === 'members' }"
+            @click="sortMode = 'members'"
+          >
+            <text class="sort-text">人数</text>
+          </view>
+          <view
+            class="sort-btn"
+            :class="{ active: sortMode === 'activity' }"
+            @click="sortMode = 'activity'"
+          >
+            <text class="sort-text">活跃度</text>
+          </view>
         </view>
-        <view
-          class="sort-btn"
-          :class="{ active: sortMode === 'members' }"
-          @click="sortMode = 'members'"
-        >
-          <text class="sort-text">人数</text>
-        </view>
-        <view
-          class="sort-btn"
-          :class="{ active: sortMode === 'activity' }"
-          @click="sortMode = 'activity'"
-        >
-          <text class="sort-text">活跃度</text>
+        <view class="tab-switch">
+          <view
+            class="tab-btn"
+            :class="{ active: listTab === 'family' }"
+            @click="listTab = 'family'"
+          >
+            <text class="tab-text">家族</text>
+          </view>
+          <view
+            class="tab-btn"
+            :class="{ active: listTab === 'clan' }"
+            @click="listTab = 'clan'"
+          >
+            <text class="tab-text">祖谱</text>
+          </view>
         </view>
       </view>
 
@@ -69,9 +88,9 @@
         <t-loading theme="spinner" text="加载中…" />
       </view>
 
-      <t-cell-group v-else-if="normalHalls.length > 0" :bordered="false">
+      <t-cell-group v-else-if="visibleHalls.length > 0" :bordered="false">
         <t-cell
-          v-for="card in sortedHalls"
+          v-for="card in visibleHalls"
           :key="card.tree_id"
           :title="card.title"
           :description="`发源地：${card.origin || '待完善'}`"
@@ -82,6 +101,7 @@
           <template #note>
             <view class="note-line">
               <text class="note-text">{{ card.description }}</text>
+              <text class="people-tag">{{ peopleText(card.tree_id) }}</text>
               <t-tag v-if="rankLabel(card.tree_id)" :theme="rankTheme(card.tree_id)" variant="light" size="small" class="rank-tag">
                 {{ rankLabel(card.tree_id) }}
               </t-tag>
@@ -91,11 +111,11 @@
       </t-cell-group>
 
       <view v-else class="empty">
-        <text>暂无已上线的家族数字馆</text>
+        <text>{{ listTab === 'clan' ? '暂无祖谱' : '暂无已上线的家族数字馆' }}</text>
       </view>
 
-      <!-- 新建家族树（仅总编辑）：写树 JSON + 始祖 + tree-meta，扣建树费 -->
-      <view v-if="canCreateTree" class="create-entry" @click="openCreateTree">
+      <!-- 新建家族树（仅总编辑；只在「家族」tab 显示 —— 它是建家族树的入口） -->
+      <view v-if="canCreateTree && listTab === 'family'" class="create-entry" @click="openCreateTree">
         <text class="create-icon">＋</text>
         <text class="create-text">新建家族树</text>
         <text class="create-hint">消耗 {{ TREE_CREATE_FEE_SEEDS }}颗石榴籽</text>
@@ -216,10 +236,19 @@ const loading = ref(true);
 const showMaster = ref(false);
 
 /**
+ * 列表 tab（家族 / 祖谱）：只切换渲染的列表与入口，不改双视图逻辑；
+ * 切换 tab **不重置** sortMode（切回家族 tab 时保留用户上次选择）。
+ */
+const listTab = ref<'family' | 'clan'>('family');
+
+/**
  * 普通家族树列表：排除中华世本（is_master）与祖谱（kind='clan'）。
  * 旧 meta 条目缺 kind 字段 → 按 family 兼容（`kind !== 'clan'` 天然放行 undefined）。
  */
 const normalHalls = computed(() => halls.value.filter((h) => !h.isMaster && h.kind !== 'clan'));
+
+/** 祖谱列表（kind='clan'）：只按综合分降序，没有排序切换 */
+const clanHalls = computed(() => halls.value.filter((h) => h.kind === 'clan'));
 
 // ---- 排序（综合 / 人数 / 活跃度）：数据只用 rankMap，不新增网络请求 ----
 
@@ -257,9 +286,11 @@ function recencyOf(treeId: string): number {
   return Number.isNaN(ts) ? 0 : ts;
 }
 
-/** 综合分（仅「综合」档用）：0.4×人数 + 0.4×活跃度 + 0.2×新近度，三项各自在本次列表内极值归一化 */
-const scoreMap = computed<Record<string, number>>(() => {
-  const list = normalHalls.value;
+/**
+ * 综合分表（可复用于任一列表）：0.4×人数 + 0.4×活跃度 + 0.2×新近度，
+ * 三项各自在该列表自身内极值归一化（同一公式、同一权重；max === min 记 1）。
+ */
+function scoreByList(list: DigitalHallCard[]): Record<string, number> {
   const members = list.map((h) => membersOf(h.tree_id));
   const activity = list.map((h) => activityOf(h.tree_id));
   const recency = list.map((h) => recencyOf(h.tree_id));
@@ -275,10 +306,36 @@ const scoreMap = computed<Record<string, number>>(() => {
       SCORE_WEIGHT_RECENCY * norm(recency[i], r.min, r.max);
   });
   return map;
-});
+}
+
+/** 家族列表的综合分表（归一化范围＝家族列表自身，结果与改造前逐值一致） */
+const scoreMap = computed<Record<string, number>>(() => scoreByList(normalHalls.value));
+
+/** 祖谱列表的综合分表（归一化范围＝祖谱列表自身） */
+const clanScoreMap = computed<Record<string, number>>(() => scoreByList(clanHalls.value));
 
 /**
- * 三档统一 tie-break：主指标降序 → 其余两项指标降序 → updated_at 降序 → tree_id 升序。
+ * 「综合」档 tie-break：综合分降序 → 人数降序 → 活跃度降序 → updated_at 降序 → tree_id 升序。
+ * 家族列表与祖谱列表共用（传入各自的综合分表）。
+ */
+function compareByScore(
+  a: DigitalHallCard,
+  b: DigitalHallCard,
+  scores: Record<string, number>,
+): number {
+  let d = (scores[b.tree_id] || 0) - (scores[a.tree_id] || 0);
+  if (d) return d;
+  d = membersOf(b.tree_id) - membersOf(a.tree_id);
+  if (d) return d;
+  d = activityOf(b.tree_id) - activityOf(a.tree_id);
+  if (d) return d;
+  d = recencyOf(b.tree_id) - recencyOf(a.tree_id);
+  if (d) return d;
+  return a.tree_id < b.tree_id ? -1 : a.tree_id > b.tree_id ? 1 : 0;
+}
+
+/**
+ * 家族列表三档统一 tie-break：主指标降序 → 其余两项指标降序 → updated_at 降序 → tree_id 升序。
  * 显式写全，不依赖列表原始顺序（原始顺序随 meta 文件顺序变化）。
  */
 function compareHalls(a: DigitalHallCard, b: DigitalHallCard): number {
@@ -294,12 +351,7 @@ function compareHalls(a: DigitalHallCard, b: DigitalHallCard): number {
     d = membersOf(b.tree_id) - membersOf(a.tree_id);
     if (d) return d;
   } else {
-    d = (scoreMap.value[b.tree_id] || 0) - (scoreMap.value[a.tree_id] || 0);
-    if (d) return d;
-    d = membersOf(b.tree_id) - membersOf(a.tree_id);
-    if (d) return d;
-    d = activityOf(b.tree_id) - activityOf(a.tree_id);
-    if (d) return d;
+    return compareByScore(a, b, scoreMap.value);
   }
   d = recencyOf(b.tree_id) - recencyOf(a.tree_id);
   if (d) return d;
@@ -308,6 +360,16 @@ function compareHalls(a: DigitalHallCard, b: DigitalHallCard): number {
 
 /** 渲染用列表（排序只作用于渲染；卡片模板 / 等级徽章 / 新建入口 / 切换按钮均不变） */
 const sortedHalls = computed(() => normalHalls.value.slice().sort(compareHalls));
+
+/** 祖谱渲染列表：只按综合分降序（综合分归一化范围＝祖谱列表自身，无排序切换） */
+const sortedClanHalls = computed(() =>
+  clanHalls.value.slice().sort((a, b) => compareByScore(a, b, clanScoreMap.value)),
+);
+
+/** 当前 tab 实际渲染的列表 */
+const visibleHalls = computed(() =>
+  listTab.value === 'clan' ? sortedClanHalls.value : sortedHalls.value,
+);
 
 function toggleView() {
   showMaster.value = !showMaster.value;
@@ -437,6 +499,12 @@ function rankLabel(treeId: string): string {
   return rankMap.value[treeId]?.rank_label || '';
 }
 
+/** 人数标签文案（数据全部来自已加载的 rankMap，不新增请求；缺失 / NaN → 「— 人」） */
+function peopleText(treeId: string): string {
+  const n = rankMap.value[treeId]?.person_count;
+  return typeof n === 'number' && !Number.isNaN(n) ? `${n} 人` : '— 人';
+}
+
 function rankTheme(treeId: string): string {
   const r = rankMap.value[treeId];
   if (!r) return 'default';
@@ -552,16 +620,43 @@ function goToPage(path: string) {
 .ps-tip { text-align: center; font-size: 13px; color: #A1887F; padding: 14px 0; }
 .ps-error { color: #C62828; }
 
-/* ---- 排序分段控件（综合 / 人数 / 活跃度） ---- */
-.sort-bar { display: flex; gap: 8px; }
+/* ---- 排序 + 列表切换（同一行：左＝综合/人数/活跃度，右＝家族 | 祖谱） ----
+   单行硬约束：nowrap 组内不换行 + min-height 钉住行高。
+   垂直账：排序组 = padding 8×2 + border 1×2 = 18px；切 tab 组 = border 1×2 + padding 2×2 + 按钮 padding 6×2 = 18px；
+   两组文字同字号 → 行盒等高，故「家族」tab（有排序组）与「祖谱」tab（排序组 v-if 移除）行高严格一致，列表不再跳动。 */
+.sort-bar { display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; min-height: 36px; }
+.sort-group { display: flex; gap: 8px; flex-wrap: nowrap; min-width: 0; }
 .sort-btn {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  padding: 8px 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 8px 14px;
   background: #FFFDF8; border: 1px solid #E0D5C8; border-radius: 999px;
 }
-.sort-text { font-size: 13px; color: #8B4513; }
+.sort-text { font-size: 13px; color: #8B4513; white-space: nowrap; }
 .sort-btn.active { background: #8B4513; border-color: #8B4513; }
 .sort-btn.active .sort-text { color: #fff; }
+
+/* 列表切换组：靠右（排序组隐藏时仍停在同一行右侧，不跳位）；shrink:0 保证永不被排序组挤压 */
+.tab-switch {
+  display: flex; gap: 2px; margin-left: auto; flex-shrink: 0;
+  padding: 2px; background: #FFFDF8;
+  border: 1px solid #E0D5C8; border-radius: 999px;
+}
+.tab-btn {
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 14px; border-radius: 999px;
+}
+.tab-text { font-size: 13px; color: #8B4513; white-space: nowrap; }
+.tab-btn.active { background: #8B4513; }
+.tab-btn.active .tab-text { color: #fff; }
+
+/* 窄屏（≤370px，含 320px）：收窄水平空间，保证「三颗排序 pill + 两颗 tab」单行放得下且不溢出、不出现横向滚动 */
+@media (max-width: 370px) {
+  .sort-bar { gap: 6px; }
+  .sort-group { gap: 6px; }
+  .sort-btn { padding: 8px 9px; }
+  .tab-btn { padding: 6px 10px; }
+  .sort-text, .tab-text { font-size: 12px; }
+}
 
 /* 卡片容器：暖米底 + 暖棕描边 + 14 圆角 + 极轻投影（与「新建家族树」入口同族） */
 .hall-list :deep(.t-cell-group) {
@@ -627,6 +722,12 @@ function goToPage(path: string) {
   --td-tag-default-light-color: #F3EAE0;
   flex: 0 0 auto; margin-left: 0; margin-top: 1px;
   padding: 0 6px; height: 18px; line-height: 18px; font-size: 11px;
+}
+/* 人数标签：与等级标签同排同族（浅底深字、无描边，避免同排两个描边元素） */
+.people-tag {
+  flex: 0 0 auto; margin-top: 1px;
+  padding: 0 6px; height: 18px; line-height: 18px; font-size: 11px;
+  border-radius: 4px; background: #F3EAE0; color: #795548;
 }
 
 /* 加载态（与卡片同形同宽，避免首屏空态闪烁与布局跳动） */

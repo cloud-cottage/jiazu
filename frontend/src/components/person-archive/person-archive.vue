@@ -787,6 +787,11 @@ const REPARENT_FEE_CONFIRM =
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
+/**
+ * 载入编辑表单时的原始值快照（脏比对的基线）：`openEdit` 打开表单那一刻的字段值。
+ * `doSave` 先与它比对 —— 完全相同 = 没做任何修改 → 不发 PUT（不扣费、不重写树文件）。
+ */
+const editBaseline = ref<any>(null);
 /** 总谱（中华世本）：节点一律已故，在世字段锁死 */
 
 // ===== 始祖挂载（docs/founder-attach.spec.md）=====
@@ -1457,6 +1462,33 @@ const editForm = ref({
   events: [] as Array<{ type: string; date: string; place: string }>,
 });
 
+// >>> DIRTY-DIFF 编辑脏比对（纯函数；与后端 lib/economy-fee.js 的 personValueDiff 同口径）
+/** 归一化：字符串 trim；`''` / `undefined` / `null` 视为同一空值 */
+function editNorm(v: any): string {
+  return v === undefined || v === null ? '' : String(v).trim();
+}
+/**
+ * 编辑表单是否与载入时的原始值不同。只比人物内容字段（姓名 / 性别 / 生卒 / 健在 / 称号三字段），
+ * 与后端 `personValueDiff` 同一口径；**父节点编号不在本函数内**（改父走 reparent，另有变更判定）——
+ * 因此「只改父编号」时本函数返回 false、但保存流程仍必须继续执行 reparent，绝不吞掉改父。
+ */
+function personEditDirty(cur: any, base: any): boolean {
+  if (!base) return true; // 无基线（异常路径）→ 按「有改动」处理，绝不吞掉一次保存
+  const liveOf = (f: any) => f?.is_living === true;
+  const genderOf = (f: any) => editNorm(f?.gender).toUpperCase();
+  // 健在 ⇒ 保存时不写卒年（与 doSave / 后端 applyLifespan 同口径）→ 卒年按空值比对
+  const deathOf = (f: any) => (liveOf(f) ? '' : editNorm(f?.death_date));
+  for (const k of ['surname', 'first_name', 'hao', 'feng', 'shi']) {
+    if (editNorm(cur?.[k]) !== editNorm(base?.[k])) return true;
+  }
+  if (genderOf(cur) !== genderOf(base)) return true;
+  if (editNorm(cur?.birth_date) !== editNorm(base?.birth_date)) return true;
+  if (deathOf(cur) !== deathOf(base)) return true;
+  if (liveOf(cur) !== liveOf(base)) return true;
+  return false;
+}
+// <<< DIRTY-DIFF
+
 // 出嫁状态（跨树联姻软链接）
 const showMarry = ref(false);
 const marryTrees = ref<Array<{ tree_id: string; display_title: string; surname_char: string }>>([]);
@@ -1785,6 +1817,8 @@ async function openEdit() {
       parent_id: '',
       events,
     };
+    // 脏比对基线：打开表单这一刻的字段值（doSave 前先比一次，完全相同就不发 PUT）
+    editBaseline.value = { ...editForm.value };
     showEdit.value = true;
   } catch (e: any) {
     uni.showToast({ title: e.message || '加载编辑数据失败', icon: 'none' });
@@ -1833,41 +1867,61 @@ async function doSave() {
     return;
   }
   try {
-    // 重新 GET 最新对象（避免构造完整对象）
-    const raw = await fetchPersonForEdit(treeId.value, handle.value, token);
-    // 关键：profile 字段会导致 PUT 反序列化失败（Unknown classes），必须删除
-    delete raw.profile;
-    // 注意：gender 保持数字枚举（1男/2女/0未知），PUT 接受数字，不要转 M/F/U
-    // 更新基本信息
-    raw.primary_name = raw.primary_name || {};
-    raw.primary_name.first_name = editForm.value.first_name;
-    raw.primary_name.surname_list = [{ surname: editForm.value.surname }];
-    // 表单 gender 是 M/F/U，映射回数字
-    const genderNumMap: Record<string, number> = { M: 1, F: 2, U: 0 };
-    raw.gender = genderNumMap[editForm.value.gender] ?? raw.gender;
-    // 生卒 + 健在（约定顶层字段；compat 写树 JSON；auth-server 转发前剥离，不影响 Gramps）
-    raw.birth_date = (editForm.value.birth_date || '').trim();
-    raw.is_living = isMasterTree.value ? false : editForm.value.is_living;
-    // 健在 ⇒ 无离世时间；已故 ⇒ 可留空（卒年不详）
-    raw.death_date = editForm.value.is_living ? '' : (editForm.value.death_date || '').trim();
-    // 称号三字段（号/封号/谥号）：合并进 attribute_list —— 保留其它属性，清空即删除该项
-    const titleKeys = ['号', '封号', '谥号'];
-    const titleValues: Record<string, string> = {
-      号: (editForm.value.hao || '').trim(),
-      封号: (editForm.value.feng || '').trim(),
-      谥号: (editForm.value.shi || '').trim(),
-    };
-    const keptAttrs = (raw.attribute_list || []).filter((a: any) => {
-      const k = typeof a.type === 'string' ? a.type : a.type?.string || '';
-      return !titleKeys.includes(k);
-    });
-    for (const k of titleKeys) {
-      if (titleValues[k]) keptAttrs.push({ type: k, value: titleValues[k] });
+    // ① 脏比对（发起 PUT 之前）：本表单与载入时原始值完全相同 → 不发请求、不扣费；
+    //    但「只改了父节点编号」不算「未做修改」——改父走 reparent，必须照常执行（见下方 reparent 区块）。
+    const normRef = (v: any) => String(v).toUpperCase().replace(/^I(?=\d)/, '');
+    const newParentId = (editForm.value.parent_id || '').trim();
+    const curParents = [parentsFamily.value?.father?.gramps_id, parentsFamily.value?.mother?.gramps_id]
+      .filter(Boolean)
+      .map((v) => normRef(String(v)));
+    // 本树父编号去重（跨树编号不可能出现在本树父母里 → 命中即跨树迁移）
+    const parentDirty = !!newParentId && !curParents.includes(normRef(newParentId));
+    const formDirty = personEditDirty(editForm.value, editBaseline.value);
+    if (!formDirty && !parentDirty) {
+      // 未做修改：不发 PUT、不关编辑态（用户还能继续改），零费用
+      uni.showToast({ title: '未做修改', icon: 'none' });
+      return;
     }
-    raw.attribute_list = keptAttrs;
-    // 扣费闸门：人物内容修改 1 片 / 节点（docs/economy-fee.spec.md §3-1 #1）→ 响应带 fee
-    const saveRes = await savePerson(treeId.value, handle.value, raw, token);
-    const saveFee: FeeInfo | undefined = saveRes?.fee;
+
+    let saveFee: FeeInfo | undefined;
+    let saveRes: any = null;
+    if (formDirty) {
+      // 重新 GET 最新对象（避免构造完整对象）
+      const raw = await fetchPersonForEdit(treeId.value, handle.value, token);
+      // 关键：profile 字段会导致 PUT 反序列化失败（Unknown classes），必须删除
+      delete raw.profile;
+      // 注意：gender 保持数字枚举（1男/2女/0未知），PUT 接受数字，不要转 M/F/U
+      // 更新基本信息
+      raw.primary_name = raw.primary_name || {};
+      raw.primary_name.first_name = editForm.value.first_name;
+      raw.primary_name.surname_list = [{ surname: editForm.value.surname }];
+      // 表单 gender 是 M/F/U，映射回数字
+      const genderNumMap: Record<string, number> = { M: 1, F: 2, U: 0 };
+      raw.gender = genderNumMap[editForm.value.gender] ?? raw.gender;
+      // 生卒 + 健在（约定顶层字段；compat 写树 JSON；auth-server 转发前剥离，不影响 Gramps）
+      raw.birth_date = (editForm.value.birth_date || '').trim();
+      raw.is_living = isMasterTree.value ? false : editForm.value.is_living;
+      // 健在 ⇒ 无离世时间；已故 ⇒ 可留空（卒年不详）
+      raw.death_date = editForm.value.is_living ? '' : (editForm.value.death_date || '').trim();
+      // 称号三字段（号/封号/谥号）：合并进 attribute_list —— 保留其它属性，清空即删除该项
+      const titleKeys = ['号', '封号', '谥号'];
+      const titleValues: Record<string, string> = {
+        号: (editForm.value.hao || '').trim(),
+        封号: (editForm.value.feng || '').trim(),
+        谥号: (editForm.value.shi || '').trim(),
+      };
+      const keptAttrs = (raw.attribute_list || []).filter((a: any) => {
+        const k = typeof a.type === 'string' ? a.type : a.type?.string || '';
+        return !titleKeys.includes(k);
+      });
+      for (const k of titleKeys) {
+        if (titleValues[k]) keptAttrs.push({ type: k, value: titleValues[k] });
+      }
+      raw.attribute_list = keptAttrs;
+      // 扣费闸门：人物内容修改 1 片 / 节点（docs/economy-fee.spec.md §3-1 #1）→ 响应带 fee
+      saveRes = await savePerson(treeId.value, handle.value, raw, token);
+      saveFee = saveRes?.fee;
+    }
 
     // 改挂父节点（含跨家族树迁移）：填了编号且与当前父母不同 → 调专用接口（留空 = 不改）
     let reparentErr = '';
@@ -1877,44 +1931,41 @@ async function doSave() {
     let reparentFee: FeeInfo | undefined;
     /** 跨树迁移成功后的目标树展示名（非空 = 本节点已离本树） */
     let migratedTo = '';
-    const newParentId = (editForm.value.parent_id || '').trim();
-    if (newParentId) {
-      const norm = (v: string) => String(v).toUpperCase().replace(/^I(?=\d)/, '');
-      const cur = [parentsFamily.value?.father?.gramps_id, parentsFamily.value?.mother?.gramps_id]
-        .filter(Boolean)
-        .map((v) => norm(String(v)));
-      // 本树父编号去重（跨树编号不可能出现在本树父母里 → 命中即跨树迁移）
-      if (!cur.includes(norm(newParentId))) {
-        // 提交前明示费用（同树 1 片 / 跨树整体迁移 9 片·与后代人数无关）；取消则不发起改父请求
-        const reparentConfirmed = await new Promise<boolean>((resolve) => {
-          uni.showModal({
-            title: '改挂父节点确认',
-            content: REPARENT_FEE_CONFIRM,
-            confirmText: '继续改父',
-            cancelText: '取消改父',
-            success: (res) => resolve(!!res.confirm),
-            fail: () => resolve(false),
-          });
+    if (parentDirty) {
+      // 提交前明示费用（同树 1 片 / 跨树整体迁移 9 片·与后代人数无关）；取消则不发起改父请求
+      const reparentConfirmed = await new Promise<boolean>((resolve) => {
+        uni.showModal({
+          title: '改挂父节点确认',
+          content: REPARENT_FEE_CONFIRM,
+          confirmText: '继续改父',
+          cancelText: '取消改父',
+          success: (res) => resolve(!!res.confirm),
+          fail: () => resolve(false),
         });
-        if (reparentConfirmed) {
-          try {
-            // 不再传目标家族树：后端按全局编号自动识别所属树（docs/id-system.spec.md §5）
-            const r = await reparentNode(treeId.value, handle.value, newParentId, token);
-            reparentFee = r.fee;
-            if (r.cross_tree) {
-              migratedTo = r.target_tree_id || '';
-              reparentMsg = `已迁移到 ${migratedTo}（编号终身不变，共 ${r.moved_people ?? 0} 人）`;
-            } else {
-              reparentMsg = r.chain_shift
-                ? `已改父 ${r.parent_name}（世数 ${r.chain_shift.delta > 0 ? '+' : ''}${r.chain_shift.delta}，含下代 ${r.chain_shift.affected} 个节点）`
-                : `已改父 ${r.parent_name}`;
-            }
-          } catch (e: any) {
-            reparentErr = e?.message || '改父失败';
-            reparentErrObj = e;
+      });
+      if (reparentConfirmed) {
+        try {
+          // 不再传目标家族树：后端按全局编号自动识别所属树（docs/id-system.spec.md §5）
+          const r = await reparentNode(treeId.value, handle.value, newParentId, token);
+          reparentFee = r.fee;
+          if (r.cross_tree) {
+            migratedTo = r.target_tree_id || '';
+            reparentMsg = `已迁移到 ${migratedTo}（编号终身不变，共 ${r.moved_people ?? 0} 人）`;
+          } else {
+            reparentMsg = r.chain_shift
+              ? `已改父 ${r.parent_name}（世数 ${r.chain_shift.delta > 0 ? '+' : ''}${r.chain_shift.delta}，含下代 ${r.chain_shift.affected} 个节点）`
+              : `已改父 ${r.parent_name}`;
           }
+        } catch (e: any) {
+          reparentErr = e?.message || '改父失败';
+          reparentErrObj = e;
         }
       }
+    }
+    // 只在「改父」这一步有变更、且用户取消了确认 → 什么都没发生（不进保存成功分支，编辑态保持）
+    if (!formDirty && !reparentMsg && !reparentErr) {
+      uni.showToast({ title: '未做修改', icon: 'none' });
+      return;
     }
     // 扣费回执（内容修改 + 改父各一次）拼进成功提示
     const feeParts = [feeText(saveFee), feeText(reparentFee)].filter(Boolean);
@@ -1933,7 +1984,13 @@ async function doSave() {
         uni.showToast({ title: `已保存${feeSuffix}，但改父失败：${reparentErr}`, icon: 'none', duration: 3200 });
       }
     } else {
-      uni.showToast({ title: `${reparentMsg || '已保存'}${feeSuffix}`, icon: 'success', duration: migratedTo ? 3200 : 2000 });
+      // 详情文档（称号/档案）写失败时后端回 `detail_warning`（树已落盘、已扣费，属部分成功）→ 优先提示
+      const warn = formDirty ? String(saveRes?.detail_warning || '') : '';
+      if (warn) {
+        uni.showToast({ title: warn, icon: 'none', duration: 3200 });
+      } else {
+        uni.showToast({ title: `${reparentMsg || '已保存'}${feeSuffix}`, icon: 'success', duration: migratedTo ? 3200 : 2000 });
+      }
     }
     showEdit.value = false;
     if (migratedTo) {
