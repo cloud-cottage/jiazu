@@ -1037,8 +1037,9 @@ CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs
 > 资金下线的**总纲表述** = `docs/economy.spec.md` **§12-3**（已回写状态）。
 > **本批性质**：**代码批次 + 数据修正批次**（后端 `cloudfunctions/**` + 前端 `frontend/**` + `auth-server/**` + 根 `package.json`；两项数据手术已对**真源**执行）。
 > **无新增集合**；但**本轮有真源数据变更**（原「无」已作废 → 见 **§16-3**）：① 世本 `zhonghua` 删节点 `I0046`（顾清学）：`people` **140 → 139** + 删其详情文档；
-> ② 钱包集合删 `type:'transfer'` 流水与 `trees` 字段（`migrate-output/collections/jiazu_wallets.json` + `auth-server/data/wallets.json`；**用户余额未动**）。
-> 作业依据 / 删前核查 / 前后 md5 / 备份与回滚见 **`docs/zhonghua-cleanup-2026-09.spec.md`**。
+> ② 钱包集合删 `type:'transfer'` 流水与 `trees` 字段（`migrate-output/collections/jiazu_wallets.json` + `auth-server/data/wallets.json`；**用户余额未动**）；
+> ③ **批次 1（2026-09-18 08:22）世本再删 51 个「补录登记节点」**：`people` **139 → 88** + 删 51 份详情文档 + 按 3 片竹片/节点等价扣 **153 片**（**§16-3 追加块**）。
+> 作业依据 / 删前核查 / 前后 md5 / 备份与回滚见 **`docs/zhonghua-cleanup-2026-09.spec.md`**（第 0 批 = §2、批次 1 = **§6**）；逐节点清单见 `docs/zhonghua-cleanup-candidates-2026-09.md`。
 > ⚠️ **云函数必须重打包**：`cloudfunctions/deploy/compat-api/index.js` **仍是旧产物**，落后本批全部后端改动
 > （新增 **1 条路由** + **1 条路由出参增量** + **2 条路由改 410** + **建树 409 文案统一**）。
 > ⚠️ **前端 H5 / 小程序同样必须重打包**：不重打包则线上仍是被删掉的资金入口 + 没有首页搜索框。
@@ -1049,7 +1050,7 @@ CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs
 |---|---|---|---|
 | 1 | 云函数 `compat-api` | **必须重打包 + `tcb fn deploy`**（§16-1：`GET /search/global` 新增、`GET /tree/rank` 出参增量、`/wallet/transfer` 与 `/wallet/tree-balance` 改 410） | 无 |
 | 2 | CloudBase 集合 | **无**（不新增集合；`COLLECTIONS` 保持 §11-2 的 12 项） | — |
-| 3 | 云端数据 | **有变更**（§16-3：重传 `zhonghua` 树 JSON（**139 人**）+ **手工删**云端 I0046 详情文档 + 重传清理后的钱包集合 `jiazu_wallets`） | 需 CB_ENV/CB_KEY |
+| 3 | 云端数据 | **有变更**（§16-3：重传 `zhonghua` 树 JSON（**88 人**）+ **手工删**云端 **52 份** `zhonghua:<handle>` 详情文档（`I0046` 1 份 + 批次 1 的 51 份）+ 重传清理后的钱包集合 `jiazu_wallets`） | 需 CB_ENV/CB_KEY |
 | 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（§16-4：首页列表 / 三档排序 / 搜索框、家族树页删资金块、钱包页删转账区、business 封装 + 两处文案） | 需确认 hosting 目标与云函数 HTTP 域名 |
 
 ### 16-1 云函数 `compat-api`：新增 1 条路由 + 1 条出参增量 + 2 条路由改 410（**必须重打包 + 部署**）
@@ -1112,7 +1113,7 @@ grep -c 'TREE_FUND_RETIRED' cloudfunctions/deploy/compat-api/index.js
 
 | 真源文件（本地） | 变更 | 对应云端副本 |
 |---|---|---|
-| `migrate-output/trees/zhonghua.json` | 删 `I0046`（顾清学）：`people` **140 → 139**；md5 `9b22e0b9b66f6c3588228eb0d86c1f68` → **`2c6fbdcae6cd9b7a1cf811408d7b017d`**（`version` / `updated_at` 故意未动） | 云存储 **`trees/zhonghua.json`**（重跑全量上传即覆盖） |
+| `migrate-output/trees/zhonghua.json` | 删 `I0046`（顾清学）：`people` **140 → 139**；md5 `9b22e0b9b66f6c3588228eb0d86c1f68` → **`2c6fbdcae6cd9b7a1cf811408d7b017d`**（`version` / `updated_at` 故意未动） | 云存储 **`trees/zhonghua.json`**（重跑全量上传即覆盖）。⚠️ **批次 1 后终值 = 88 人 / md5 `3cc6089aeaa723247065de2549f060c8`** → 见下「§16-3 追加」（同一份文件，重传一次即含两批结果） |
 | `migrate-output/details/zhonghua:103ff1c309eb7bf2cb4f6ff1762e.json` | **删除**（原 md5 `6ca7e089e26548b85468cb2f79f140c9`） | 集合 `jiazu_person_details` 的 **`_id = zhonghua:103ff1c309eb7bf2cb4f6ff1762e`**（**必须手工删**，见下） |
 | `migrate-output/collections/jiazu_wallets.json` | 删 `type:'transfer'` 流水 1 条 + 删 `trees` 字段；md5 `1b52c2e7166573b43b45887abdaf414f` → **`1c2ca5a078eee318bd3f0f80fefad69d`**；`users[*].balance_cents` **未动（1070 分）**，那笔 ¥20 **不返还** | 集合 `jiazu_wallets` 的 `global` 文档（重跑覆盖） |
 | `auth-server/data/wallets.json` | 同上（各 1 条 / 1 处）；md5 `e8c4464922f487b3b3cd7e71514f4c1c` → `b0818848e4435dfb9969746e862b929e` | 属**遗留链路、不上云**（见 §16-7-1） |
@@ -1144,6 +1145,52 @@ python3 -c "import json;g=json.load(open('migrate-output/collections/jiazu_walle
   则该文件属**幂等无变化** —— 在部署记录里注明「云端本来就无该字段」即可，**不构成阻塞**。
 
 **阻塞点**：需 CB_ENV / CB_KEY；第 ② 步**必须显式执行**（遗漏 → 云端残留失效详情文档，按 `tree_id` 取详情时命中已删节点，与真源口径分叉）。
+
+#### 16-3 追加（**2026-09-18 · 批次 1**）：世本再删 **51 个补录登记节点** —— 云端动作增量
+
+> 本节 = **§16-3 的增量**（同属本批数据变更）。作业依据 / 候选判据 / 结果与校验 / 扣费证据 / 回滚见 **`docs/zhonghua-cleanup-2026-09.spec.md` §6**；
+> 逐节点清单与上云删除清单见 **`docs/zhonghua-cleanup-candidates-2026-09.md`**（头部 = 执行记录；**附录 A = 51 个 handle ↔ 待删详情 `_id`**）。
+
+**为什么需要**（真源已变 → 云端必须跟随；逐条对应）
+
+| ☑ | 云端动作 | 为什么 / 注意 |
+|---|---|---|
+| ☑ | **重传 `zhonghua` 树 JSON（88 人）** | 真源 `migrate-output/trees/zhonghua.json` 已由 **139 → 88 人**（md5 `2c6fbdcae6cd9b7a1cf811408d7b017d` → **`3cc6089aeaa723247065de2549f060c8`**；`version` / `updated_at` **故意未动**）；云端树 JSON = 云存储 `trees/zhonghua.json`，全量重跑上传即覆盖 |
+| ☑ | **手工删云端 51 份 `zhonghua:<handle>` 详情文档** | 云端详情在集合 `jiazu_person_details`（`_id = "<tree_id>:<handle>"`）。⚠️ 上传脚本对详情是 `doc(_id).set()`（**upsert，只增不删**）→ **重跑不会删旧键**，必须**按 `_id` 精确手工删除**；清单 = 候选清单文档 **附录 A**（与 §16-3 原第 ② 步的 `I0046` 合计 **52 份**） |
+| ☑ | **重传清理后的集合（若云端有对应变更）** | 本批窗口内 `collections/jiazu_assets.json` / `jiazu_messages.json` / `jiazu_spirit.json` **有写入**，但**来源 = 用户自己的界面操作 + 惰性结算（非本次手术）**，已核实。**以云端实际为准**：云端已有对应变更时**不要**用本地件覆盖（本地覆盖会把云端更新回退），只做核对；`jiazu_wallets` 不属本批（§16-3 原表已列） |
+| — | **无需额外重建索引** | **删节点不影响源流链**：`external_chain_gen` 只存在于**详情文档 `attributes`**，被删的 51 个节点**本就不带该属性** → 链节点 **86 → 86**（`GET /tree/rank` 的 `person_count` 亦为 **86**，未变）、无世数平移 ⇒ **不需要重建任何索引、不需要迁移锚点** |
+| — | **编号计数器不动** | `jiazu_id_seq` 保持 `person.next = 295` / `family.next = 152`（删节点**不铸号**；§12-3 口径不变） |
+
+**具体命令**
+
+```bash
+# ① 全量重跑迁移上传（树 JSON 逐棵覆盖 + 详情 upsert + tree-meta.storage_files 回写）
+CB_ENV=liwu-d8gek6jjdab1d087c CB_KEY=<云开发 API Key> \
+  node scripts/upload-migrated-to-cloudbase.mjs
+
+# ② ⚠️ 手工删除云端已不存在的详情文档（upsert-only → 必须显式删）
+#    清单见 docs/zhonghua-cleanup-candidates-2026-09.md 附录 A：51 个 _id，全部形如 zhonghua:<handle>
+#    控制台：云开发 → 数据库 → jiazu_person_details → 按 _id **精确**查询后删除记录
+#    或一次性脚本（不入库）：对附录 A 的 51 个 _id 逐个
+#        await db.collection('jiazu_person_details').doc(该 _id).remove()
+
+# ③ 本地侧判据（磁盘直读）
+python3 -c "import json;d=json.load(open('migrate-output/trees/zhonghua.json'));print(len(d['people']))"   # 期望 88
+ls migrate-output/details | grep -c '^zhonghua:'                                                         # 期望 88
+ls migrate-output/details | wc -l                                                                        # 期望 236
+```
+
+**本地验证证据**（本记录成文时**磁盘直读**实测）
+
+- `people` **88** / `families` **80**；树 md5 **`3cc6089aeaa723247065de2549f060c8`**；`version` / `updated_at` 仍为 `72` / `2026-09-16T05:54:39.003Z`（**故意未动**）。
+- 与改前备份件（139 人版）逐 handle 比对：其余 88 人**叶子级零差异**、`families` **深度相等**、`zhonghua:*` 详情 **139 → 88**、全树详情 **287 → 236**。
+- 扣费与留痕：竹片 **1094 → 941**（-153 = 51 × 3）、审计 `jiazu_ops_logs` **`op_1789690996088_1qpdiv`**、用户流水 **`tx_mu67t6k81fka9`**（详见 spec §6-5）。
+- 备份（**回滚唯一依据**；`/tmp` 会被系统清理 → **必须另存**）：`/tmp/jiazu-batch1-bak-20260918-082012/`（139 人树 JSON）+ `/tmp/jiazu-bak-2026-09-18T00-22-21-710Z/`（树 JSON + **51 份已删详情** = 52 个文件；另有一份**逐字节同内容**的 `/tmp/jiazu-bak-2026-09-18T00-21-32-384Z/`，两者互为副本）。
+
+**阻塞点**：需 CB_ENV / CB_KEY；第 ② 步**必须显式执行**（遗漏 → 云端残留 **51 份孤儿详情**，按 `tree_id` 取详情时命中已删节点，与真源口径分叉 —— 同 §12-2 / §13-2 口径）。
+
+**另记（文档侧）**：候选清单 `docs/zhonghua-cleanup-candidates-2026-09.md` 已在仓库 `docs/` 落盘（头部 = **执行记录/状态**，附录 A = 上云删除清单）；
+⚠️ 它**尚未 `git add`**（`git status --short` 显示为 **untracked**）—— 与 `docs/zhonghua-cleanup-2026-09.spec.md`（本册 §6 的批次 1 记录）一同**入库待提交**。
 
 ### 16-4 前端 H5（**必须重打包 + hosting 部署**；小程序同理）
 
@@ -1191,11 +1238,13 @@ npm run build:mp-weixin                                        # 产物交微信
 7. **页面**：首页**不再出现祖谱与世本卡片**；三档排序切换顺序可复现（同分按 `tree_id` 升序）；
    搜索框：受限条点击只出 toast「权限受限，不可见详情」、**不进详情页**，非受限条正常跳人物详情；
    家族树页无「家族树资金」区块、钱包页无「转账到家族树」区块；钱包页建树费文案显示「**新建家族树消耗 9颗石榴籽**」（**不带**空格、**不带**「完整」）。
-8. **数据手术后自检（§16-3 回读，重要）**：云端树 JSON `trees/zhonghua.json` 的 `people` 数 = **139**（不是 140）；
-   `jiazu_person_details` 按 `_id = zhonghua:103ff1c309eb7bf2cb4f6ff1762e` 查询**查不到**；
+8. **数据手术后自检（§16-3 + §16-3 追加回读，重要）**：云端树 JSON `trees/zhonghua.json` 的 `people` 数 = **88**（不是 139 / 140）；
+   `jiazu_person_details` 按 `_id = zhonghua:103ff1c309eb7bf2cb4f6ff1762e`（`I0046`）与**候选清单文档附录 A 的 51 个 `_id`** 查询**均查不到**（**合计 52 份**均应不存在）；
    云端 `jiazu_wallets/global` 的 `transactions[]` **无** `type='transfer'`、**无** `trees` 字段（若云端本来就没有 → 注明，不作缺陷）；
-   首页搜索「顾清学」→ **guest 1 条（受限）/ chief 1 条（祖谱真身）**，按编号 `I0046` 检索 → **0 条**
-   （口径与事实见 `docs/zhonghua-cleanup-2026-09.spec.md` §2-5）。
+   首页搜索「顾清学」→ **guest 1 条（受限）/ chief 1 条（祖谱真身）**，按编号 `I0046` 检索 → **0 条**；
+   按编号 `I0029` 检索 → **0 条**、搜「季志山」→ **1 条 `ji_23395_01/I000174`**（世本登记节点已删、家族树里的人保留）、搜 `I0000` / `I0051` → **0 条**；
+   带 `X-Tree-Id: zhonghua` 调 `GET /tree/rank` → `person_count` = **86**（源流链计数不变 → 无需重建索引）
+   （口径与事实见 `docs/zhonghua-cleanup-2026-09.spec.md` §2-5 与 **§6-4 / §6-7**）。
 
 ### 16-6 本批**不需要**上云的东西
 

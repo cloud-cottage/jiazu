@@ -1270,4 +1270,381 @@ auth-server/data/wallets.json                    raw=3516B   reser=3516B   → t
 
 > 复算脚本留档（`/tmp`，可能被系统清理）：`recompute.mjs`（树）、`recompute-wallets.mjs`（钱包）、`probe.mjs`（真机探针）、`inspect.mjs`（结构勘察）、`tree.diff`（字节级 diff）。
 
+---
 
+# §14 增量验收（世本 51 节点清理 + 扣费 + 脚本批量能力）
+
+- 质检时间：**2026-09-18 08:23 – 08:28 CST**（HEAD = `6d10d22`；工作区含未提交改动，见 S3）
+- 范围：**只验本批**（世本 51 个登记节点删除 / `POST /admin/assets/grant` 扣 153 片 / `scripts/remove-zhonghua-person.mjs` 批量与幂等能力 / 回归），**不重跑前几轮矩阵**。
+- 纪律：**只读**——未改任何代码、脚本、数据；未重启/未停 3100·5199（PID `33637` / `41219` 全程未变）；**未使用浏览器**；全部结论由**自己重算**得出，不引用任何他人报告。
+- 独立判据（本节自定，不照抄脚本）：**孤立节点 = 无 `parent_family`（空串视为无）+ `spouse_families` 为空 + 不被 families 的 `father_handle`/`mother_handle`/`child_handles` 引用**（同时给出「本树槽位」与「任何树槽位」两种口径）。
+- 留档脚本（`/tmp/qa14/`）：`s1_orphan_recompute.mjs`、`s2_leaf_integrity.mjs`、`s3_details.mjs`、`s4_dangling.mjs`、`s6_realmachine.mjs`、`s6b_search.mjs`、`s7_fee.mjs`、`s8_idmig_probe.mjs`、`prepare_fixture.mjs`、`resolve_probe.mjs`；副本数据根 `/tmp/qa14/{base,pre,repA,repB,repB2,repC}`；真源快照 `/tmp/qa14/md5_{pre,mid,post}.txt`、`npmtest.log`。
+
+## 14.1 候选集合独立重算（硬项）
+
+两份输入：改前备份 `/tmp/jiazu-batch1-bak-20260918-082012/zhonghua.json`（**md5 `2c6fbdcae6cd9b7a1cf811408d7b017d`，139 人**）与现树 `migrate-output/trees/zhonghua.json`（**md5 `3cc6089aeaa723247065de2549f060c8`，88 人**）；清单 `/tmp/zhonghua-batch1.txt`（51 行）。
+
+```
+$ node /tmp/qa14/s1_orphan_recompute.mjs
+tree_md5_bak = 2c6fbdcae6cd9b7a1cf811408d7b017d      tree_md5_cur = 3cc6089aeaa723247065de2549f060c8
+bak_people_count = 139                               cur_people_count = 88
+removed_count = 51                                   added_count = 0
+list_count = 51        list_unresolved_in_bak = []   removed_equals_list = true
+removed_not_in_list = []                             list_not_removed = []
+orphan_in_tree_count   = 51   （判据 A：本树 families 槽位）
+orphan_any_tree_count  = 51   （判据 B：全部 9 棵树 families 槽位）
+orphan_in_tree_handles = [I0000 … I0045, I0047 … I0051]      ← 与清单逐号相同
+orphan_in_tree_minus_removed = []      removed_not_in_orphan_in_tree  = []
+removed_not_in_orphan_any_tree = []    cur_chain_gen_nodes = 0（树 JSON 不存该字段，见 14.4）
+```
+
+| 断言 | 结果 |
+|---|---|
+| 差集恰为清单 51 个 handle | **是**（`removed_equals_list = true`，51/51 逐号对应） |
+| 无清单外被删 | **0 个**（`removed_not_in_list = []`） |
+| 无新增节点 | **0 个**（`added_count = 0`） |
+| 是否漏删（删前孤立却留下） | **0 个**（`orphan_in_tree_minus_removed = []`）；现树孤立节点 = **0** |
+| 独立复算 vs 文档清单（`zhonghua-cleanup-candidates-2026-09.md`） | 编号 51/51、附录 A handle 51/51，**双向差集 0** |
+| 「幽灵登记」（`external_tree` 不在 `tree-meta`）| **4 个**：`I0000→ji_23395_04`、`I0045→ji_23395_03`、`I0047→wang_29579_01`、`I0051→liu_21016_02`（与文档「4 个」一致）；其余 47 个指向存在的树 |
+| 51 个被删节点的跨树指针 | `external_person_handle` 有值 **0 个**、`external_link_type` 有值 **0 个** |
+
+→ **候选集合 = 删除集合，精确一致；无清单外被删、无新增、无漏删。** ✅
+
+## 14.2 叶子级 / families / 版本字段完整性
+
+```
+$ node /tmp/qa14/s2_leaf_integrity.mjs
+remaining_people_count = 88      people_not_byte_equal_to_backup = []      people_all_equal = true   ← isDeepStrictEqual 逐人全等
+families_deep_equal = true       families_count_cur = 80   families_count_bak = 80
+version    { bak: 72, cur: 72, same: true }
+updated_at { bak: '2026-09-16T05:54:39.003Z', cur: '2026-09-16T05:54:39.003Z', same: true }
+founder_gramps_id { same: true }   top_level_keys_same = true   top_level_diff = []   other_toplevel_changed = []
+removed_handle_count = 51
+residual_slots_in_cur_families     = []    ← families 里指向已删 handle 的残留槽位 = 0
+dangling_in_remaining_people       = []    ← 剩余 88 人任何字段（含嵌套）指向已删 handle = 0
+dangling_family_refs               = []    ← 剩余 88 人的 parent_family/spouse_families 指向不存在的家族 = 0
+```
+
+- 88 人**逐条 `isDeepStrictEqual` 与备份全等**；`families` **深度相等且家族集合未增删（80 = 80，键序亦未变）**；`version` / `updated_at` / `founder_gramps_id` **均未动**；顶层键集合与顺序未变、除 `people`/`families` 外的顶层键逐键全等 → 写盘是**纯 people 块删除**，与「不动 version/updated_at」口径一致。 ✅
+
+## 14.3 详情文档（正向 + 反向）
+
+```
+$ node /tmp/qa14/s3_details.mjs
+detail_file_count = 236        zhonghua_detail_count = 88         （236 = 88 + 148 其他树）
+removed_detail_docs_still_present = []     removed_detail_docs_all_gone = true     ← 51/51 均不存在
+orphan_detail_files_for_deleted_handles = []                                        ← 反向扫文件名：0 个属于已删 handle
+detail_docs_scanned = 236      detail_docs_referencing_deleted_handles = []          ← 再扫内容属性值：0 处引用
+```
+
+- **总数 = 236**（`ls migrate-output/details | wc -l` = 236，与备份侧 287 → 236 一致）；51 份 `zhonghua:<handle>` 详情**全部不存在**；**反向**扫全部 236 个文件名 + 236 份文档内容 → **无任何孤儿/悬挂详情**。 ✅
+
+## 14.4 悬挂跨树引用 + 源流链 86（硬项，反向验证）
+
+```
+$ node /tmp/qa14/s4_dangling.mjs
+removed_count = 51   trees_scanned = 9   detail_docs_scanned = 236
+dangling_refs = []   dangling_ref_count = 0        collection_file_hits = []
+```
+
+扫描面与结果（**反向**证明「不存在指向已删 51 个 handle 的任何引用」）：
+
+| 扫描面 | 判定方式 | 命中 |
+|---|---|---|
+| 9 棵树 `people` 全字段 | 字符串**精确等值** + 嵌套对象 JSON 包含 | **0** |
+| 9 棵树 `families` 三槽位 | `father_handle` / `mother_handle` / `child_handles` 精确等值 | **0** |
+| `config/tree-meta.json` | 全叶字符串精确等值（含 `founder_handle` / `master_handle`） | **0** |
+| `migrate-output/details/**`（236 份） | 全叶字符串精确等值 | **0** |
+| `migrate-output/collections/*.json` 原文 | 子串扫描（附加勤勉项） | **0** |
+| 代码/脚本/配置（`scripts` `cloudfunctions` `frontend/src` `auth-server` `config`） | 51 个 handle 子串扫描 | **0**（唯 2 份 **docs** 提及：本批候选清单 + 旧 `branch-clan-ops.qa.md` 历史报告，属正常文档留档） |
+
+源流链计数：
+
+```
+详情文档带 external_chain_gen（全库）= 86       其中 zhonghua = 86   ← 与备份相同
+zhonghua 详情 88 份中无链世数 = 2 份（5a86b5ce… / df3412fc…，非本批产物）
+批量自备份 /tmp/jiazu-bak-2026-09-18T00-22-21-710Z/migrate-output/details（51 份）= 带 external_chain_gen 的 **0** 份
+→ 删前链节点 = 86（88 + 51 = 139 份详情 − 51 份无链 = 86 稳定）
+```
+
+- `external_chain_gen` 存在**详情文档**而非树 JSON（compat-api 读时现拼），故本节不以树 JSON 计数 —— 该结论与既有实现口径一致。 ✅ **源流链 86 未变；跨树引用零悬挂。**
+
+## 14.5 脚本批量 / 幂等能力（`/tmp` 副本验证）
+
+副本构造：真源 `migrate-output` + `config/tree-meta.json` 整份拷贝到 `/tmp/qa14/base`，再派生 `repA/repB/repB2/repC`；夹具 `prepare_fixture.mjs` 在副本 `zhonghua.people` 注入两个孤立测试节点 `I9001`（handle `abcdef0123456789abcdef01`）与 `I9002`（handle `…02`，`external_person_handle` **指向 I9001**）。**真源数据未参与任何写入**（见 14.8 哈希全等）。
+
+**① 批量幂等（对现态副本重跑同一批批文件）**
+
+```
+$ node scripts/remove-zhonghua-person.mjs --from-file=/tmp/zhonghua-batch1.txt --master-ok --apply --root=/tmp/qa14/repA --backup-dir=/tmp/qa14/bakA
+改前：people=88  md5=3cc6089aeaa723247065de2549f060c8
+批次汇总：成功 0 / 拒绝 0 / 不存在（跳过）51
+  详情删除数：0        已忽略的同批引用源 0 处（本批待删节点自身的引用）
+无可删节点，0 变更（未写盘、未建备份）。          EXIT=0
+```
+→ 树 md5 前后全等（`3cc6089a…`）、详情数 236 不变、**备份目录未被创建**（`ls /tmp/qa14/bakA` = No such file）✅
+
+**② 世本写盘闸门**：同批 `--apply` **不带** `--master-ok` → `❌ ⑥ …整批写盘必须显式加 --master-ok → 整批拒结（未写盘）`、**EXIT=4** ✅
+
+**③ 同批互相引用（B 引用 A，同批删 A+B）**
+
+```
+$ node scripts/remove-zhonghua-person.mjs --gramps-ids=I9001,I9002 --master-ok --apply --root=/tmp/qa14/repB --backup-dir=/tmp/qa14/bakB
+  1  I9001  测试甲  ✔ 通过     2  I9002  测试乙  ✔ 通过
+【1】I9001 … ④ 全库零跨树引用 ✓（…；跳过目标自身 + 同批待删 1 个节点（已忽略的同批引用源 1 处））
+批次汇总：成功 2 / 拒绝 0 / 不存在（跳过）0      已忽略的同批引用源 1 处
+  people：90 → 88（-2）        md5：e9f3d644… → 3cc6089a…
+```
+**对照（关键）**：只删 A、把 B 留在批外（B 仍在副本里引用 A）→ A 被 `④ 存在跨树/外部引用` **拒结**、`批次汇总：成功 0 / 拒绝 1`、`无可删节点，0 变更（未写盘）`、树 md5 前后全等（`e9f3d644…`）
+→ 「同批排除」是**有界豁免**：只在「引用方自己也在本批待删集合里」时忽略，绝不放过真正的跨树引用。 ✅
+
+**④ `--strict`（任一被拒则整批不写）**
+
+```
+$ node scripts/remove-zhonghua-person.mjs --gramps-ids=I9001,I0052 --master-ok --strict --apply --root=/tmp/qa14/repC --backup-dir=/tmp/qa14/bakC
+  1  I9001  测试甲  ✔ 通过
+  2  I0052  风伏羲  ✘ 拒绝：② 节点仍有家族关系：parent_family=2638c307… / spouse_families=[…] …（共 2 条）
+❌ --strict：本批有 1 个节点被拒 → 整体不写盘（通过 1 个也不删，exit 4）。     EXIT=4
+```
+→ 树 md5 **前后逐字节全等**、备份目录**未创建** ✅；同批去掉 `--strict` → `成功 1 / 拒绝 1`、`people：89 → 88（-1）`、`I0052` 保留（非严格语义正确）✅
+
+## 14.6 真机复验（3100 只读，PID 33637 未变）
+
+身份：`POST /auth/send-code {phone:16601061656}` → `dev_code` → `POST /auth/login` → `role=chief_editor` + token。**探针口径更正**：树内 `/search` 与 `/search/global` 的入参名都是 **`query`**（不是 `q`）——用 `q=` 会得到 `200 []`（我第一版踩到，本节全部以 `query=` 重跑）；对照探针 `/search?query=伏羲`（zhonghua）命中 **2 条**（`I0052`/`I0053`）证明搜索链路有效。
+
+| 检查 | 实测 | 期望 | 判定 |
+|---|---|---|---|
+| `GET /people/?profile=all` + `X-Tree-Id: zhonghua`（guest / chief 各一次） | **88** 条（两次同值） | 88 | ✅ |
+| 88 人列表内含被删编号 | `I0000=false`、`I0029=false`、`I0051=false`（编号最大档 `I0135–I0137`） | 不含 | ✅ |
+| `GET /tree/rank` + `X-Tree-Id: zhonghua` | `person_count = 86`，`access.mode=full`、`is_master=true` | 86 | ✅ |
+| 搜 `I0029` / `I0000`（树内 + 全局，chief） | 均 **0 条** | 0 | ✅ |
+| 搜 `I0051` | 树内 **400**（`编号「I0051」在多个家族树中重号：ji_23395_01（季堂某）、liu_21016_01（Liu大姥爷）`）；全局 **0 条** | 0 | ⚠️ 见 S2 |
+| 搜「季志山」（`/search/global?query=`，chief） | **恰 1 条**：`ji_23395_01` / `I000174` / 「季氏费县白露家族」/ `restricted=false` | 1 条 `ji_23395_01/I000174` | ✅ |
+| 搜「顾清学」（同上） | **恰 1 条**：`gu_39038` / `I000139` / 「顾氏祖谱」/ `restricted=false` | 1 条 `gu_39038/I000139` | ✅ |
+| （旁证）「顾清学」guest | 1 条 `gu_39038_01/I000143`，`restricted=true` | 与既有隐私口径一致 | ✅ |
+| `POST /wallet/transfer` | **410** `{error:'家族树资金功能已下线', code:'TREE_FUND_RETIRED'}` | 410 | ✅ |
+| `GET /wallet/tree-balance` | **410** 同码 | 410 | ✅ |
+
+## 14.7 扣费 153 片与审计留痕（硬项）
+
+```
+$ node /tmp/qa14/s7_fee.mjs
+jiazu_assets.global.users['16601061656'].bamboos = [{ id:'bl_mu67o50m30bxt', qty:941,
+   expires_at:'2027-09-18T00:19:20.806Z', source:'admin', created_at:'2026-09-18T00:19:20.806Z' }]
+原始求和 = 941        有效期未过求和 = 941（仅 1 个批次，无过期批次）
+jiazu_ops_logs：存在 op_1789690996088_1qpdiv（ts 2026-09-18T00:23:16.088Z，operator/target = 16601061656，
+   delta.bamboos = -153，reason = 「总谱补录登记节点清理：首批 51 节点 × 3 片/节点（docs/zhonghua-cleanup-candidates-2026-09.md）」）
+用户流水：tx_mu67t6k81fka9（同 ts，type=admin_grant，delta.bamboos=-153，desc 同上 + (log op_1789690996088_1qpdiv)）
+```
+
+| 断言 | 结果 |
+|---|---|
+| 竹片余额 = **941 片** | **是**（单批次 `qty=941`；原始求和 = 有效求和 = 941） |
+| 存在 `delta:{bamboos:-153}` 且有审计留痕 | **是**（`op_1789690996088_1qpdiv` + 用户流水 `tx_mu67t6k81fka9`，时间戳一致 `00:23:16.088Z`） |
+| reason 含「51 节点 × 3 片/节点」 | **是**（逐字含「首批 51 节点 × 3 片/节点（docs/zhonghua-cleanup-candidates-2026-09.md）」） |
+| 费率 = 3 片/节点（非其他费率） | **是**：全部竹片流水求和 = `+100`（09-17 01:51:50）`+999`（09-18 00:19:20）`−1×5`（5 笔 `edit_fee`）`−153` = **941** ⇒ 扣前 **1094** → 扣后 **941**，差额 **153 = 51 × 3**（不是 51×1，也不是 51×9） |
+| 扣费前基线 | 批量记录基线 `jiazu_assets.json` md5 = `b02eefbc914a3d07f562edc977c0d2a5`，现 = `28beb86bb17412847f3dfedac33d3aa6`（差异即本次扣减）；**磁盘上无扣前副本**，故 1094 由流水重建（见 S4） |
+
+→ **941 片 / 153 片 / 3 片/节点 三者自洽，扣费与留痕齐备。** ✅
+
+## 14.8 回归与卫生
+
+```
+$ npm test
+# tests 350   # pass 349   # fail 1   # skipped 0   # todo 0   # duration_ms 1425.5     EXIT=1
+not ok 243 - 迁移脚本：副本上跑通 → zhonghua 保留原号 / 其余树重编号 + 映射表 + legacy_gramps_id；二次运行零改动
+  location: cloudfunctions/compat-api/lib/id-system.test.js:291      error: 'zhonghua 4 位原号保留'
+  stack: id-system.test.js:308
+$ node --check scripts/remove-zhonghua-person.mjs        EXIT=0 ✅
+```
+
+- **基线 350/350/0 → 现 350/349/1**：唯一红点是 `id-system.test.js:308` 的 `assert.ok(zhIds.includes('I0000') && zhIds.includes('I0052'), 'zhonghua 4 位原号保留')` —— **`I0000` 正是本批删掉的全局编号**，是「硬编码示例编号」的数据依赖断言（**测试适配问题，不是数据缺陷**）。
+- 我在 `/tmp` 副本上**逐条复跑了该测试的其余断言**（`s8_idmig_probe.mjs`）：zhonghua 树 JSON 一字未改 ✅ / `zhonghua` 节点不写 legacy ✅ / 重编号起点 = max(zhonghua)+1（`288 → 289`）✅ / 计数器已推进（`295`）✅ / 映射表 ↔ 树内 ↔ 详情 `legacy_gramps_id` 三方一致 ✅ / 第二次跑**零改动**（逐字节快照比对）✅ / 存在 4 位原号（`I0052`…）✅ → **只有那 1 条硬编码 `I0000` 的断言红**。
+- **npm test 不写真源**：测试前后 `config/**` + `migrate-output/**`（342 个文件）逐行 md5 **IDENTICAL** ✅；整个质检会话起点快照（358 项，含代码/脚本/前端/`package.json`）与收工快照**逐行全等**（唯一差异只是我打印路径前缀的相对/绝对形式，哈希值 100% 相同）✅
+- 只读纪律：`scripts/remove-zhonghua-person.mjs` 哈希 `97e4f4c10a9b8dff9bafcaccfeff07c3` 全程未变；3100 PID `33637` / 5199 PID `41219` 未变；未用浏览器 ✅
+
+## 14.9 判定、返工清单与可疑点
+
+**总体判定：不通过（1 项必修）** —— 数据手术本身（14.1–14.4）**零缺陷**、扣费与留痕（14.7）**完全自洽**、脚本批量/幂等/严格模式（14.5）**四项能力实测通过**；唯一不达标项是**回归计数**（14.8：350/350/0 → 350/349/1，红点成因明确且修法唯一）。
+
+| 必验项 | 结果 | 关键证据 |
+|---|---|---|
+| 1 候选集合独立重算 = 删除集合 | **通过** | §14.1（孤儿集合 51/51 逐号对应；无清单外、无新增、无漏删；现树孤立 = 0） |
+| 2 叶子级 / families / 版本字段 | **通过** | §14.2（88 人 `isDeepStrictEqual` 全等；families 80 深等；version 72 / updated_at 未动；残留槽位 0） |
+| 3 详情文档 236 + 反向无孤儿 | **通过** | §14.3（51 份不存在；236 = 88 + 148；文件名与内容双扫 0 孤儿） |
+| 4 无悬挂跨树引用 + 源流链 86 | **通过** | §14.4（树/meta/详情/集合/代码六面扫描 0 命中；链节点 86 未变） |
+| 5 脚本能力（副本） | **通过** | §14.5（幂等 0 变更且不建备份；同批互相引用豁免有界；`--strict` 整批不写、md5 全等） |
+| 6 真机复验 | **通过（1 项口径例外）** | §14.6（88 / 86 / 3 个被删编号 0 条、`I0051` 树内 400；季志山 1 条 `ji_23395_01/I000174`；顾清学 1 条 `gu_39038/I000139`；transfer 410） |
+| 7 扣费 153 片 + 审计 | **通过** | §14.7（941 片；`op_1789690996088_1qpdiv` + `tx_mu67t6k81fka9`；1094−153=941 = 51×3） |
+| 8 回归 350/350/0 | **不通过** | §14.8（**350/349/1**；红点 = `id-system.test.js:308` 硬编码 `I0000`） |
+
+**返工清单（必修 1 项）**
+
+- **R1（必修 · 测试适配）** `cloudfunctions/compat-api/lib/id-system.test.js:308`：把 `assert.ok(zhIds.includes('I0000') && zhIds.includes('I0052'), 'zhonghua 4 位原号保留')` 改为**不依赖具体历史编号**的形式，例如 `assert.ok(zhIds.some((x) => /^I0\d{3}$/.test(x)), 'zhonghua 保留 4 位原号（示例不再绑定已删编号）')`（或改用仍存在的 `I0052`/`I0100`）。**判定：属「适配」而非「放水」**——断言意图（zhonghua 原号不被重编号）在现数据下仍然成立（我已逐条复跑证明）；改完须重跑**全量** `npm test` 并给出 `# tests/# pass/# fail`（目标 350/350/0）。
+- **R2（建议 · 非本批缺陷，需产品裁决）** 树内 `/search` 对**已不存在/不可解析**的编号不返回 0 条，而是（a）落入别树 legacy 号 → 0 条（尚可接受）或（b）抛「重号」→ 400。见 S2。
+
+**可疑点 / 覆盖边界（如实列出，未改任何代码/数据）**
+
+- **S1（回归 1 红，本批引入）**：`id-system.test.js` 的硬编码示例编号 `I0000` 被本批删除 → 套件由 350/350/0 变 350/349/1。成因**确定性**、无 flake 成分（该断言只依赖真源是否存在 `I0000`）。
+- **S2（口径连带效应，需裁决）**：派单要求的「chief 搜 `I0051` → 0 条」在**全局**端点成立（`/search/global` → `200 []`），但在**树内**端点**不成立**：`/search?query=I0051` → **400**「编号「I0051」在多个家族树中重号：ji_23395_01（季堂某）、liu_21016_01（Liu大姥爷）；请指定目标家族树后再操作」。我已用**离线解析探针**（`resolve_probe.mjs`，COMPAT_OUT_DIR 指向 mini 副本）对比删前/删后两种数据根，定位为**删除的连带效应而非数据缺陷**：删前 `resolveNode('I0051','zhonghua')` 命中 zhonghua 全局节点（→ 搜索 1 条）；删后该全局编号不复存在，解析器按既定口径**回退到「树内旧号」并因多树重号而抛错**（→ 400）。同类现象在**上一批 `I0046` 删前即已存在**（删前探针同样抛错），且 `I0050` 现回退解析到 `ji_23395_01/I000201`（树内搜索因 `tree_id ≠ zhonghua` 仍返回 0 条）。→ **属 `docs/id-system.spec.md` §5「绝不猜」的既有设计**；若产品要求「已删编号一律 0 条」，需另行拍板（例如树内搜索对解析异常降级为 0 条），**不宜在数据侧修**。
+- **S3（仓库状态）**：收工时工作区仍有未提交改动 —— ` M docs/PENDING_DEPLOY.md`、` M docs/zhonghua-cleanup-2026-09.spec.md`、` M scripts/remove-zhonghua-person.mjs`、`?? docs/zhonghua-cleanup-candidates-2026-09.md`（HEAD = `6d10d22`）。→ 本节所有「未变」结论**一律以 md5 快照钉住**，不以「与 HEAD 比对」为据；建议 R1 修完后按层提交。
+- **S4（备份留存面）**：本批两个备份件（`/tmp/jiazu-batch1-bak-20260918-082012/` = 树 JSON；`/tmp/jiazu-bak-2026-09-18T00-22-21-710Z/` = 树 JSON + 51 份详情，共 52 文件）**均不含** `jiazu_assets.json` / `jiazu_ops_logs.json` → 扣费前的 1094 片在磁盘上**无副本**，只能由流水重建（14.7 已重建成功）。**建议**：后续批次的备份口径纳入被改的业务集合文件；且 `/tmp` 会被系统清理（`zhonghua-cleanup-candidates-2026-09.md` 也已提示），长期留存需另存。
+- **S5（我自己的探针）**：`migrate-output/collections/jiazu_sms_codes.json` 的 mtime 因我 dev 登录探针被刷新，但**内容前后 md5 逐字节全等**（净零写入）——记账用，不构成越权写入，也不属本批动作。
+- **S6（数据观察，非本批产物）**：现 zhonghua 88 份详情中有 **2 份** 无 `external_chain_gen`（`zhonghua:5a86b5ce97a1a69bb78fee7f.json`、`zhonghua:df3412fcb798d99d463cc11f.json`）；链节点 86 与备份相同 ⇒ 与本批无关，登记备查。
+- **S7（覆盖边界）**：未做浏览器点测（派单禁止）；未对 5199 前端做任何取证；真机探针只读 3100（未重启、PID 未变）。
+
+## 14.10 快照钉住（本节结论的证据锚点）
+
+| 对象 | 快照值（2026-09-18 08:23 – 08:28 CST） |
+|---|---|
+| `migrate-output/trees/zhonghua.json` | `3cc6089aeaa723247065de2549f060c8`（88 人）/ 备份 `2c6fbdcae6cd9b7a1cf811408d7b017d`（139 人） |
+| `migrate-output/details/` | 236 份（`zhonghua:` 前缀 88 份）/ 备份前 287 份 |
+| `config/tree-meta.json` | `d59a9767c34ed4ffefbf70de59d26aa6`（质检全程未变） |
+| `migrate-output/collections/jiazu_assets.json` | `28beb86bb17412847f3dfedac33d3aa6`（余额 941 片）/ 批记录基线 `b02eefbc914a3d07f562edc977c0d2a5` |
+| `migrate-output/collections/jiazu_ops_logs.json` | `81c7d96f0c0d34592469c34114df5db1`（含 `op_1789690996088_1qpdiv`） |
+| `scripts/remove-zhonghua-person.mjs` | `97e4f4c10a9b8dff9bafcaccfeff07c3`（`node --check` exit 0；全程未变） |
+| 真源数据面（342 文件） | `npm test` 前后逐行 **IDENTICAL**；质检前后（358 项含代码）逐行全等 |
+| 服务 | 3100 PID `33637` / 5199 PID `41219`（全程未重启） |
+| npm test | `# tests 350 / # pass 349 / # fail 1`（基线 350/350/0；红点 `id-system.test.js:308`） |
+
+
+
+---
+
+## §14.11 R1 关闭确认（收口）
+
+> **编号说明**：派单把本段称作「§14.1 R1 关闭确认」；但 §14.1（候选集合独立重算）**已存在**，且派单同时明确要求「**不要修改 §14 原文，只追加**」。两个要求冲突，故本节顺延编号为 **§14.11**（内容即派单所指的 R1 关闭段）。**§14 全文（含 §14.9 的「不通过」结论）一字未动**，本节仅追加。
+
+- 收口时间：**2026-09-18 08:33 – 08:40 CST**；HEAD = **`6547ac3`**（R1 修复 commit：`feat(scripts): 世本节点删除脚本支持批量；测试断言去真源快照依赖`）
+- 范围：**只验 R1**（`cloudfunctions/compat-api/lib/id-system.test.js:308` 断言改造）及其**不引入回归**；未重跑前几轮矩阵。
+- 纪律：全程只读（`git show` / `md5` / `node --test` / `node -e`）+ 对**被测测试文件**做**临时变异并原样回滚**（派单明确要求的「自主变异验证」）；**未改实现 / 数据 / 脚本**；**未用浏览器**；**未重启/停止 3100（PID `33637`）/ 5199（PID `41219`）**（收工时 PID 未变）。
+- 本节的每一条结论**均由我自己重跑得出**，不引用任何他人报告。
+
+### 14.11.1 R1 修复内容独立复核
+
+`git show 6547ac3 -- cloudfunctions/compat-api/lib/id-system.test.js` 实测为 **+27/−4 行**：`:308` 旧断言删除，原位替换为 **6 条断言**（`:311-346`）：
+
+| # | 位置 | 新断言 | 形态 |
+|---|---|---|---|
+| 1 | `:313-316` | `zhIds.length > 0 && zhIds.every(4位 \|\| 6位)` | 形状不变量（覆盖**全部人编号**） |
+| 2 | `:317` | `zhIds.some(4位)` | 形状不变量（老号仍在 = 未被重编号） |
+| 3 | `:319-322` | `zhFamIds.every(F4 \|\| F6)` | 形状不变量（覆盖**全部家族编号**，旧版完全没查 families） |
+| 4 | `:323` | `zhFamIds.some(F4)` | 形状不变量 |
+| 5 | `:333` | `!mapping.zhonghua \|\| Object.keys(mapping.zhonghua).length === 0` | **新增**不变量（总谱不进重编号映射表） |
+| 6 | `:343-346` | `zhIds.every(n < firstNew)` | **新增**不变量（总谱号域与重编号号段不相交） |
+
+另 `:326-328` 把 `zhMax` 口径注释锁为「zhonghua **全部**编号最大值（含 6 位）」，与实际取数表达式 `Math.max(...zhIds.map(...))` 一致（该表达式**本就没改**，注释是补锁口径）。
+
+**背景事实独立验证**（我自己直读 `migrate-output/trees/zhonghua.json`，非引用）：
+
+```
+people 总数 = 88 ；4 位 = 86 ；6 位 = 2 ；其它形态 = 0
+6 位号 = ["I000287","I000288"]      ← 与派单所述一致
+家族总数 = 80 ；F4 = 79 ；F6 = 1
+hasI0000 = false      hasI0052 = true      zhMax = 288
+```
+
+→ **「zhonghua 每个号都是 4 位」在真源上确为假**（86 个 4 位 + 2 个 6 位），故形状断言**必须**允许 6 位，派单给的事实**成立**。且 **`I0000` 在真源已不存在**（正因本批 51 节点删除把它删掉了）—— 这正是 R1 的成因，见 14.11.2 M0 的实证。
+
+### 14.11.2 五项必验证据
+
+#### ① 全量回归 + 单文件（独立复跑）
+
+```bash
+$ npm test                      # 仓库根
+# tests 350   # pass 350   # fail 0
+# cancelled 0 # skipped 0  # todo 0        # duration_ms 1491.97     EXIT=0
+
+$ node --test cloudfunctions/compat-api/lib/id-system.test.js
+# tests 11    # pass 11    # fail 0        # duration_ms 407.83      EXIT=0
+```
+
+→ **350/350/0 与 11/11/0 双双达标**，相对 §14.8 的 350/349/1 **零回退**（唯一红点已消除）。
+
+#### ② 新断言非空转（我自己动手变异，共 5 次）
+
+手法：**就地**改测试文件 → 跑单文件 → 原样回滚 → 复跑；每次回滚后校验 md5。
+`md5(测试文件) = 21e7d63e58bf473347bdde1761d92e73`（变异前 = 变异后 = **入库版 `6547ac3` 的 md5**，三方一致）。
+
+| 变异 | 变异内容 | 变异后单文件 | 回滚后 | md5 回滚一致 |
+|---|---|---|---|---|
+| **M1** | 断言1 `every(4位‖6位)` → `every(6位)` | **11 / 10 / 1 红** | 11/11/0 | ✅ |
+| **M2** | 断言5 `!mapping.zhonghua` **反转为**「必须进映射表」 | **11 / 10 / 1 红** | 11/11/0 | ✅ |
+| **M3** | 断言6 `< firstNew` **收紧为** `< firstNew - 1` | **11 / 10 / 1 红** | 11/11/0 | ✅ |
+| **M4** | 断言2 `some(4位)` **反转为** `!some(4位)` | **11 / 10 / 1 红** | 11/11/0 | ✅ |
+| **M0** | 把**旧断言原样放回**（`includes('I0000')`） | **11 / 10 / 1 红**（`AssertionError: zhonghua 4 位原号保留`） | 11/11/0 | ✅ |
+
+→ 四条新断言**全部可被破坏而变红**（非空转）；**M0 是「适配」的决定性实证**：旧断言放回后**在现真源上必红**，证明原断言确实绑定了一个**已被合法删除**的节点（`I0000`），R1 不是为「消红」而弱化断言，而是**必须做的去快照依赖适配**。
+
+#### ③ 未放水判定（逐条裁定，见 14.11.3）→ **适配，且净强化**
+
+#### ④ 同文件其它硬编码编号抽查（`[IF]\d{4,}` 共 39 处命中，抽 7 处）
+
+先做**结构性证据**（比抽点更强）：全文件对真源的读取只发生在 **2 个测试块**——
+`REAL_TREES/REAL_DETAILS/REAL_META` 的引用行号仅 `:26,:28,:29,:39,:40,:41`（常量声明与 import 期 md5 基线）、`:287/:288/:295/:296`（P2 测试，且**先整份拷到 `/tmp` 副本再跑迁移脚本**）、`:385-391`（自证护栏「本文件全程未写真实数据」）；其余 **9 个 test 块**一律走沙箱 `writeTree(...)`（`:71,:119,:153,:154,:199,:200,:212,:242,:243,:253,:259`）或内存 store。
+
+| # | 行 | 字面量（示例） | 所属测试 | 判定 |
+|---|---|---|---|---|
+| 1 | `:104-114` | `I000052 / 000052 / F000012 / I1234567 / I000138` | 铸号格式与解析（**纯函数**） | 入参→出参，不读真源 → **安全** |
+| 2 | `:117-128` | `I000137 / F000136 → I000138 / F000137` | 计数器缺失播种 | 沙箱 `writeTree` 自建存量树、期望值由 max **推导** → **安全** |
+| 3 | `:152-165` | `I000009 / I500059`、`notEqual(id1,'I000010')` | 创建路径铸全局号 | 沙箱两棵树；`I000010` 是**反向断言**（不得是旧自增格式）→ **安全** |
+| 4 | `:187-190` | `notEqual(r.founder_gramps_id, 'I0001')` | 新建家族树始祖铸号 | **反向断言**（断言**不等于**旧格式）→ 真源怎么变都仍成立 → **安全** |
+| 5 | `:198-234` | `I000500 / I9000 / I000700`、`I999999` → `null` | resolveNode 三写法 | 沙箱 `writeTree`；`I999999` 是**「不存在」反向断言** → **安全** |
+| 6 | `:241-248` | `I8888`（两树重号） | resolveNode 多树重号 | 沙箱；断言**必须抛错** → **安全** |
+| 7 | `:252-274` | `I000810 / I000811`、`F000810` | reparentNode 跨树改父 | 沙箱 `writeTree` + 内存 store → **安全** |
+
+→ **7/7 抽点均为「沙箱自建 / 纯函数 / 反向断言」三类之一，不依赖真源节点增删**；并且通过上面的结构性证据可确认：**全文件唯一曾绑定真源具体节点的字面量就是被 R1 删掉的 `I0000/I0052`**，现文件内「依赖真源节点存在的硬编码编号」= **0 处**。（`:309` 的 `I0000/I0052` 只是解释性注释里的历史举例，非断言。）
+
+#### ⑤ 真源体检（跑测前后 md5 逐字节比对）
+
+```
+范围：config/tree-meta.json (1) + migrate-output/trees/*.json (9) + migrate-output/collections/*.json (13) = 23 个文件
+BEFORE（跑任何测试之前，08:33）  23 条
+AFTER （全量 + 单文件 + 5 次变异试验之后） 23 条
+逐条比对（按路径→md5 建字典）：24 项键全等 → True        # 无任何一条差异
+
+tree-meta.json  d59a9767c34ed4ffefbf70de59d26aa6   （前后相同）
+zhonghua.json   3cc6089aeaa723247065de2549f060c8   （前后相同；与 §14.10 快照锚点一致）
+jiazu_assets.json  28beb86bb17412847f3dfedac33d3aa6 （前后相同；与 §14.10 一致）
+jiazu_ops_logs.json 81c7d96f0c0d34592469c34114df5db1 （前后相同）
+md5(cloudfunctions/compat-api/lib/id-system.test.js) = 21e7d63e58bf473347bdde1761d92e73
+   == git show 6547ac3:<…> 的 md5  →  测试文件工作区 == 入库版（无变异残留）
+git status --short cloudfunctions/compat-api/lib/id-system.test.js scripts/…  →  无输出（干净）
+```
+
+→ **测试与变异试验对真源零写入**；5 次变异**全部原样回滚**，无残留（`M0`–`M4` 每次回滚后复跑均 11/11/0）。
+
+### 14.11.3 「适配 vs 放水」逐条裁定
+
+**总裁定：`6547ac3` 对 `id-system.test.js` 的改动 = 适配（去真源快照依赖）+ 净强化。不存在放水（无删除、无弱化任何断言，无「新增断言可空转」）。**
+
+逐条：
+
+| 旧断言的语义 | 新写法 | 判定 |
+|---|---|---|
+| 「zhonghua 保留了老 4 位原号」——但**实现方式**是硬编码抽查 **2 个具体编号**（`I0000`、`I0052`），覆盖 2/88 人 | `every(4位‖6位)` over **88/88 人** + `some(4位)` | **强化**：覆盖 2 → 88；且新增「编号形态」这一旧断言完全没有的维度（旧断言只要这 2 个号还在，zhonghua 其余 86 个号被改成 `X9999` 也照样绿） |
+| 同上，「未被重编号」这一**意图** | `some(4位)` 保留意图；若 zhonghua 被整体重编号 → 断言必红（**M4 实证**红） | **意图无丢失**：M4 证明断言在该场景可被破坏 |
+| （旧版**没有**） | `zhFamIds.every(F4‖F6)` + `some(F4)`——**家族编号**首次被纳入 | **净新增**（旧版对 families 零检查） |
+| （旧版**没有**） | `!mapping.zhonghua`——总谱不进重编号映射表 | **净新增**，**M2 实证**可红 |
+| （旧版**没有**） | `zhIds.every(n < firstNew)`——总谱号域与重编号号段不相交 | **净新增**，**M3 实证**可红 |
+| 旧断言的**唯一额外敏感度**：`I0000` 若被删除 → 红 | 该敏感度被**刻意移除** | **这是必须移除的**：`I0000` 是本批**合法删除**的登记节点，测试文件不该承担「真源节点存在性」的断言职责；**M0 实证**旧断言在现真源上 100% 红（无 flake 成分），若保留即等于「真源一删节点测试就假红」——这正是 §14.8 红点的根因 |
+
+**为什么不是「放水」**：放水的定义是「为让红变绿而删除/弱化断言」。此处 (a) 断言数量 1 → 6；(b) 断言覆盖的人编号 2 → 88、并新增 families/mapping/号段三个此前完全未验的面；(c) 每条新断言都被我**实际打红过**（M1–M4）；(d) 被移除的只有「绑定 `I0000` 这一具体节点」的快照依赖本身，而其**语义意图**（zhonghua 原号未被重编号）由 `some(4位)` + `!mapping.zhonghua` + `every(<firstNew)` **三条独立断言共同承接**（任一条都能在「被重编号」场景变红）。
+
+**诚实登记的边界（不掩饰）**：新写法对「**某个具体**节点被误删」不再敏感 —— 这是**有意的取舍**且口径正确：真源节点增删属合法业务动作，节点级完整性由本批数据手术的验收面（§14.1–§14.4：候选集合逐号对账 / 叶子级 `isDeepStrictEqual` / 详情文档正反向 / 跨树引用零悬挂）承担，而不是让一个 ID 系统的单元测试去钉住真源的具体节点。
+
+### 14.11.4 结论
+
+**§14.11 收口确认结论：通过。**（R1 已关闭；5 项必验全部达标，见 14.11.2；改判定性为「适配 + 净强化」，见 14.11.3。）
+
+- **§14 的「不通过」已随 R1 修复而解除 ⇒ 本批（世本 51 节点清理 + 扣费 + 脚本批量能力）总体结论改为「通过」。**
+- §14.9 的 **R1（必修）→ 已闭合**；**R2（树内 `/search` 对不可解析编号回 400）** 在 §14.9 中即归类为**建议项 / 需产品裁决（非必修）**，本轮未变、**不构成本批通过的前置条件**，仍挂起待产品拍板。
+- 未引入回归：全量 **350/350/0**、单文件 **11/11/0**、真源 23 个文件 md5 **前后逐字节全等**、测试文件工作区 **== 入库版 md5**、3100/5199 **未重启**、未用浏览器。
+
+| 必验项 | 结果 | 关键证据 |
+|---|---|---|
+| 1 全量 350/350/0 + 单文件 11/11/0 | **通过** | §14.11.2 ① |
+| 2 新断言非空转（自主变异） | **通过** | §14.11.2 ②（M1–M4 全部变红 10/1；回滚 md5 一致） |
+| 3 适配 vs 放水逐条裁定 | **适配 + 净强化** | §14.11.2 ③ / §14.11.3（含 M0 决定性实证） |
+| 4 其它硬编码编号不依赖真源增删 | **通过** | §14.11.2 ④（7/7 抽点安全；真源节点依赖项 = 0） |
+| 5 真源 md5 前后一致 | **通过** | §14.11.2 ⑤（23 文件逐条全等；测试文件 md5 == 入库版） |
