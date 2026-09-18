@@ -1,0 +1,114 @@
+# 批量添加子孙 / 移除同世并列弹窗 / 缺陷 A / 缺陷 B — 质检汇编（docs/chain-batch-append.qa.md）
+
+- 规格真源：`docs/chain-batch-append.spec.md`（批量续编 + 需求一）、`docs/economy-fee.spec.md`（no-op 不扣费、事务语义）、`docs/data-model.md` §7（写一致性）
+- 被检实现：`cloudfunctions/compat-api/index.js`（`POST /admin/chain-append-batch`、`PUT /people/<handle>` 的 no-op 分支与 `detail_warning`）、
+  `lib/tree-write.js`（`appendChainBatch` / `normalizeBatchNames` / `restoreTreeInPlace` / `updatePerson` 写序）、`lib/store.js`（`saveTree` / `updateTree` 失败侧）、
+  `lib/economy-fee.js`（`personValueDiff` / `isPersonUnchanged` / `effectivePersonValues`）、
+  前端 `components/person-manage-panel/person-manage-panel.vue` + `business/chain-batch.ts` + `business/api.ts` + `components/person-archive/person-archive.vue`
+- 质检角色：【Neng 质检员】；全程在 `/tmp` 副本上执行，**真源零写入**（归因见 §6）
+- 环境：本地副本 + 独立实例 + 真机浏览器（H5）；**本汇编不新增任何断言、不重跑测试**
+- **本文件是汇编**：内容逐条取自多轮独立质检（Neng）的原始输出；**未新增任何断言、未做任何实现 / 测试 / 规格改动**（本汇编是唯一的写盘产物之一，见 §7）
+
+## 1. 结论速览
+
+| 项 | 结论 |
+|---|---|
+| 全量 `npm test` | **372 / 372 / 0**（质检员亲手复跑） |
+| `chain-append-batch.test.js` | **12 / 12**（含拒绝矩阵 13 条 + 真实 IO 失败注入的原子性 4 条 + 变异 **3/3 有效**） |
+| `noop-edit-integrity.test.js` | **10 / 10**（变异：短路有效现值合并 → 新用例变红；还原旧口径 → **2 条全红**） |
+| 批量面板（真机 H5） | **已通过**：面板存在、提示语含「一条线单传」「不要填写分支」、姓 input `disabled=true` 且值为父姓、预览与确认弹窗文案正确、**落盘 3 人严格线性**、姓随父姓、全 `M`、全已故、详情 `external_chain_gen` 递 1/2/3 + `external_tree=zhonghua`、**无竹片扣减** |
+| 需求一（续编后无弹窗，真机 H5） | **已通过**：`window.uni.showModal` 记录数组 = `[]`、可见 `.uni-modal` = 0、`document.body.innerText` 不含「同世并列」；toast「已续编第 46 世」+ `.mp-panel` 从 DOM 消失 + 同世并列事实保留 |
+| 缺陷 A（no-op 不扣费，真 HTTP） | **已通过**：链节点「姒不降」原样 PUT → `200 unchanged:true / pieces:0` + 树 md5 / version / updated_at **三不变** + **零新流水**；反向：改 `birth_date` / `death_place` / `is_living` → **各 1 片** |
+| 缺陷 B（写一致性，真 HTTP） | **已通过**：`chmod 0444` → **500** + `fee_refunded:true` + 磁盘 md5 / version 不变 + 紧接着 GET 读回**磁盘真值** + 幻影未落盘；副本变异（去掉两层）→ `PHANTOM_VISIBLE:true` |
+| 真源写入 | **全程零写入**：多轮聚合 md5 前后一致（真源里 14:13:58 新增的「姬正坤 I000307」为用户本人界面续编操作，见 §6） |
+
+**总体判定**：四项实施项（批量添加子孙、移除同世并列弹窗、缺陷 A no-op 不扣费、缺陷 B 写一致性）在**单测 + 真 HTTP + 真机浏览器**三层证据上均**已通过**；
+变异测试证明相关断言**有效（不是空转绿）**；真源零写入。遗留项见 §8（均为**已知边界 / 未复现路径**，不是缺陷）。
+
+## 2. 真机 / HTTP 证据
+
+| # | 轮次 | 断言 | 原始输出要点 | 结论 |
+|---|---|---|---|---|
+| T1 | 真机 H5：单节点续编（需求一） | 续编成功后**不得出现任何弹窗** | 目标：节点「少典氏・初代」（源流链第 45 世，链上已有同世子女 勗其 / 甲 / 姜炎帝；父姓为空 → 需走「改姓」手填）；断言 `window.uni.showModal` 记录数组 = `[]`、可见 `.uni-modal` = 0（残留 1 个按 `display` / `offsetParent` 过滤）、`document.body.innerText` **不含**「同世并列」；成功态 toast「已续编第 46 世」+ `.mp-panel` 从 DOM 消失 + 落盘 **103 → 107** 人，新节点与已有 勗其 / 甲 **同世并列** | **PASS** |
+| T2 | 真机 H5：批量面板 + 落盘形态 | 面板元素 / 文案 / 线性落盘 / 0 片 | `.batch-tip` 命中「一条线单传」「不要填写分支」；预览 `将按顺序添加 3 代：第 46 世 → 甲；第 47 世 → 乙；第 48 世 → 丙`；**仅限 `.mp-panel` 范围内**可点击的改姓元素 = **0**（「改姓」字样只出现在「批量录入不可改姓」文案中）、姓输入框 `disabled=true`；点面板「确认添加」弹出标题「批量添加子孙确认」/ 按钮「确认添加」的弹层（命中 `.uni-modal__btn_primary`）；成功后 toast「已续编第 46–48 世，共 3 代」+ `.mp-panel` 消失 + 落盘 **103 → 106**，3 人严格线性 `少典氏・初代 → 甲(I000310) → 乙(I000311) → 丙(I000312)`；全 `M` / 全已故 / 姓随父姓 / 详情 `external_chain_gen` = 1·2·3 + `external_tree=zhonghua`；**无竹片扣减** | **PASS** |
+| H-A | 真 HTTP：缺陷 A（no-op） | 原样 PUT 不得扣费、不得写库 | 链节点「姒不降」原样 PUT（GET → 不改 → PUT）→ **200 `{unchanged:true, fee:{unit:'bamboos', pieces:0}}`** + 树 **md5 / version / updated_at 三不变** + **零新流水** | **PASS** |
+| H-A′ | 真 HTTP：缺陷 A 反向对照 | 真实改动仍扣 1 片 | 改 `birth_date` → **1 片**；改 `death_place` → **1 片**；改 `is_living` → **1 片** | **PASS** |
+| H-B | 真 HTTP：缺陷 B（写一致性） | 落盘失败不得留幻影、不得白改 | 树文件 `chmod 0444` → **500** + `fee_refunded:true` + 磁盘 **md5 / version 不变** + 紧接着 `GET` **读回磁盘真值** + 幻影**未落盘** | **PASS** |
+| H-C | 已知边界（登记） | 总谱节点 `is_living` 修改 | → **403「总谱节点一律为「已故」」**（设计如此，不是缺陷；见 §8） | 已登记 |
+
+> T1 / T2 的人数计数为**各轮独立读数，汇编照录、未做对齐 / 合并**。
+> 该轮浏览器进程已按 **PID 精确清理**（3470 / 5349 / 9373 已释放；**3100 / 5199 未触碰**）。
+
+## 3. 单测证据（`npm test` = 372/372/0）
+
+**`cloudfunctions/compat-api/lib/chain-append-batch.test.js`（12 例，逐条用例名）**
+
+1. 真源护栏（开篇）：副本路径生效（本套件写不进真源）+ `migrate-output/` 逐字节未变
+2. `MAX_BATCH_CHAIN = 10`（导出常量）+ `normalizeBatchNames` 逐条校验文案
+3. 正常路 3 代：世数递 1 / 一条线 / 随父姓 / 全 `M` / 全已故 / 详情 / 编号全局唯一递增
+4. 10 代边界（第 89 世 → 第 90–99 世）：一次性写满 10 代；**不存在 72 / 90 世上限**
+5. 1 代：文案「已续编第 49 世」；世数 0 的原始节点可续编第 1 世；**`surname` 入参一律被忽略**
+6. 与单节点续编 `appendChainNode` 逐字一致（同一父形态 → 字段 / 家族 / 详情全等）
+7. 拒绝矩阵：鉴权 / 目标 / 入参逐条 → 400·403·401 + 中文文案，且树与详情**一字未写**
+8. 原子性 ⓪ 单事务写入见证：10 代整批**只落盘一次**（`version` 只 +1，不是 +10）
+9. 原子性 ① 详情目录只读（首写真实 `EACCES`）→ 整批不写、缓存无幻影
+10. 原子性 ② 树文件只读（N 条详情已写出后最终落库失败）→ 详情**全部回收** + 缓存还原 + 树字节未变
+11. 原子性 ③ 铸号计数器落盘失败（回调内抛错）→ 整批不写、无残留详情
+12. 真源护栏（收尾）：`migrate-output/` 逐字节未变 + 真源 `tree-meta` 无夹具指纹
+
+**`cloudfunctions/compat-api/lib/noop-edit-integrity.test.js`（10 例，逐条用例名）**
+
+1. 值级比对（纯函数）：规范化后完全相同 → `unchanged`；任一内容字段变 → `changed`（含反例）
+2. 缺陷 A：no-op 保存（GET → 不改任何东西 → PUT）→ 200 `unchanged` / 0 片 / 无流水 / 树与详情逐字节不变
+3. 缺陷 A 反向对照：只改称号 → 1 片照旧；改姓名 → 1 片照旧（no-op 判定**不放水**）
+4. 缺陷 B：`updateTree` 落盘失败（树文件 0444）→ 同进程读回**磁盘真值**、`version` 未脏、**幻影不得落盘**
+5. 缺陷 B：`saveTree` 直接失败 → `version` / `updated_at` **原地回滚** + 缓存失效（磁盘才是真值）
+6. 写序：树落盘失败（0444）→ 详情文档**字节未变**、余额**已冲正**、响应 `fee_refunded`
+7. 写序：树成功但详情写失败（详情目录 0555）→ **200 + `detail_warning`**，树已落盘、扣费生效
+8. 缺陷 A（链节点）：`external_*` 只在详情 `attributes` → 原样保存必须 no-op（200 `unchanged` / 0 片 / 无流水 / 树与详情不变）
+9. 缺陷 A（链节点）：窄 body（仅 `primary_name` / `name`）→ **未提供的键不得判变更**，不因 `external_*` 误扣 1 片
+10. 本文件全程未写真实数据：`config/tree-meta.json` 与 `migrate-output/`（trees + details + collections）逐字节未变
+
+> 计数口径说明：「12 例」「10 例」= 文件内 `test(` 条数；「拒绝矩阵 13 条」「原子性 4 条」= 上述用例内部的**断言 / 矩阵行数**。两者口径不同，汇编按原始输出照录、**未做合并**。
+
+## 4. 变异测试证据（证明断言有效，不是空转绿）
+
+| # | 变异 | 结果 |
+|---|---|---|
+| M1 | `chain-append-batch.test.js` 变异组 | **3 / 3 有效**（变异即变红） |
+| M2 | `noop-edit-integrity.test.js`：**短路「有效现值合并」**（`effectivePersonValues` 不再并入详情 `attributes`） | 新增用例**变红** ✅ |
+| M3 | `noop-edit-integrity.test.js`：**还原旧口径**（按树节点字段单独比对） | **2 条全红** ✅ |
+| M4 | 缺陷 B 副本变异：**去掉两层失败侧缓存失效** | **`PHANTOM_VISIBLE:true`**（幻影在同进程读接口可见 → 证明缓存失效是缺陷 B 的关键修复点）✅ |
+
+## 5. 真机截图与取证文件
+
+| 路径 | 内容 |
+|---|---|
+| `/tmp/jz-qa3-p1-batch.png` | 批量添加子孙面板真机截图（T2） |
+
+> 其余轮次的临时取证文件 / 副本目录路径以各轮原始输出为准，本汇编未复制（避免误引不存在的路径）。
+> 取证均在 `/tmp` 副本上完成：`npm test` 跑 `/tmp` 副本；真 HTTP 探针打副本实例；真机浏览器只在副本上操作。
+
+## 6. 真源零写入归因
+
+- **多轮聚合 md5 前后一致**：`migrate-output/**`（trees + details + collections）与 `config/tree-meta.json` 在质检前后逐字节一致。
+- **真源里 14:13:58 新增的「姬正坤 I000307」为用户本人操作**：该节点由**用户在界面上的续编操作**产生（`external_chain_gen = 65`），属**新增类 → 0 片**，**不是质检写入**。
+- 单测与真 HTTP 探针均在 `/tmp` 副本（含 `/tmp/qa-*` 快照）上执行；真机浏览器亦只操作副本实例。
+
+## 7. 本汇编的写盘边界
+
+本文件为**汇编**：只把已发生的多轮质检原始输出汇集为可检索的文档，**未新增断言、未改动任何实现 / 测试 / 规格**。
+本批文档写盘目标（制度员 Jing 同轮）：本文件、`docs/chain-batch-append.spec.md`、`docs/economy-fee.spec.md`（§3-2 / no-op / §4-3）、`docs/data-model.md` §7、`docs/PENDING_DEPLOY.md` §17。
+
+## 8. 遗留缺口与进行中项
+
+**已无「质检进行中」项** —— 原列为「进行中」的两项浏览器尾部断言（① 续编后「无任何弹窗」；② 批量面板 toast 文案与面板关闭）**已出结论：均为 PASS**（见 §2 的 T1 / T2）。
+
+| # | 项 | 状态 / 口径 |
+|---|---|---|
+| 1 | **`1.甲2.乙` 边界** | **已登记为已知边界**（数字不是分隔符；库内存在「刘 3姥爷」类含数字真名，二次切分会误伤）→ 见 spec §7-1；**不是缺陷、本轮不修** |
+| 2 | **窄 body 省略 `attribute_list` 时不判称号变更** | **拍板口径**（未提供的键一律不判变更）→ 见 `docs/economy-fee.spec.md` §4-6 与 spec §7-4；**不是缺陷** |
+| 3 | **幻影落盘放大路径未复现** | **未复现 / 未取证**：本轮只取证到「幻影在同进程读接口可见」（§4 M4），**未复现**「幻影随下一次写入被落盘」的放大路径 —— 该路径按 §7 规则**已被缓存失效堵住**（`updateTree` / `saveTree` 失败侧一律 `treeCache.delete` + `eventIndexCache.delete`），但**尚无独立用例直接断言该放大路径**；后续如需闭环，应补一条「失败后再成功写一次 → 磁盘不得出现上一批失败产生的节点」的用例 |
+| 4 | **`MAX_BATCH_NAME_LEN` 非同源常量** | 后端为模块内 `const`（未导出），前端另定义 `BATCH_MAX_NAME_LEN = 20`；**值一致（20）但非同源**→ 见 spec §10-1（**信息缺口，非缺陷**） |
+| 5 | 总谱节点 `is_living` 修改被拒（403） | **已知边界 / 设计如此**（见 §2 H-C） |
+| 6 | md5 十六进制钳位值 | 各轮结论均为「前后一致 / 未变」，**本汇编未复制十六进制串**（原始值以各轮原始输出为准）→ 复验时请以现场 `md5` 输出为钳位依据 |

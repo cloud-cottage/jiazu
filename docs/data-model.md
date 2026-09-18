@@ -303,6 +303,25 @@ body = Gramps RawPerson 形状 + 编辑表单约定顶层字段（仅 compat 消
 - **孤儿清理（兜底）**：每次结构写后/定时任务，对比树 JSON people 的 handle 集合，删除 `person_details` 中已不存在的文档（`_id` 前缀 = tree_id）→ 消除"树 JSON 删了、详情残留"的孤儿。
 - **反方向无需兜底**：详情文档永远不产生结构字段，不存在"详情改了树没改"。
 
+### 7.1 单树写路径的不变量（2026-09-18 缺陷 B 修正 · **必须逐条成立**）
+
+> 本节是上节「顺序写 + 幂等」在**单树**（`saveTree` / `updateTree`）写路径上的硬规则。旧实现只对 `updateTrees`（多树事务）做了失败侧回滚与缓存处理，单树路径**没有** —— 这是缺陷 B 的根因。
+
+| # | 不变量 | 具体规则 |
+|---|---|---|
+| R1 | **失败必须失效缓存** | `lib/store.js` 的 `saveTree` 落盘失败 / `updateTree` 闭包（含闭包内的业务校验）抛错 → **必须** `treeCache.delete(tree_id)` + `eventIndexCache.delete(tree_id)`。理由：闭包是**就地改对象**（`fn(tree)`），磁盘没写、内存已改 —— 不失效就会留下「盘上不存在、缓存里有」的**幻影结构**（与 `updateTrees` 的失败处理同一口径） |
+| R2 | **失败必须回滚 `version` / `updated_at`** | 版本号自增与时间戳刷新发生在**落盘之前** → 失败路径要把 `version`、`updated_at` **原地还原**到操作前的值（磁盘才是真值），否则调用方持有的树对象与被拒的写入混在一起 |
+| R3 | **详情在树落盘成功之后写** | `lib/tree-write.js` 的 `updatePerson` 在闭包内**只组装** `pendingDetail`（不落盘）→ 树 JSON 落盘成功后**才** `saveDetail`。详情写失败 → **不回滚树、不冲正退费**，返回 `detailSaved:false` → 路由响应带 `detail_warning`（已提交的结构改动不得被撕成失败，否则等于送一次免费更改）；反向（树失败）→ 详情字节必须**一字不变** |
+| R4 | **系统错误 → 500** | 错误出口统一 `errorStatusOf`：**业务错误沿用自身 status**（400 / 403 / 404 / 409…）；**系统级失败（`EACCES` / `ENOENT` / `EPERM` 等 errno 类 code/name）一律 500 + 通用文案**，不得把本机绝对路径吐给前端；已扣费的路径失败时同响应带 `fee_refunded:true` |
+| R5 | **批次写入的原子性** | 一次操作内的多节点 + 多详情 + 家族挂接必须在**同一次** `updateTree` 回调内完成（例：`POST /admin/chain-append-batch`，见 `docs/chain-batch-append.spec.md`）；回调抛错 → 整批不写 + 回收本批已写出的详情 + 就地还原内存对象 |
+
+**断言要求（写一致性用例必须覆盖）**
+
+1. **幻影不得可见**：注入落盘失败（树文件 `chmod 0444`）后，**同进程** `getTree` 必须返回**磁盘真值**、`version` / `updated_at` 未被改脏；
+2. **幻影不得随下一次写入落盘**：失败之后的下一次成功写入，其产物**不得包含**上一批失败产生的节点 —— `migrate-output/` 与 `config/tree-meta.json` 逐字节不变；
+3. **详情侧**：详情目录只读（首写 `EACCES`）→ 整批不写 + 详情字节不变；树成功 + 详情失败 → 200 + `detail_warning` + 扣费生效；
+4. 上述用例均在 `/tmp` 副本上跑，**真源零写入**（前后聚合 md5 一致）。
+
 ---
 
 ## 8. 迁移路径（Gramps → 自有存储）

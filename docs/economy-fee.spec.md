@@ -122,7 +122,11 @@
 | `PUT /admin/wallet-fee` | 治理（¥ 费率配置） | 0 |
 | `POST /wallet/recharge` / `POST /wallet/transfer` | ¥ 钱包 | 0（走 `jiazu_wallets`，与竹片互不换算） |
 | `POST /auth/send-code` / `/auth/login` / `/auth/register` | 账号 | 0 |
+| `POST /admin/chain-append-batch`（总谱**批量**续编「一条线单传」，≤ 10 代 / 批；`docs/chain-batch-append.spec.md`） | 新增 · 总谱批量续编 | 0（与 #17/#18 单节点续编同口径：新增类不扣） |
 
+> **本附录条数变更（2026-09-18）**：本批新增 `POST /admin/chain-append-batch` 一条 0 片路由 → 单测 `economy-fee.test.js` 的 **`ZERO_FEE_ROUTES` 清单条数由 29 → 30**，
+> 断言行同步为 `assert.equal(ZERO_FEE_ROUTES.length, 30, '0 片清单条数固定（矩阵即契约）')`（测试标题也从「29 条」改为「30 条」）。
+> §3-1 主表**不重排、不复编**：批量续编按本册既有惯例（新增路由续入附录、主表编号纪律见 §3-1 移除说明）只登记在本附录，主表的合计口径（34 行 / 扣费 7 行 / 0 片 27 行）**保持不变**。
 > **本清单必须与 `compat-api/index.js` 实际路由一致；不得列幽灵路由**（实施与复审时逐条核对 `index.js` 中 `pathname ===` 的分支判断；示例：leave 类驳回走 `POST /admin/approve-leave` 传 `approve:false`，**没有** `POST /admin/reject-leave`）。
 
 ---
@@ -159,6 +163,10 @@
   - `moveLineage` 或 `checkTreeIntegrity` 或 `saveTree` 抛错 → 事务回滚树快照 + 闭包外 `refundAssets` 冲正 ✅
   - 详情文档随迁是 best-effort（既有语义），**不因它失败而冲正**（结构真源已落库）。
 - **建树（第 8 行）**：`onBeforeWrite` 钩子内扣籽（`treeId` 在 `onBeforeWrite` 之前已由 `nextTreeId` 生成，可写进 `ref.tree_id`）；`createTreeFile` / `saveMeta` 失败 → 路由 `catch` 冲正。
+- **详情后写（`PUT /people/<handle>`，2026-09-18 缺陷 B 修正）**：`lib/tree-write.js` 的 `updatePerson` 改为**树 JSON 落盘成功之后才写详情文档**；详情写失败 → **不回滚树、不冲正**（已提交的树改动不得被撕成失败并退费，否则等于送一次免费更改），只在返回里带 `detailSaved:false` → 路由响应 `200 {ok:true, fee:…, detail_warning:'称号/档案信息未保存，请重试'}`。
+  - 反向（树落盘失败 / 业务校验抛错）→ **详情字节不变**（详情在闭包内只组装、不落盘）→ 冲正 + 原错误出码。
+- **失败侧缓存不变量（缺陷 B · 单树写路径）**：`lib/store.js` 的 `saveTree` 落盘失败 → **原地回滚 `version` / `updated_at`** 且**失效 `treeCache` / `eventIndexCache`**；`updateTree` 闭包（含业务校验）抛错 → 同样失效 `treeCache` / `eventIndexCache`（与 `updateTrees` 的失败处理同口径）→ 任何调用方下一次 `getTree` 都从磁盘读真值，**盘上没有的幻影结构不得留在进程内缓存**（完整规则见 `docs/data-model.md` §7）。
+- **系统级失败出码**：错误出口统一 `errorStatusOf` —— **业务错误沿用自身 status**（404 / 400 / 403 / 409…），**系统级失败（EACCES / ENOENT / EPERM 等 errno 类 code/name）一律 500 + 通用文案**（不吐本机路径）；已扣费的成功路径失败时同响应带 `fee_refunded:true`。
 - **绝不出现**：先改数据后扣费；或扣费与落库之间夹着第二个 `await` 才做的权限校验。
 
 ### 4-4 惰性结算与过期批次（引用总册 §5-4）
@@ -172,6 +180,43 @@
 - **批次在数组中的位置可能与扣费前不同**：扣减时被扣尽的批次（`qty = 0`）已由 `sweep` 移除（§4-1），冲正复原时该批次 **append 回 `bamboos[]` / `seeds[]` 的数组尾**，不会回到原下标。
 - **FIFO 只依赖 `expires_at` 升序，批次数组顺序不是契约**：任何调用方（含前端展示、流水核对、快照 diff）**不得依赖 `bamboos[]` / `seeds[]` 的元素顺序**；需要稳定展示时由调用方自行按 `expires_at` 升序（同到期再按 `lot.id`）排序。
 - **对比冲正前后的一致性应使用按 `lot.id` 排序后的指纹**（按 `lot.id` 升序排序后再序列化取 JSON / md5）：直接对批次数组做逐元素 diff 会因位置变化而误报差异；§9-1 第 8 条的「资产总分还原」断言即属此类顺序无关口径。
+
+### 4-6 no-op 编辑不扣费（缺陷 A 修正 · 2026-09-18 · 已拍板）
+
+**适用路由**：`PUT /people/<handle>`（§3-1 第 3 行，单价 1 片）。**值级比对**发生在 ④ 扣费**之前**（②′，紧随只读预检）；判为 no-op 则**完全不进扣费闸门**。
+
+**判定实现**：`lib/economy-fee.js` 的 `personValueDiff(body, person, detail)` → `{changed, fields}`；`isPersonUnchanged(body, person, detail)` = `!changed`（两者与 `hasPersonChanges` 同为**纯函数、无 IO**）。
+
+**字段清单（候选值一律按写入语义 `tree-write.updatePerson` 推导）**
+
+| # | 字段 | 候选值 / 现值口径 |
+|---|---|---|
+| 1 | `name` / `surname` / `given` | 只认 `primary_name`（`name` = surname + given，空则「未知」）；**body 未带任何姓名字段 → 不参与比对** |
+| 2 | `gender` | **仅** body 为 `0/1/2` 数字枚举才参与；规范化 `1/2/0 ≡ M/F/U`（字符串形态写入侧不写 → 不比对） |
+| 3 | `birth_date` / `birth_place` / `death_place` | body 未提供该键 → 不比对；提供则与现值规范化后比 |
+| 4 | `death_date` | `is_living === true` → 候选值取 `''`（写入侧会清空卒年） |
+| 5 | `is_living` | 统一布尔；**树内缺失取展示层隐含值**；未给布尔但给了非空卒年（写入侧置 `false`）→ 可能产生差异 |
+| 6 | 详情 `attributes`（称号三字段等，**全量替换**语义） | 键值表整体比对；**硬口径：请求体未提供 `attribute_list` → 该维度不判变更**（未提供 ≠ 提供空表；显式 `[]` 仍算真实清空 → 照旧计费）；排除 `STRUCTURAL_ATTR_KEYS`（`EXTERNAL_KEYS` + `CHAIN_ATTR_KEYS`） |
+| 7 | `external_*` / `external_chain_gen` | 现值基准改用**有效现值** `effectivePersonValues(person, detail)` = 树节点 ∪ 详情 `attributes`（与**读路径** `index.js` 的 `toRawPerson` 同口径，树节点非空值后写优先）；**body 未提供的键一律不比对**；显式给了且值不同才保守判差异 |
+
+**规范化（两侧同口径）**：`trim`；`'' ≡ undefined ≡ null`；`gender` `1/2/0 ≡ M/F/U`；`is_living` 树内缺失取展示层隐含值；**有效现值须合并详情 `attributes` 里的称号与 `external_*`**（否则总谱链节点「原样回传」会被判成变更 → 误扣 1 片；真 HTTP 已复现并修复）。
+
+**硬口径**：请求体**未提供**的键**一律不判变更**（未提供 ≠ 变更；绝不静默吞掉一次真实写入）。
+
+**响应形状（no-op）**
+
+```
+200 { ok: true, unchanged: true,
+      fee: { unit: 'bamboos', pieces: 0, balance: <当前余额>, balance_after: <当前余额> } }
+```
+
+- **不写树**（`version` / `updated_at` 不动）、**不写详情**、**零流水**（无 `edit_fee`、无 `fee_refund`）。
+
+**反向对照（仍按 §3-1 扣 1 片）**：改 `birth_date` / 改 `is_living` / 改姓名 / 改称号（`attribute_list` 显式变更）→ **各扣 1 片**；`hasPersonChanges` 为假（请求体不含任何可修改内容）→ 仍 400、不扣费。
+
+**前端**：`frontend/src/components/person-archive/person-archive.vue` 增加 **dirty 比对**（与后端同一口径）；**「父节点编号」变更不在本口径内** —— 改父仍照常执行 `reparent`（另有 1 片 / 跨树 9 片口径），绝不因「内容未改」而吞掉改父。
+
+**测试**：`cloudfunctions/compat-api/lib/noop-edit-integrity.test.js`（10 例，含链节点 no-op、窄 body、反向对照、变异有效性）。
 
 ---
 
