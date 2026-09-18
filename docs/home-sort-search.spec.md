@@ -7,7 +7,8 @@
   **`docs/economy.spec.md`**；集合与 API 契约的权威是 `docs/data-model.md`；节点级（世级）读可见分层的权威是
   `docs/permission-tier.spec.md`；全站编号（`gramps_id` / `handle` / `resolveNode`）的权威是 `docs/id-system.spec.md`。
   **本册只描述本批四项改动的落地口径**；与上述册子冲突时**以彼为准，并同步修订本册**。
-- 待部署动作（四要素）见 `docs/PENDING_DEPLOY.md` §16；本轮独立质检报告见 `docs/home-sort-search.qa.md`（本册不复制、不预告其结论）。
+- 待部署动作（四要素）见 `docs/PENDING_DEPLOY.md` §16（本批四项）与 **§4-1**（2026-09-18 追加：首页列表 tab / 人数标签 / 窄屏）；
+  独立质检报告见 `docs/home-sort-search.qa.md`（本册不复制、不预告其结论；2026-09-18 增量验收 = 该册 **§15**）。
 - 代码落点：`frontend/src/pages/index/index.vue`（列表范围 / 三档排序 / 搜索框）、`cloudfunctions/compat-api/lib/tree-activity.js`（活跃度）、
   `cloudfunctions/compat-api/index.js`（`GET /tree/rank` 增量、`GET /search/global`、两条 wallet 路由 410）、
   `cloudfunctions/compat-api/lib/wallet.js`、`frontend/src/business/{api,index,types}.ts`、
@@ -17,7 +18,7 @@
 
 ## 1. 一句话
 
-首页列表**只列普通家族树**（排除世本与祖谱），卡片按**三档排序**（默认「综合」，`0.4×人数 + 0.4×活跃度 + 0.2×新近度`）；
+首页列表分**两个 tab**（**家族** / **祖谱**，默认家族；中华世本仍走右下浮动按钮），卡片按综合分排序（默认「综合」，`0.4×人数 + 0.4×活跃度 + 0.2×新近度`；**三档排序切换仅家族档**），每张卡带**人数标签**；
 首页新增**全站人物搜索**框，后端 `GET /search/global`（跨全部登记树 + 节点级可见裁剪 + **镜像归并到真身** + `restricted` 标记）；
 同一批把**家族树资金功能**落地为下线 —— `POST /wallet/transfer` 与 `GET /wallet/tree-balance` **恒 410**。
 
@@ -25,17 +26,22 @@
 
 ## 2. 范围
 
-### 2-1 首页列表范围（本批变更）
+### 2-1 首页列表范围：**两个列表 tab**（本批变更）
 
 - 落点：`frontend/src/pages/index/index.vue`。
+- 首页从「单列表」改为**两个列表 tab**：**家族**（默认） / **祖谱**。该 tab **只决定渲染哪个列表**，与既有「首页 / 中华世本」浮动按钮双视图**正交**（切 tab 不改 `showMaster`，切视图不改 `listTab`）。
 
   ```js
+  // 家族档（＝改造前的列表；除新增 tab 外，语义与行为均未变）
   const normalHalls = computed(() => halls.value.filter((h) => !h.isMaster && h.kind !== 'clan'));
+  // 祖谱档
+  const clanHalls   = computed(() => halls.value.filter((h) => h.kind === 'clan'));
   ```
 
-- 语义：**只列普通家族树** —— 排除中华世本（`is_master`）与**祖谱**（`kind !== 'clan'`）。
-- **缺 `kind` 的旧 meta 条目按 `family` 兼容**（`kind !== 'clan'` 天然放行 `undefined`）。
-- 中华世本入口不变（右下浮动按钮 → `ShibenTimeline`）；祖谱入口不变（`/z/<tree_id>` 别名路由）；卡片模板 / 等级徽章 / 新建入口 / 视图切换按钮本批不变。
+- **家族档**：只列普通家族树 —— 排除中华世本（`is_master`）与**祖谱**（`kind !== 'clan'`）；**缺 `kind` 的旧 meta 条目按 `family` 兼容**（`kind !== 'clan'` 天然放行 `undefined`）；三档排序 / 卡片 / 入口与改造前**逐条一致**。
+- **祖谱档**：只列 `kind === 'clan'` 的树（当前 **3** 本：季氏 `ji_23395` / 顾氏 `gu_39038` / 秦氏 `qin_31206`）；**排序 pill 组不渲染**，只按综合分降序（§3-5、§10-3）。
+- **卡片统一模板**：家族与祖谱**同一张卡**（标题 / 「发源地：」副行 / 简介 / **人数标签** / 等级徽章）；点击走**同一入口** `openTreeHome(tree_id)` → `/pages/hall/index?tree_id=…`，由 `hall` 页**按 `kind` 自动切祖谱版式**；H5 地址栏别名对 `kind === 'clan'` 仍生成 `/z/<tree_id>`（别名规则**未变**）。
+- 中华世本入口不变（右下浮动按钮 → `ShibenTimeline`）；卡片模板 / 等级徽章 / 视图切换按钮本批不变（「＋ 新建家族树」入口**收紧为仅家族档**，见 §10-4）。
 
 ### 2-2 明确**不在**本册范围 / 本批未改
 
@@ -83,8 +89,16 @@ score = 0.4 * norm(人员数) + 0.4 * norm(活跃度) + 0.2 * norm(新近度)
 
 ### 3-4 数据源
 
-数据源 = **既有 `fetchTreeRank`（`GET /tree/rank`）**，首页等级徽章本就按树调用（`rankMap` 已在手）→
-**不新增任何网络请求**；活跃度与更新时间随该接口出参下发（§5-1）。
+- 数据源 = **既有 `fetchTreeRank`（`GET /tree/rank`）**，首页等级徽章本就按树调用（`rankMap` 已在手）→
+  **不新增任何网络请求**；活跃度与更新时间随该接口出参下发（§5-1）。
+
+### 3-5 排序作用域（**本批新增 · 2026-09-18**）
+
+- **三档排序（`comprehensive` / `members` / `activity`）只作用于家族档**：**祖谱档只有综合档、没有排序切换**（祖谱 tab 下排序 pill 组 `v-if` 不渲染，**不在 DOM**、不是 `display:none`，§10-3）。
+- **两个列表的综合分各自在自己列表内归一化**（实现 = `scoreByList(list)` 一方一算）：家族档极值取 `normalHalls`、祖谱档极值取 `clanHalls`；**公式与权重是同一条**（§3-2，`max === min` 记 1）。
+- **tie-break 是同一条**（§3-3 的「综合」链，家族 / 祖谱共用 `compareByScore(a, b, scores)`）：综合分降序 → 人数降序 → 活跃度降序 → `updated_at` 降序 → `tree_id` 升序。
+- **切 tab 不重置 `sortMode`**：祖谱档下 `sortMode` 保持原值，切回家族档仍是用户上次选择（排序控件在祖谱档只是不渲染，状态不被清空）。
+- 排序仍**只作用于渲染**：`sortedHalls` / `sortedClanHalls` 各自 `slice().sort(...)`，不改 `normalHalls` / `clanHalls` 本身、不改卡片数据。
 
 ---
 
@@ -218,4 +232,53 @@ score = 0.4 * norm(人员数) + 0.4 * norm(活跃度) + 0.2 * norm(新近度)
     与**本批**（首页列表 / 三档排序 / 全站搜索 / 资金下线）的代码改动**无关**，本批代码本身仍零数据改动；
     该两笔手术的作业依据、前后 md5 与上云要求见 `docs/zhonghua-cleanup-2026-09.spec.md`。
 - **前端验收项**（本册不代为断言结果）：`npx vue-tsc --noEmit` exit 0；首页三档切换 + 搜索框（受限条只 toast / 非受限跳转）可用。
-- **部署**：本轮**不部署**；需上云的动作（重打包 / 前端 hosting）逐条登记在 `docs/PENDING_DEPLOY.md` §16。
+- **本批（2026-09-18 增量：列表 tab / 人数标签 / 窄屏）验收要点**（逐条实测结论见 `docs/home-sort-search.qa.md` §15）：
+  - 四档宽度（**320 / 360 / 375 / 414**）下，家族档与祖谱档的 `.sort-bar` **行高均为 36px（差 0）**、三颗排序 pill **恒单行**、`documentElement.scrollWidth === innerWidth`（**无横向溢出**）；
+  - 切 tab 与点三颗 pill 的**增量网络请求 = 0**（含阳性对照，见 qa §15.5）；
+  - **祖谱顺序 = 综合分独立复算**（列表内归一化；当前实测 `[秦氏, 顾氏, 季氏]` ↔ `1.0 / 0.406486 / 0.4`）；
+  - **人数标签 = 该树 `/tree/rank` 的 `person_count`**（数值逐位相等）；
+  - **家族档三档排序回归**：HEAD 版与工作区版排序逻辑抽成纯 node 脚本喂同一快照 → **三档序列逐位相同**。
+- **部署**：本轮**不部署**；需上云的动作（重打包 / 前端 hosting）逐条登记在 `docs/PENDING_DEPLOY.md` §16；
+  **2026-09-18 增量（列表 tab / 人数标签 / 窄屏，纯前端）同批随前端产物发布，登记于同文件 §4-1**（后端零改动、不新增集合与云端数据动作）。
+
+---
+
+## 10. 列表 tab、人数展示与窄屏口径（**2026-09-18 增量 · 已实施**）
+
+落点：`frontend/src/pages/index/index.vue`（工作区已改、未提交）。本节为**口径定稿**；实现与验收证据见 `docs/home-sort-search.qa.md` §15，上云动作见 `docs/PENDING_DEPLOY.md` §4-1。
+来源标注：**用户需求原文** = ①「首页的上方添加一个 tab 切换按钮，用户点击后切换到【祖谱】列表的显示，祖谱列表只按照综合排序，所以没有排序的切换。理想位置：搜索框和搜索结果的下方，【综合】【人数】【活跃度】一行的右侧。」②「在家族列表中，各个家族树的人数应予以展示。」；**总监裁决** = 归一化范围取各自列表、切 tab 不重置排序、建树入口仅家族档；**质检证据** = qa §15（两轮真机）。
+
+### 10-1 列表 tab（位置 / 档位 / 正交）
+
+- 档位枚举：`listTab: 'family' | 'clan'`，**默认 `'family'`**。
+- 位置：`.sort-bar` 行内**右侧**；同一行左侧 = 排序 pill 组（**仅家族档渲染**）；该行位于**搜索框与搜索结果面板的下方**（DOM 文档序：`search-box → search-panel → sort-bar → 卡片列表`）。
+- tab 组 `.tab-switch` 用 `margin-left: auto` 靠右 + `flex-shrink: 0`，与排序组**同一行、不重叠**，排序组隐藏时仍停在同一行右侧（不跳位）。
+- 与「首页 / 中华世本」**浮动按钮双视图正交**：`listTab` 只管列表、`showMaster` 只管视图，互不读写对方 ref。
+- 切 tab **不重置 `sortMode`**（§3-5）。
+
+### 10-2 人数展示（卡片统一模板）
+
+- 卡片统一模板 = 标题 / 「发源地：」副行 / 简介 / **人数标签** / 等级徽章；家族与祖谱**同一张卡**（同一 `<t-cell>` + `#note` 插槽）。
+- 数据源 = **既有 `GET /tree/rank` 的 `person_count`**（首页 `rankMap` 本就对全部树并发加载）→ **不新增任何网络请求**。
+- 展示口径：`typeof person_count === 'number' && !Number.isNaN(...)` → **「N 人」**；**缺失 / NaN / 该树 rank 请求失败 → 「— 人」**。
+- ⚠️ **已知行为（登记项，不当缺陷）**：`loadRanks` 用 `Promise.allSettled` **静默丢弃**失败项 → 该树 `rankMap` 为空 → 卡片显示「— 人」**且按 0 参与综合分排序**（沉到列表尾部）。「真 0 人」与「没取到」在**文案**上可区分（`0 人` / `— 人`），在**排序**上不可区分。
+
+### 10-3 祖谱档排序
+
+- 列表 = `halls.filter(h => h.kind === 'clan')`（当前 3 本：季氏 `ji_23395` / 顾氏 `gu_39038` / 秦氏 `qin_31206`）。
+- **排序 pill 组不渲染**（`v-if="listTab === 'family'"`）。
+- **只按综合分降序**：公式与权重不变（§3-2），但**归一化范围 = 祖谱列表自身**（`max === min` 记 1）；tie-break 与家族档**同一口径**（§3-5）。
+
+### 10-4 空态与建树入口
+
+- 空态文案两档：家族档 **「暂无已上线的家族数字馆」** / 祖谱档 **「暂无祖谱」**（同一 `.empty` 元素按 `listTab` 三元切换）。
+- **「＋ 新建家族树」入口仅家族档显示**（`v-if="canCreateTree && listTab === 'family'"`）：它是**建家族树**的入口，祖谱档下**不在 DOM**（不是 `display:none`）。
+
+### 10-5 窄屏口径（单行硬约束）
+
+- `.sort-bar`：`display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; min-height: 36px;`
+- `.sort-group`：`display: flex; gap: 8px; flex-wrap: nowrap; min-width: 0;`
+- `.tab-switch`：`flex-shrink: 0`（永不被排序组挤压）+ `margin-left: auto`。
+- `@media (max-width: 370px)`：`.sort-bar` / `.sort-group` `gap: 6px`；`.sort-btn` `padding: 8px 9px`；`.tab-btn` `padding: 6px 10px`；`.sort-text` / `.tab-text` `font-size: 12px`（≤370px 走 12px、>370px 走 13px）。
+- **行高恒等的依据（垂直账，已实测）**：排序组 = `padding 8×2 + border 1×2 = 18px`；tab 组 = `border 1×2 + padding 2×2 + 按钮 padding 6×2 = 18px`；两组文字同字号 → 行盒等高 ⇒ 家族档（有排序组）与祖谱档（排序组被 `v-if` 移除）**行高严格一致**，切 tab 时下方列表**不跳动**。
+- 目标（已实测达成）：320 / 360 / 375 / 414 四档下**切换 tab 行高不跳、pill 不换行、无横向溢出**。
