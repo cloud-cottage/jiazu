@@ -305,13 +305,32 @@ test('迁移脚本：副本上跑通 → zhonghua 保留原号 / 其余树重编
   assert.equal(md5(path.join(copy, 'trees', 'zhonghua.json')), zhBefore, 'zhonghua 树 JSON 一字未改');
   const zh = JSON.parse(fs.readFileSync(path.join(copy, 'trees', 'zhonghua.json'), 'utf8'));
   const zhIds = Object.values(zh.people).map((p) => p.gramps_id);
-  assert.ok(zhIds.includes('I0000') && zhIds.includes('I0052'), 'zhonghua 4 位原号保留');
+  // 原号保留：**形状断言，覆盖 zhonghua 全部编号**，与具体节点无关（节点增删不会假红；
+  // 比只抽查 I0000/I0052 两个编号更强）。迁移前的老号是 4 位形态，迁移后新建节点铸 6 位全局号 ——
+  // 两者之外的任何形态都说明编号被改坏/被重编号；且老 4 位号必须仍然存在。
+  const ZH_OLD = /^I\d{4}$/;
+  const ZH_NEW = /^I\d{6}$/;
+  assert.ok(
+    zhIds.length > 0 && zhIds.every((x) => ZH_OLD.test(String(x)) || ZH_NEW.test(String(x))),
+    'zhonghua 编号形态只允许老 4 位原号或迁移后 6 位全局号',
+  );
+  assert.ok(zhIds.some((x) => ZH_OLD.test(String(x))), 'zhonghua 老 4 位原号仍在（未被重编号）');
+  const zhFamIds = Object.values(zh.families).map((f) => f.gramps_id);
+  assert.ok(
+    zhFamIds.length > 0 && zhFamIds.every((x) => /^F\d{4}$/.test(String(x)) || /^F\d{6}$/.test(String(x))),
+    'zhonghua 家族编号形态只允许老 4 位原号或迁移后 6 位全局号',
+  );
+  assert.ok(zhFamIds.some((x) => /^F\d{4}$/.test(String(x))), 'zhonghua 老 4 位家族原号仍在（未被重编号）');
   assert.ok(!Object.values(zh.people).some((p) => p.legacy_gramps_id), 'zhonghua 节点不写 legacy（原号未变）');
 
   // 计数器初值 = max(zhonghua)+1
+  // 口径与 scripts/migrate-global-ids.mjs 的 computeBaseline 一致：取 zhonghua **全部**编号的最大值
+  // （含迁移后新建节点铸的 6 位全局号），不能只取 4 位老号，否则起点算错。
   const seq = JSON.parse(fs.readFileSync(path.join(copy, 'collections', 'jiazu_id_seq.json'), 'utf8'));
   const zhMax = Math.max(...zhIds.map((x) => parseInt(String(x).replace(/\D/g, ''), 10)));
   const mapping = JSON.parse(fs.readFileSync(path.join(copy, 'id-migration.json'), 'utf8'));
+  // zhonghua 不出现在重编号映射表里（原号一个都没被改）：与具体节点无关的强不变量
+  assert.ok(!mapping.zhonghua || Object.keys(mapping.zhonghua).length === 0, 'zhonghua 不进入重编号映射表（原号保留）');
   const firstNew = Math.min(
     ...Object.entries(mapping)
       .flatMap(([, m]) => Object.entries(m))
@@ -319,6 +338,12 @@ test('迁移脚本：副本上跑通 → zhonghua 保留原号 / 其余树重编
       .map(([, next]) => parseInt(String(next).replace(/\D/g, ''), 10)),
   );
   assert.equal(firstNew, zhMax + 1, '重编号起点 = max(zhonghua 编号) + 1');
+  // 总谱编号域与重编号号段不相交：zhonghua **全部**人的编号都小于重编号起点。
+  // 同样是形状/区间断言（覆盖全部节点，节点增删不影响）；若 zhonghua 被一并重编号，此条必红。
+  assert.ok(
+    zhIds.every((x) => parseInt(String(x).replace(/\D/g, ''), 10) < firstNew),
+    'zhonghua 全部编号都落在重编号起点之前（重编号不与总谱撞号）',
+  );
   assert.ok(seq.person.next > firstNew, '计数器已推进到已分配号之后');
 
   // 映射表形状 + 重编号节点带 legacy_gramps_id（树 JSON 与详情文档各一份）
