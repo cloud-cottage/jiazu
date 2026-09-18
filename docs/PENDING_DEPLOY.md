@@ -1322,21 +1322,21 @@ npm run build:mp-weixin                                        # 产物交微信
 
      ---
 
-## 17. 本批：总谱【批量添加子孙】+ 移除同世并列弹窗 + 缺陷 A（no-op 不扣费）+ 缺陷 B（写一致性）（**代码批次**）
+## 17. 本批：【批量添加子孙】扩到世本 + 祖谱（含祖谱已故锁 / 祖谱管理面板）+ 移除同世并列弹窗 + 缺陷 A（no-op 不扣费）+ 缺陷 B（写一致性）+ 世本 URI 改 `/z/`（**代码批次 + 数据项**）
 
-> 规格：`docs/chain-batch-append.spec.md`（批量 + 需求一）、`docs/economy-fee.spec.md` §3-2 / §4-3 / **§4-6**（0 片清单与 no-op 口径）、`docs/data-model.md` §7.1（写一致性不变量）。
-> 质检汇编：`docs/chain-batch-append.qa.md`（单测 372/372/0 · 真 HTTP · 真机 H5 的原始证据与变异记录）。
+> 规格：`docs/chain-batch-append.spec.md`（批量 + 需求一 + **§3-5 祖谱档**）、`docs/uri-aliases.spec.md`（URI 口径，**扩展轮新增**）、`docs/economy-fee.spec.md` §3-2 / §4-3 / **§4-6**（0 片清单与 no-op 口径）、`docs/data-model.md` §7.1（写一致性不变量）。
+> 质检汇编：`docs/chain-batch-append.qa.md`（§1–§8 = 上轮 单测 372/372/0 · 真 HTTP · 真机 H5；**§9 = 扩展轮 20/20 · 380/380/0 · 真机 T1–T4 · 变异 2/2 · 真源体检**）。
 
 ### 17-0 总览
 
 | # | 目标 | 动作 | 阻塞 |
 |---|---|---|---|
-| 1 | 云函数 `compat-api` | **必须重打包 + 部署**：新增 **1 条路由** + **4 个文件**变更（`index.js` / `lib/economy-fee.js` / `lib/store.js` / `lib/tree-write.js`） | 无（**但不重打包 = 云端新路由 404**，见 §17-7） |
+| 1 | 云函数 `compat-api` | **必须重打包 + 部署**：新增 **1 条路由** + **5 个文件**变更（`index.js` / `lib/economy-fee.js` / `lib/store.js` / `lib/tree-write.js` / **`lib/child-write.js`（扩展轮）**） | 无（**但不重打包 = 云端新路由 404**，见 §17-7） |
 | 2 | CloudBase 集合 | **无**（不新建集合、不加索引：批量续编只写既有树 JSON / 详情 / 编号计数器） | — |
-| 3 | 云端数据 | **无**（不重跑迁移上传、无手工删除、不动 `jiazu_id_seq`） | — |
-| 4 | 前端 H5 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传 | 需确认 hosting 目标与云函数 HTTP 域名 |
+| 3 | 云端数据 | **有 1 项**（**扩展轮新增**）：`config/tree-meta.json` 的 `zhonghua.path_alias` 由 `/zhonghua` 改为 `/z/`，**须随云端数据同步**（见 §17-3） | — |
+| 4 | 前端 H5 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传；**扩展轮追加 6 个前端文件**（`App.vue` / `business/cross-tree.ts` / `components/clan-hall/clan-hall.vue` / `components/tree-pedigree/tree-pedigree.vue` / `components/person-manage-panel/person-manage-panel.vue` / `components/person-archive/person-archive.vue`） | 需确认 hosting 目标与云函数 HTTP 域名 |
 
-### 17-1 云函数 `compat-api`：新增 1 条路由 + 4 个文件变更（**必须重打包 + 部署**）
+### 17-1 云函数 `compat-api`：新增 1 条路由 + 5 个文件变更（**必须重打包 + 部署**）
 
 **为什么需要**（逐条列出本批新增 / 变更）：
 
@@ -1347,6 +1347,9 @@ npm run build:mp-weixin                                        # 产物交微信
 | **`lib/economy-fee.js`** | **新增** `personValueDiff` / `isPersonUnchanged` / `effectivePersonValues`（有效现值 = 树节点 ∪ 详情 `attributes`，与读路径 `toRawPerson` 同口径） | `lib/noop-edit-integrity.test.js` **10/10**（含链节点 no-op、窄 body 未提供键不判变更、反向对照；变异：短路有效现值合并 → 变红、还原旧口径 → 2 条全红）+ 真 HTTP（链节点「姒不降」原样 PUT → `200 unchanged:true / pieces:0` + 树 md5·version·updated_at 三不变 + 零新流水；改 `birth_date` / `death_place` / `is_living` → **各 1 片**） |
 | **`index.js`（`PUT /people/<handle>`）** | **变更**：加 **②′ 值级比对**分支 —— 规范化后完全相同 → **200 `{ok:true, unchanged:true, fee:{unit:'bamboos',pieces:0,balance,balance_after}}`**，不写树 / 不写详情 / 零流水；响应新增 `detail_warning`（详情写失败时）；错误出口改走 `errorStatusOf`（**业务错误沿用自身 status；系统级失败 EACCES/ENOENT… → 500**，不吐本机路径） | 真 HTTP：`chmod 0444` → **500 + `fee_refunded:true`** + 磁盘 md5 / version 不变 + 紧接着 `GET` 读回**磁盘真值** + 幻影未落盘（副本变异去掉两层缓存失效 → `PHANTOM_VISIBLE:true`） |
 | **`lib/store.js`** | **变更**：`saveTree` 落盘失败 → **原地回滚 `version` / `updated_at`** 且**失效 `treeCache` / `eventIndexCache`**；`updateTree` 闭包（含业务校验）抛错 → 同样失效两个缓存（与 `updateTrees` 的失败处理同口径） | 同上（`noop-edit-integrity.test.js` 第 4·5 例：同进程读回磁盘真值、`version` 未脏、幻影不得落盘） |
+| **`lib/tree-write.js`（扩展轮追加）** | **变更**：新增 **`isChainBatchTree(kind)`**（第 672 行，**白名单单一真源** = `zhonghua` ∪ `kind === 'clan'`）；`appendChainBatch` 按白名单拒绝 → **400「批量续编仅适用于中华世本与祖谱」**（第 751 行，**路由不写第二套**）；**祖谱世数结构推导**（始祖 = 第 1 世：`founder_handle → founder_gramps_id → I0001`，沿 `families` 父/母 BFS 递 1，节点自带 `external_chain_gen` 时以其为准，断链 → **400「该节点不在祖谱世系内」**）；祖谱详情**不写 `external_tree`**；祖谱新节点 surname 随父姓 / `gender='M'` / `is_living=false` / 单事务 ≤ 10 代 / **0 片**；**不设任何深度上限** | `lib/chain-append-batch.test.js` **20/20** + 全量 `npm test` **380/380/0** + 真机 T3（`季花→季甲→季乙→季丙` 严格线性、`external_chain_gen` 2/3/4、**无 `external_tree`**、md5 `15668641c175d55cbd7cd2facbdc5b1b` 不变 = 0 片） |
+| **`lib/child-write.js`（扩展轮）** | **新增/变更**：`deceasedLockedTree(treeId, masterTreeId)`（第 **24** 行）—— 已故锁判据 = **master 或 clan**；锁定树内新建子节点恒 `is_living=false` | 真机 T4（祖谱 403 + **普通树同 PUT → 200**）+ 单测 |
+| **`index.js`（扩展轮追加）** | **变更**：`/admin/chain-append-batch` 白名单分支 → **400「批量续编仅适用于中华世本与祖谱」**（第 **2045** 行，与 `lib/tree-write.js` 同一真源）；**祖谱鉴权档 = `requireWriteUser`**（本树 tree_steward + `chief_editor`），**未登录恒 401**；`PUT /people/<handle>` 显式 `is_living:true` 对**祖谱** → **403「祖谱节点一律为「已故」，在世状态不可修改」**（**世本同类文案逐字不变**） | 真机 T1–T4 + 单测（鉴权分档 / 已故锁 / 普通树不受影响） |
 
 **具体命令**（仓库根；写法同 §1 / §11-1 / §16-1）：
 
@@ -1371,10 +1374,15 @@ grep -c 'detail_warning'          cloudfunctions/deploy/compat-api/index.js
 
 - 不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（批量续编只写既有树 JSON、详情文档与编号计数器）。
 
-### 17-3 云端数据：**无**
+### 17-3 云端数据：**有 1 项（扩展轮新增：`tree-meta` 的 `path_alias`）**
 
-- **无变化**：不重跑迁移上传、无 `jiazu_person_details` 手工删除、不动 `jiazu_id_seq`。
-- 本批的「零写入」证据只在**本地副本**上采集（质检汇编 §6）；云端的编号计数器由**线上新增节点时自然递增**（`gramps_id` 取全站单计数器），**不需要任何离线同步动作**。
+| # | 数据项 | 动作 | 依据 / 备份 |
+|---|---|---|---|
+| 1 | `config/tree-meta.json` → `trees.zhonghua.path_alias` | 由 **`/zhonghua` 改为 `/z/`**，**须随云端数据同步**（云端 `tree-meta` 仍为旧值时，`/z/` 的世本路径无数据别名支撑） | 2026-09-18 **真源手术**；备份 **`~/jiazu-backups/20260918-144857-tree-meta-alias/`**；口径见 `docs/uri-aliases.spec.md` §4 |
+
+- 其余**无变化**：不重跑迁移上传、无 `jiazu_person_details` 手工删除、不动 `jiazu_id_seq`。
+- 本批的「零写入」证据只在**本地副本**上采集（质检汇编 §6 与 **§9-4**）；云端的编号计数器由**线上新增节点时自然递增**（`gramps_id` 取全站单计数器），**不需要任何离线同步动作**。
+- ⚠️ 该数据项与**云函数重打包是两件事**：重打包只解决路由 404；`path_alias` 需在**云端数据侧**一并落地（见 §17-7）。
 
 ### 17-4 前端 H5（**必须重打包 + hosting 部署**；小程序同批）
 
@@ -1386,6 +1394,12 @@ grep -c 'detail_warning'          cloudfunctions/deploy/compat-api/index.js
 | API 封装 | `business/api.ts` | 新增 `appendChainBatch(treeId, parentHandle, names, token)`（**只传「名」，不发 `surname` 字段**） |
 | 保存 dirty 比对（缺陷 A 前端侧） | `components/person-archive/person-archive.vue` | 与后端同一口径的 dirty 判定；**「只改父节点编号」不算未修改**，改父仍照常走 `reparent` |
 | 首页家族 / 祖谱 tab + 人数标签 + 窄屏样式 | `pages/index/index.vue` | 见 **§4-1**（同一前端产物内的追加改动，随本次发布） |
+| **URI 口径（扩展轮）** | `App.vue` | `MASTER_PATH = '/z/'`（第 **18** 行）；接受 `/z`、`/z/`、`#/z/`、`/z/zhonghua` → 世本（**地址栏保持 `/z/`**）；旧 **`/zhonghua`（path / hash）→ 客户端重定向 `/z/`**；⚠️ **`/z/zhonghua` 判定必须先于 `CLAN_PATH_RE`**（第 12 行正则会把 `zhonghua` 当祖谱 `tree_id`；代码注释第 35 行已登记该顺序约束） |
+| **跨树跳转路径输出（扩展轮）** | `business/cross-tree.ts` | `MASTER_PATH = '/z/'`（第 **15** 行）；对 `is_master` / `zhonghua` **统一输出 `MASTER_PATH`**（不再输出 `/zhonghua`） |
+| **祖谱接管理面板（扩展轮）** | `components/clan-hall/clan-hall.vue` | 给 `TreePedigree` 传 **`tree-manage`** + **`@tree-changed`**（第 99–102 行）→ 祖谱**自有段首次获得完整谱系管理面板**（加父 / 加子 / 加配偶 / 批量） |
+| **谱系组件契约（扩展轮）** | `components/tree-pedigree/tree-pedigree.vue` | **必须声明 `treeManage` prop（第 126 行，默认 `true` 第 134 行）** 并 `emit('tree-changed')` —— 不声明则属性**静默失效**（无报错、面板不接） |
+| **批量按钮祖谱分支（扩展轮）** | `components/person-manage-panel/person-manage-panel.vue` | 批量按钮条件分两支：世本 `canAppendChain`（不变）｜祖谱 **`canAppendClanBatch`**（第 **355** 行）= `treeKind === 'clan' && canAddNode && !isChainMirror`（**顶端链镜像 `external_link_type === 'chain'` 不可作父节点**）；**普通树两处都不渲染**；祖谱预览用**相对序号**（`后代 1 → 甲；后代 2 → 乙…`，前端拿不到结构世数、**不猜**）；成功 toast 统一用后端 `message` |
+| **祖谱已故锁定 UI（扩展轮）** | `components/person-archive/person-archive.vue` | 祖谱节点在世状态显示**锁定态 `已故（本谱锁定）`**、不提供在世开关（与后端 403 同口径） |
 
 **具体命令**：
 
@@ -1410,11 +1424,16 @@ npm run build:mp-weixin                                        # 产物交微信
 7. 前端：人物管理面板出现第三颗按钮 → 复制 3 个名字 → 预览 / 确认弹窗文案正确 → 提交后 toast 文案 + 面板关闭 + 树刷新；
 8. 前端：单节点续编成功 → toast + 关面板，**无任何弹窗**；
 9. 云函数日志无 `EACCES` / 本机路径泄漏（系统级失败一律 500 + 通用文案）。
+10. **扩展轮 · URI**：浏览器打开 `/z/` → 世本（**地址栏保持 `/z/`**）；`/zhonghua` → **重定向 `/z/`**；`/z/ji_23395` → 仍为祖谱；
+11. **扩展轮 · 白名单**：普通家族树 `tree_id` 调 `POST /admin/chain-append-batch` → **400「批量续编仅适用于中华世本与祖谱」**；祖谱（`kind === 'clan'`）本树 tree_steward 同请求 → **200**；
+12. **扩展轮 · 祖谱落盘**：祖谱链节点为父、`names` 3 项 → 落盘**严格线性**、姓随父姓、全 `M` / 全已故、详情 `external_chain_gen` 递 1 且**无 `external_tree`**、竹片余额前后一致（**0 片**）；
+13. **扩展轮 · 已故锁**：祖谱节点 `PUT /people/<handle>` 显式 `is_living:true` → **403**（文案含「祖谱」）；**普通家族树同 PUT → 200**（不受影响）；
+14. **扩展轮 · 祖谱管理面板**：祖谱页（`/z/<tree_id>`）人物档案出现**完整谱系管理面板**（加父 / 加子 / 加配偶 / 批量）；批量面板姓 input `disabled`、**无可点击改姓元素**。
 
 ### 17-6 本批**不需要**上云的东西
 
 - **测试文件** `cloudfunctions/compat-api/lib/chain-append-batch.test.js` / `lib/noop-edit-integrity.test.js`：纯本地（已进 `package.json` 的 `scripts.test`），**不进打包产物**；`npm test` 跑 `/tmp` 副本，**不得当云端回归**。
-- **文档**：`docs/chain-batch-append.spec.md` / `docs/chain-batch-append.qa.md` / 本清单 §17：不进产物、不影响云端。
+- **文档**：`docs/chain-batch-append.spec.md` / `docs/chain-batch-append.qa.md` / **`docs/uri-aliases.spec.md`（扩展轮新增）** / 本清单 §17：不进产物、不影响云端。
 - `/tmp` 下的副本与取证文件（含截图 `/tmp/jz-qa3-p1-batch.png`）：临时产物。
 
 ### 17-7 阻塞点
@@ -1422,3 +1441,6 @@ npm run build:mp-weixin                                        # 产物交微信
 ⚠️ **必须先重打包云函数产物**：`cloudfunctions/deploy/compat-api/index.js` 当前仍是**旧产物**（已落后 §16 与 §17 两批改动）。
 不重打包直接部署或不部署 → 云端 `POST /admin/chain-append-batch` 返回 **404**，且 `PUT /people/<handle>` 仍按旧口径**误扣 1 片**（无 no-op 分支）、写一致性缺陷 B 仍在。
 重打包判据见 §17-5 第 1 条（两条都要 ≥ 1）。
+
+**阻塞点沿用（扩展轮不改结论）**：仍以「**必须先重打包云函数产物**」为唯一硬阻塞。
+⚠️ 扩展轮另有**独立的数据项**（§17-3：`tree-meta.zhonghua.path_alias` 由 `/zhonghua` 改为 `/z/`）需**随云端数据同步**；**重打包不覆盖该数据项**，两者都要做。
