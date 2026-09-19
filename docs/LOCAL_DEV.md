@@ -1,10 +1,18 @@
 # 本地开发环境（macOS，不使用 Docker）
 
 > ⚠️ **Gramps-Web 已退出运行时链路（退役中）**：现在只有排查历史链路/做离线 `.gramps` 转换时才启动。
+> **本地端口已于 2026-09 由 3000/8000 迁至 5197/5198**（auth-server **5197**、Gramps-Web **5198**，紧邻 jiazu 前端 5199）；**「退役中」的语义不变**。
 > 日常开发只需 `compat-api(3100)` + 前端(5199)，见 `README.md` 快速开始。
-> 前端默认代理已改指 3100；走本文件的 Gramps(8000)+auth-server(3000) 需 `npm run dev:h5:legacy`。
+> 前端默认代理已改指 3100；走本文件的 Gramps(5198)+auth-server(5197)（`dev:h5:legacy` 的 `API_PROXY=http://127.0.0.1:5197`）需 `npm run dev:h5:legacy`。
+>
+> ⚠️ **Node 版本陷阱（本机默认 node v18.19.0）**：v18 的 `fetch`/DNS 解析把 `localhost` **优先解析为 IPv6 `::1`**，而 **Gramps-Web 只绑 IPv4 `127.0.0.1`（5198）** → 症状是 **`ECONNREFUSED ::1:5198`**，auth-server（5197）侧则以 **502** 回落；**这不是服务没起，是地址写法问题**。
+> - **解法一（推荐）**：上游地址一律写 **`http://127.0.0.1:5198`**——本机非生产链路**新增/新改**的引用（env / 脚本 / 注释 / 文档）**不再写 `localhost` 字面**（制度见 `ctrl/PORTS.md` §1 **(d)**）。
+> - **解法二**：把运行这些脚本的 node 换成 **≥ 20**。
+>
+> ✅ **auth-server/.env 已按新端口更新**（`PORT=5197` / `GRAMPS_BASE_URL=http://127.0.0.1:5198`，Kevin 已授权）：现在**直接 `node auth-server/server.js` 启动即可，不再需要命令行覆盖** `PORT` / `GRAMPS_BASE_URL`；`.env` **其余行未动**。上游地址**统一为 `http://127.0.0.1:5198`**（不再用 `localhost` 字面）。
+> ℹ️ 头部第 6 行已按制度 (d) 对齐为 **`API_PROXY=http://127.0.0.1:5197`**（该行原为照录 `frontend/package.json` 的 `localhost` 字面）；`frontend/package.json` 的 `dev:h5:legacy` **现状值仍为 `localhost` 字面**，待实现侧（Kong）统一时随之更新——**头部引用块内已无 `localhost` 地址字面**（其余 `localhost` 字样均为解释 Node 陷阱的说明文字，非地址援引）。
 
-本地开发用 venv 直接跑 Gramps-Web API（生产环境仍用 docker-compose.yml）。
+本地开发用 venv 直接跑 Gramps-Web API（生产环境仍用 docker-compose.yml：**生产容器映射仍为 `127.0.0.1:8000:5000`，生产端口不变**——**本地 dev 端口 5198 ≠ 生产映射**，两者不得互推）。
 
 ## 首次安装
 
@@ -41,7 +49,7 @@ env -u PYTHONPATH GRAMPS_API_CONFIG="$(pwd)/gramps_config/config.cfg" \
 ```bash
 env -u PYTHONPATH GRAMPS_API_CONFIG="$(pwd)/gramps_config/config.cfg" \
   GI_TYPELIB_PATH="/opt/homebrew/lib/girepository-1.0" \
-  .venv/bin/python scripts/run-gramps-webapi.py run -t '*' -p 8000
+  .venv/bin/python scripts/run-gramps-webapi.py run -t '*' -p 5198
 ```
 
 ## 创建用户

@@ -111,7 +111,8 @@
 
 | 字段 | 立支 · 原树 | 立支 · 新树 | 汇宗 · 源树 | 汇宗 · 目标树 |
 |---|---|---|---|---|
-| `tree_id` | 不变 | 新建（生成规则复用 `nextTreeId(meta, 姓)`，形如 `ji_23395_01`） | 不变（随后整条删除） | 不变 |
+| `tree_id` | 不变 | 新建（生成规则 = `nextTreeId(meta, 姓)`，即 `<姓氏拼音>_<汉字码点>_<两位序号>`，形如 `ji_23395_01`；注音真源 = `surnamePinyin()` 的 pinyin-pro 姓氏模式、**无兜底**，见 `docs/tree-id.spec.md`） | 不变（随后整条删除） | 不变 |
+| `surname_pinyin` | 不变 | **写**（= 该树实际采用的姓氏拼音，与新建家族树 / 新建祖谱同口径）。实现 = 立支新树条目写入 `surname_pinyin: surnamePinyin(surnameChar)`（`lib/branch-clan-ops.js:709-710`，代码注释逐字引 §5-2 / `docs/tree-id.spec.md` §4）；回归断言见 `lib/branch-clan-ops.test.js:896-898`；注音真源与字段口径见 `docs/tree-id.spec.md` §2 / §4 | —（条目删除） | 不变 |
 | `kind` | 不变（`'family'`） | `'family'` | —（条目删除） | 不变 |
 | `founder_handle` | 旧始祖镜像 handle → **N.handle**（真身） | **新树始祖镜像 handle**（新铸） | —（条目删除） | 不变 |
 | `founder_gramps_id` | → **N.gramps_id**（N 真身编号不变） | → 新树始祖镜像的 `gramps_id`（`nextPersonId()` 铸全站新号） | —（条目删除） | 不变 |

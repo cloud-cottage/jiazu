@@ -14,6 +14,26 @@
 > 云函数 `compat-api` **新增 1 条路由** `POST /admin/chain-append-batch`，并变更 `lib/economy-fee.js` / `lib/store.js` / `lib/tree-write.js` / `index.js`
 > （**必须重打包，否则云端新路由 404**）；前端 H5 批量面板 / 删弹窗 / dirty 比对 / 首页 tab·人数 / 窄屏样式（**必须重打包**）；
 > **CloudBase 集合与云端数据：无变化**。规格见 `docs/chain-batch-append.spec.md`，质检汇编见 `docs/chain-batch-append.qa.md`。
+> **2026-09-19 追加（本批 → §18）**：镜像节点**口径 A**「树内保持可见 · 点开即真身」（规格 `docs/marriage.spec.md` **§9-7** 九条 + **§9-3 / §9-4** 修订 + **§10** 前端落点）——
+> **纯前端改动**（`frontend/src/business/cross-tree.ts` / `components/tree-pedigree/tree-pedigree.vue` / `components/person-archive/person-archive.vue`）：
+> `build:h5` + hosting 部署、小程序同批重打；**云函数路由 / CloudBase 集合 / 云端数据三项均为「本轮无」**（见 §18-0）。
+> 本轮实施已完成：**已实施 + 真机质检通过（2026-09-19）**（证据见 §18-1「本地验证证据」），本清单只登记上云动作。
+> **2026-09-19 追加（本批 → §19）**：**跨树嫁娶配偶发现通道**（口径 A+B；规格 `docs/marriage.spec.md` **§9-8** 八条 + **§10** 后端 / 前端落点；
+> 权限登记 `docs/permission-tier.spec.md` **§11**「定点例外」）——
+> 云函数 `compat-api` **新增 1 条路由** `GET /search/marriage-candidates`（**必须重打包，否则云端 404**）；前端娶入 / 嫁出弹窗改调该通道 + 新增「按全局编号指定」输入框（**必须重打包**）；
+> **CloudBase 集合与云端数据：无变化**（§19-0 第 2–3 行均为「无」）。本轮实施已完成：**已实施 + 冒烟 / 单测通过（2026-09-19）**（证据见 §19-1 / §19-4「本地验证证据」），本清单只登记上云动作。
+> **2026-09-19 追加（本批 → §21）**：**首页卡片人数单列镜像**（规格 `docs/marriage.spec.md` **§9-4 修订** + **§11-4**）——
+> 云函数 `compat-api` 的 `GET /tree/rank` **新增出参字段 `mirror_count`**（全树 `external_mirror === 'true'` 节点数；**必须重打包**，否则云端无该字段）；
+> 首页家族 / 祖谱卡片文案改「N 人（含外树 M）」（**必须重打包**）；**CloudBase 集合与云端数据：无变化**（§21-2 / §21-3 均为「无」）；
+> **`mirror_count` 只用于展示，排序归一化仍用 `person_count`**。
+> **2026-09-19 追加（本批 → §22）**：**家族树共享选择器（展示层）+ uni-app H5 遮罩关闭修复**（规格 `docs/marriage.spec.md` **§9-9** / **§9-10**）——
+> 新增共享组件 `frontend/src/components/tree-picker/tree-picker.vue`（折叠态恒一行 44px + 展开态独立覆盖层 z-index 1200）并接入 `person-archive.vue` 三处（嫁出 / 娶入、认祖、挂载祖谱）；
+> 同批把全仓 **11 处**「点遮罩关闭」由 `@click.self` 改为「遮罩 `@click` + 内层面板 `@click.stop`」**成对写法**（`grep '@click.self'` = **0**）。
+> **云函数 compat-api：无新增路由 / 无改动；CloudBase 集合：无；云端数据：无**（§22-0）；**前端 H5 必须重打包**（hosting 部署）、小程序同批重打包上传。
+> **2026-09-19 追加（本批 → §23）**：**家族人数口径修订**（规格 `docs/home-sort-search.spec.md` **§10-6** 七条全文 + 本册 §23；权限侧补注 `docs/permission-tier.spec.md` **§5 末条**）——
+> 云函数 `compat-api` 的 `GET /tree/rank` **`person_count` 语义变更**（**字段名 / 形状 / 类型不变** ⇒ **必须重打包**，否则云端**不报错、只静默返旧口径数值**）；首页家族 / 祖谱卡片文案改「**N 人**」+ 家族页（`hall`）树图统计栏改为同一口径（**H5 必须重打包 + hosting 部署**）；**CloudBase 集合与云端数据：无变化**（§23-2 / §23-3 均为「无」）。
+> **取代 §21 的卡片显示口径**（旧「N 人（含外树 M）」单列镜像显示已作废；**§21 正文不改写**，其 `mirror_count` 降级为**保留字段、不再参与展示**）。
+> 本批状态：**已实施（本地已验证，2026-09-19（Zang 汇总））** —— 实施与本地验证已完成（证据见 §23-1）；上云动作仍未执行；本节只登记上云动作，**不表示已实现 / 已通过 / 已部署**。
 
 ---
 
@@ -131,7 +151,7 @@ VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5
 | 人物档案（删除节点） | 删除走 `POST /admin/delete-node` 两段式：选模式 → `dry_run`（只算不写，显示人数/家族数）→ 强确认带 `confirm_count` → 正式提交；被其它家族树引用时后端 409、前端提示先解引用 |
 | 总谱 | 世数 0 显示「原始」（根卡/卡片/时间轴）；续编入口支持原始节点 |
 | 加子女 | `addChildNode()` 改走 `POST /admin/add-child`；跨树婚姻家庭的子女自动落到父真身树，提示改为「…已建到「<树>」，本树保留镜像子女」 |
-| 默认后端 | vite 默认代理 → `3100` compat-api（`dev:h5:legacy` 回旧链路） |
+| 默认后端 | vite 默认代理 → `3100` compat-api（`dev:h5:legacy` 回旧链路 → 本地 auth-server `5197` / Gramps-Web `5198`，**2026-09 由 3000/8000 迁来**） |
 | 人物档案（始祖行） | 始祖节点操作区新增 **「🔁 重置始祖」**（`isFounderNode && !founderMirror && canEdit`）：确认弹窗 → `POST /admin/reset-founder` → 刷新 tree-meta，页面立即变「无始祖」态并出现「⛩ 认祖」入口 |
 
 ### 4-1 本批追加（2026-09-18）：首页家族 / 祖谱列表 tab + 卡片人数标签 + 排序行窄屏样式
@@ -190,7 +210,7 @@ npm run build:mp-weixin                                        # 产物交微信
 
 ## 6. 明确**不需要**上云的东西
 
-- `auth-server/`（本地遗留链路 → Gramps-Web）：**不进云**，云上由 `compat-api` 承担；
+- `auth-server/`（本地遗留链路 → Gramps-Web，本地端口 `5197` → `5198`）：**不进云**，云上由 `compat-api` 承担；
 - `scripts/*` 里的一次性修复脚本（`fix-zhonghua-gender.mjs`、`fix-person-names.mjs`、`audit-person-names.mjs`）与 E2E 脚本：离线工具，只在需要时本地跑；
 - `/tmp/jiazu-*`（E2E 数据副本、备份）：临时产物。
 
@@ -1444,3 +1464,515 @@ npm run build:mp-weixin                                        # 产物交微信
 
 **阻塞点沿用（扩展轮不改结论）**：仍以「**必须先重打包云函数产物**」为唯一硬阻塞。
 ⚠️ 扩展轮另有**独立的数据项**（§17-3：`tree-meta.zhonghua.path_alias` 由 `/zhonghua` 改为 `/z/`）需**随云端数据同步**；**重打包不覆盖该数据项**，两者都要做。
+
+---
+
+## 18. 本批：镜像节点「点开即真身」（口径 A · **纯前端批次**）
+
+> 规格 = `docs/marriage.spec.md` **§9-7**（镜像节点口径 A 九条，Kevin 2026-09-19 拍板）+ **§9-3 / §9-4**（差距表两条修订）+ **§10**（前端落点）+ **§11-4**（登记项：首页卡片人数未单列镜像 —— **已由本清单 §21 落地**）。
+> **本批性质**：**纯前端改动** —— **无新增云函数路由、无新增集合、无数据变更**（三项均为「本轮无」，见 §18-0 第 1–3 行）。
+> **实施状态：已实施 + 真机质检通过（2026-09-19）**（证据见 §18-1「本地验证证据」）；本清单只登记**上云动作**。
+
+### 18-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **本轮无**（0 条新路由、`cloudfunctions/**` 本批 0 改动）→ **不需要为本批单独重打包**；若与 §16 / §17 尚未上云的改动同一次发布，按 **§17-1** 一次性重打即可 | — |
+| 2 | CloudBase 集合 | **本轮无**（不新建集合、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **本轮无**（`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰；不重跑迁移上传、无手工删键、不动 `jiazu_id_seq`） | — |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传 | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 18-1 前端产物（**必须重打包：H5 + 小程序**）
+
+**为什么需要**
+
+- 镜像节点口径 A（`docs/marriage.spec.md` §9-7）改变了**三处前端行为**，不重打包则线上仍是旧行为：
+  - **树图卡片角标**：由单一「外」角标改为按 `external_link_type` **分档**（`marriage` 外树配偶 / `child` 外树子女 / `founder` 外树始祖 / `chain` 外树上层链 / 其它 外树登记；§9-7-6）；
+  - **树图统计栏**：由「含外树配偶 M」改为**按档分列、只显示大于 0 的档**（形如 `外树子女 2 · 外树始祖 1`；§9-7-7）；分档统计**按当前可见森林里实际绘制出的镜像节点**计算 —— `外树配偶` 档可为 **0**，属正常（见 §9-7「统计栏口径澄清」）；
+  - **点镜像 → 打开真身档案**（`treeId = external_tree`、`handle = external_person_handle`；§9-7-2）＋ 档案**顶部镜像标注**（§9-7-3）＋ 编辑 / 谱系管理按**真身树权限**判定（§9-7-4）＋ 真身不可见 / 拉取失败**回退镜像本树副本**并提示「真身内容不可见」（§9-7-5）。
+- 改动落点（规格 §10）：`frontend/src/business/cross-tree.ts`（新增纯函数 `mirrorTargetOf` / `mirrorLabelOf`）、`frontend/src/components/tree-pedigree/tree-pedigree.vue`（角标分档 + 统计栏分档）、`frontend/src/components/person-archive/person-archive.vue`（顶部镜像标注 prop + 打开 / 权限 / 回退口径）。
+- **两条红线不随本批改动**：管理选人 / 审批选人列表**保留镜像本身、不做解析**（§9-7-8，写路径依赖镜像 handle）；`external_link_type='branch'` 分迁占位**维持跳转新树**（§9-7-9）。
+
+**具体命令**
+
+```bash
+cd frontend
+VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5      # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+
+npm run build:mp-weixin                                        # 产物交微信开发者工具上传
+```
+
+**本地验证证据**
+
+- ✅ **真机质检通过（2026-09-19 · 真机质检裁定；数值照抄，不得改写）**：
+  - **树图渲染完整性**（口径 A 的前置修复，规格 §9-7-10）：顾树 `gu_39038_01` 树图 `serie.data` **23 项**（**1 虚拟根 + 22 真人**）、**有图形元素的真人项 = 22**、`notDrawn` **空**；
+  - **点镜像 → 打开真身档案**：chief 点 `I000294` → 弹窗顶部「**本节点为 季氏费县白露家族 000159 的镜像 · 内容取自真身**」、**编号行显真身 `000159`**；点 `I000293` → 同口径得 **`000149`**；
+  - **真身不可见 → 回退本树副本**：guest 点 `I000143` → 回退副本 + 提示「**真身内容不可见**」、`exceptions = 0`；
+  - **祖谱顶端链镜像**（`clan-hall`，姒期视）→ 「**本节点为 中华世本 · 全球华人家谱总谱 0137 的镜像**」；
+  - **统计栏分档实测 = 「外树子女 2 · 外树始祖 1」**（**无「外树配偶」档**，属设计，见 `docs/marriage.spec.md` §9-7「统计栏口径澄清」）。
+- ✅ **深链页（`frontend/src/pages/person/detail.vue`）三用例 + 变异验证**：① chief → 收敛到真身；② guest → 回退副本且**地址栏收敛回镜像原坐标**；③ 非镜像节点 → 行为不变。**变异验证**：移除回退收敛那一行 → `reload` 后 body **20 字**错误页 + **2×404**。
+- **真源事实锚点**（真源已核对，可作部署后冒烟的对照值）：
+  - `gu_39038_01` `I000294` 季贺为 = 镜像（`external_mirror='true'`、`external_link_type='child'`、`external_tree='ji_23395_01'`、`external_person_handle=103f95b87eae32faba04050101ed`）→ 真身 = `ji_23395_01` **`I000159`**；
+  - 同树另有镜像 `I000143`（`founder` → 祖谱 `gu_39038`）、`I000292`（`marriage`）、`I000293`（`child`）⇒ 共 **4 个镜像**（`person_count = 23` → 真人 **19**）；
+  - ⇒ 该树树图统计栏**真机质检裁定（2026-09-19）= `外树子女 2 · 外树始祖 1`**，**没有「外树配偶」档** —— 不是缺陷、是设计：`marriage` 类型镜像 `I000292` 季清昆是「**配偶姻亲根**」，被 `frontend/src/business/pedigree.ts`（**第 108-129 行**「排除配偶姻亲根」）恒排除、**不作为树图节点**；`marriage` 档只在「**婚姻镜像本身构成树图节点**」时才可能出现（口径见 `docs/marriage.spec.md` §9-7「统计栏口径澄清」）。
+
+**阻塞点**
+
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §4 / §16-4 / §17-4）。
+- **不阻塞本清单其它项**：本批无后端 / 集合 / 数据动作（§18-0 第 1–3 行「本轮无」），可与 §16 / §17 的前端重打包**同一次发布**。
+- **未决项已落地**：**首页卡片人数单列镜像**（`GET /tree/rank` 新增出参 `mirror_count`；`person_count` **含镜像**，实测 `gu_39038_01` = 23 含 4 个镜像 → 真人 19）→ 见本清单 **§21**（规格 `docs/marriage.spec.md` **§11-4** 已回写为「**已实施 + 冒烟（2026-09-19）**」）；**`mirror_count` 只用于展示、排序归一化仍用 `person_count`**。
+
+### 18-2 本批**不需要**上云的东西
+
+- **本轮无新增云函数路由、无新增集合、无数据变更**（三项明确「本轮无」）：`scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS` 保持 §11-2 的 **12 项**；`jiazu_id_seq` 不动；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰。
+- **纯前端临时产物**：`/tmp` 下的真机点测截图与副本：临时产物，不上云。
+- **文档**：`docs/marriage.spec.md`（本轮 §2 / §6 / §9-3 / §9-4 / §9-7 / §10 / §11-4 回写）与本清单 **§18**：不进产物、不影响云端。
+
+---
+
+## 19. 本批：跨树嫁娶配偶发现通道（口径 A+B · **代码批次：新增 1 条路由 + 前端弹窗**）
+
+> 规格 = `docs/marriage.spec.md` **§9-8**（八条，Kevin 2026-09-19 拍板）+ **§10**（后端 / 前端落点）+ **§11-5**（登记项：发现通道与镜像候选，**本轮不改**）；权限登记 = `docs/permission-tier.spec.md` **§11**（定点例外：跨树选配偶发现通道）。
+> **本批性质**：云函数 `compat-api` **新增 1 条路由** `GET /search/marriage-candidates`（**必须重打包，否则云端 404**）+ 前端娶入 / 嫁出弹窗改调该通道并新增「按全局编号指定」输入框（**必须重打包**）；**CloudBase 集合与云端数据：无变化**（§19-2 / §19-3 均为「无」）。
+> **实施状态：已实施 + 冒烟 / 单测通过（2026-09-19）**（证据见 §19-1 / §19-4「本地验证证据」）；本清单只登记**上云动作**。
+
+### 19-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包 + 部署**：**新增 1 条路由** `GET /search/marriage-candidates`（`index.js`，**注册在树编辑闸门之前**）→ 不重打包 = 云端 **404** | 无（硬阻塞见 §19-7） |
+| 2 | CloudBase 集合 | **无**（不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **无**（不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰） | — |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传（落点 `frontend/src/business/api.ts` + `components/person-archive/person-archive.vue`） | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 19-1 云函数 `compat-api`：新增 1 条路由（**必须重打包 + 部署**）
+
+**为什么需要**
+
+| 路由 | 变更内容（口径 = 规格 §9-8） | 本地验证 |
+|---|---|---|
+| **`GET /search/marriage-candidates`** | **新增**（`index.js`；**必须注册在树编辑闸门之前** —— 闸门 `缺少 X-Tree-Id` 在**第 2331 行**，同段先例 `GET /search/global` 在**第 2096 行**）：① **需登录**（无有效 JWT / token 失效 / 过期 → **401**，**不得**静默回落 guest 档）；② **不套节点级读裁剪**（**不调用** `isHiddenPerson`）→ 这是 `docs/permission-tier.spec.md` **§11** 登记的**唯一**定点例外；③ 入参 `query` / `tree_id` / `gender`（可空；`tree_id` 走**查询参数**）；④ 出参**五键白名单**：`handle` / `gramps_id` / `name` / `gender` / `is_living`（**不得**返回生卒 / 出生地 / 详情 / 家族关系 / `external_*` 指针 / 真身 handle·编号·树）；⑤ 性别口径**不变**（娶入取 `F`、嫁出取 `M`，**性别未知 `U` / `0` 不列入**）；⑥ 上限沿用 `/search` 的 **20**（可配）、**空 `query` → `200 []`** | ✅ **已实施 + 冒烟通过（2026-09-19；数值照抄，不得改写）**：未登录 → **401 `{"error":"登录已过期或未登录"}`**（**不降级 guest**）；member（`13800000001`）搜 `gu_39038_01`「景月」→ **1 条** `I000140 顾景月 F`、搜 `long_40857_01`「扬」→ **1 条** `I000239 龙扬 F`（**修复前**同身份树内 `/search` 对照：guest **0** 条 / 季树 member **0** 条 / chief **1** 条）；出参键集**恰为五键**；**镜像排除**：`I000292` 计 **0**；空 `query` → **`200 []`**。**单测** `cloudfunctions/compat-api/lib/marriage-candidates.test.js` **11/11**（已注册进根 `package.json` 的 `scripts.test`）；**变异验证**（改回套 `isHiddenPerson`）= **5 pass / 6 fail**；**真源 28 个文件 md5 前后一致** |
+
+**具体命令**（仓库根；写法同 §1 / §11-1 / §16-1 / **§17-1**）
+
+```bash
+# ① 重打包（产物 cloudfunctions/deploy/compat-api/index.js）
+frontend/node_modules/.bin/esbuild cloudfunctions/compat-api/index.js \
+--bundle --platform=node --format=cjs --external:@cloudbase/node-sdk \
+--outfile=cloudfunctions/deploy/compat-api/index.js
+
+# ② 部署（cloudbaserc.json 已配 functionRoot=./cloudfunctions/deploy、envId=liwu-d8gek6jjdab1d087c）
+tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c
+
+# ③ 重打包判据（≥ 1；未重打 = 0）
+grep -c 'search/marriage-candidates' cloudfunctions/deploy/compat-api/index.js
+```
+
+- **本批不新增集合、不改 `cloudbaserc.json`、不动环境变量**（`MASTER_TREE_ID=zhonghua` / `COMPAT_SOURCE=cloud` 均沿用）。
+- ⚠️ `cloudfunctions/deploy/compat-api/index.js` 若仍是旧产物，则**同时落后 §16 / §17 / §19 三批改动**（§18 是纯前端批次、不含云函数改动）。
+
+### 19-2 CloudBase 集合：**无**
+
+- 不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（保持 §11-2 的 **12 项**）；本通道**只读**既有树 JSON（内存态），不落任何新集合。
+
+### 19-3 云端数据：**无**
+
+- 不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰。
+
+### 19-4 前端产物（**必须重打包：H5 + 小程序**）
+
+**为什么需要**
+
+- 娶入 / 嫁出弹窗**改调**新通道（原走树内 `GET /search` → 受节点级分层裁剪，目标树近代女性节点搜不到）；**不重打包则线上仍是旧行为**（弹窗仍只搜到 0 条，且不区分「被隐藏」与「确实无此人」）。
+- 改动落点（规格 §9-8 / §10）：`frontend/src/business/api.ts`（在 `searchPeople`（**约 1680 行**）旁新增发现通道查询函数）+ `business/index.ts`（导出）+ `components/person-archive/person-archive.vue`：
+  - `doSearchMarry`（**第 2115-2138 行**）改调新通道；
+  - 空态（**第 452 行**）由「未找到…节点」单一句**拆三态**：① 未登录 / 登录过期（401）② 通道错误 ③ 确实无匹配；
+  - **新增「按全局编号指定」输入框**（兜底；**编号优先、可与搜索共存**；编号解析失败文案**沿用后端现有文案**）；
+  - `filter(p => p.gender === want)`（**第 2132-2133 行**）**保留**（性别口径不变）。
+- **红线不随本批改动**：树内 `/search` **保留镜像**、`GET /search/global` **按镜像归并**两条分工**均不变**（`docs/marriage.spec.md` §9-7 / §9-8 第 7 条）；管理选人 / 审批选人列表**保留镜像本身、不做解析**（§9-7-8）。
+
+**具体命令**
+
+```bash
+cd frontend
+VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5      # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+
+npm run build:mp-weixin                                        # 产物交微信开发者工具上传
+```
+
+**本地验证证据**
+
+- ✅ **已实施 + 冒烟 / 真机质检通过（2026-09-19；数值照抄，不得改写）**：
+  - **发现通道**（§19-1 表格 / §19-5 第 2–6 条）：**未登录 → 401「登录已过期或未登录」**（**不降级 guest**）；member（`13800000001`）搜 `gu_39038_01`「景月」→ **1 条** `I000140 顾景月 F`、搜 `long_40857_01`「扬」→ **1 条** `I000239 龙扬 F`（**同身份**树内 `/search` 对照 = **0 条**）；出参键集**恰为五键**；**镜像排除**：`I000292` 计 **0**；**单测 11/11**（已注册进根 `package.json` 的 `scripts.test`）；**变异验证 = 5 pass / 6 fail**；全量 `npm test` = **391 tests / 391 pass / 0 fail**（⚠️ 该计数跑于 **2026-09-19 12:10**；其后**并发工作流**改过 `cloudfunctions/compat-api/lib/tree-write.js` / `lib/clan.js` ⇒ **提交前必须重跑**，本条**不据此断言当前工作区全绿**）；**真源 28 个文件 md5 前后一致**。
+  - **选人与三态（T2 / T4）**：**管理选人**（加子 → 从树中选择）搜「清昆」→ 候选 `季清昆 / 000292`（**未被解析成真身**、**无 000254** ⇒ §9-7-8 红线：写路径选人**保留镜像本身**）；**娶入弹窗** ① 龙树搜「扬」→ **龙扬 / 000239 / 女** ② 空态文案「**未找到符合条件的女性节点**」 ③ 填 `000140` → 确认文案**含 000140**、按钮 **disabled → enabled** ④ **真实 401** → 文案「**登录已过期，请重新登录**」；**全程非 GET 请求 = 0**。
+- 可供部署后冒烟复用的**对照锚点**：`GET /search/global` 镜像归并**不变**的锚点 = 搜「季贺为」只返 **1 条**（真身 `ji_23395_01` `I000159`）。
+
+**阻塞点**
+
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §4 / §16-4 / §17-4 / §18-1）。
+- **硬阻塞 = 必须先重打包云函数产物**（§19-7）：不重打包则云端 `GET /search/marriage-candidates` **404**，前端改调后**必然落在「通道错误」档**。
+- **未决项不在本批**：发现通道的**镜像候选**（字段白名单不含 `external_*` ⇒ 前端无从辨别）按规格 **§11-5** 登记为「另需拍板、本轮不改」；**不影响本批上云**。
+
+### 19-5 部署后冒烟验证（按序做）
+
+1. **重打包判据 ≥ 1**：`grep -c 'search/marriage-candidates' cloudfunctions/deploy/compat-api/index.js`（未重打 = 0）；云端同路径不再 **404**；
+2. **未登录**（无 `Authorization`）`GET /search/marriage-candidates?query=景月&tree_id=gu_39038_01` → **401**（**不得** `200 []`、**不得**按 guest 档返 0 条）；
+3. **失效 / 过期 token** 同请求 → **401**（**不降级 guest** 档 —— 本批的定点判据）；
+4. **已登录**（非该树成员即可）同请求 → **200** 且含 `I000140` 顾景月（`gender 'F'`）；`long_40857_01` 搜「扬」→ 含 `I000239` 龙扬；
+5. **出参键集恰为五键**（`handle` / `gramps_id` / `name` / `gender` / `is_living`）：**无** `birth_date` / `death_date` / 详情字段 / `external_*` / 真身 handle·编号·树；
+6. **性别口径**：娶入取 `F`、嫁出取 `M`；**`U` / `0` 不列入**；空 `query` → **`200 []`**；超上限返回 **≤ 20** 条；
+7. **非例外回归（必须不变）**：树内 `GET /search?query=景月&tree_id=gu_39038_01`（带 `X-Tree-Id`）→ guest 仍 **0 条**；`GET /search/global?query=季贺为` → 仍 **1 条**（镜像归并）；隐藏节点 `GET /people/<handle>` → 仍 **404**；`GET /tree/rank` 的 `access` 元信息不变；
+8. **前端三态文案**：未登录 / 登录过期点搜索 → 文案为「未登录 / 登录过期」档；后端不可达（副本停服）→ 文案为「通道错误」档；确认无匹配 → 文案为「确实无匹配」档（**三态可辨**）；
+9. **前端编号兜底**：弹窗「按全局编号指定」填 `I000140`（或 `000140`）→ 提交 `/marriage-request` 成功（**编号优先**、可与搜索共存）；填错编号 → 报错文案与后端一致（`找不到编号/句柄为「…」的配偶节点`）。
+
+### 19-6 本批**不需要**上云的东西
+
+- **本批无新增集合、无数据变更**（§19-2 / §19-3 均「无」）：`COLLECTIONS` 保持 §11-2 的 **12 项**；`jiazu_id_seq` 不动；`migrate-output/**` 与 `config/tree-meta.json` 未被触碰。
+- **测试文件**（实施侧新增的单测，如 `cloudfunctions/compat-api/lib/marriage-candidates.test.js`）：纯本地，**不进打包产物**。
+- **文档**：`docs/marriage.spec.md`（本批回写 §9-8 / §10 / §11-5）、`docs/permission-tier.spec.md`（本批登记 §11）、本清单 **§19**：不进产物、不影响云端。
+- `/tmp` 下的副本与取证文件：临时产物。
+
+### 19-7 阻塞点
+
+⚠️ **必须先重打包云函数产物**：不重打包 → 云端 `GET /search/marriage-candidates` 返回 **404**（前端弹窗三态会落在「通道错误」档）；重打包判据见 §19-5 第 1 条。
+> 📌 **现状（2026-09-19 12:50 校验）**：产物**已由并发批次重打**（`cloudfunctions/deploy/compat-api/index.js` = **998,338 B** / md5 `d61a8aebfb3f3095baae4e1e731fd675`，与 §20-1 登记值一致），其中 `grep -c 'search/marriage-candidates'` = **1** ⇒ 本批路由**已在产物内**；**`tcb fn deploy` 仍未执行**（本清单不代劳）。
+⚠️ 本批**不前置**任何数据项（§19-3「无」），故**无**「重打包覆盖不到的数据项」这类并行阻塞（与 §17-7 不同）。
+
+---
+
+## 20. 本批：tree_id 注音修复（pinyin-pro 姓氏模式）+ 3 棵树原地改名迁移 + 输入类校验错误自带 400（**代码批次 + 数据项**）
+
+> **本批性质**：云函数 `compat-api` **必须重打包 + 部署**（注音逻辑与错误码都在函数内）；**CloudBase 集合：无变化**；**云端数据：有 3 棵树改名**（`tree-meta` + 树 JSON + 详情文档，**旧 URL 不留别名**）。
+> **本批状态**：注音修复 + 3 棵树迁移 + 云函数重打包**均已完成**（`npm test` **398/398 全绿**，含收尾轮新增的 2 条 `status === 400` 断言）；本节只登记**上云动作**，**`tcb fn deploy` 不在本清单执行**。
+
+### 20-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包（已完成）+ `tcb fn deploy`**：`lib/tree-write.js` 的 `surnamePinyin` 改 `pinyin-pro` 姓氏模式、删掉 `PINYIN_MAP[char]` 的 `'shi'` 静默兜底、输入/校验类拒绝改自带 `status:400`；**不部署 = 云端继续按旧逻辑把未收录姓氏写成 `shi_*`**，且输入类拒绝仍回 `{"error":"服务内部错误","status":500}` | ⚠️ 产物体积（§20-1）；部署后需重启实例刷内存缓存 |
+| 2 | CloudBase 集合 | **无**（不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`） | — |
+| 3 | 云端数据 | **有**：3 棵树原地改名（§20-2）→ 重传 `tree-meta` + 3 个树 JSON + 5 个详情文档 + **核对 `jiazu_assets`（本地已改写 7 处旧 id 引用）** | 旧 URL 不留别名：改名前已发出的链接会 404（预期） |
+| 4 | 前端 H5 / 小程序 | **本批无上云动作**：`business/tree-id.ts` 只删了前端那份重复拼音表与**无消费者**的 `charToPrefix` / `makeTreeId`（行为不变，H5 不引 `pinyin-pro`） | — |
+
+### 20-1 云函数 `compat-api`（**必须重打包（已完成）+ 部署**）
+
+**为什么需要**：`cloudfunctions/deploy/compat-api/index.js` 是**打包快照** —— 不重打，云端继续用旧注音逻辑（未收录姓氏一律 `shi_*`）与旧错误处理（输入类拒绝被 `eco.errorPayload` 吞成「服务内部错误」）。
+
+```bash
+# ① 重打包（✅ 已完成；同时覆盖 §16 / §17 / §19 的云函数改动 —— 同一份产物）
+frontend/node_modules/.bin/esbuild cloudfunctions/compat-api/index.js \
+--bundle --platform=node --format=cjs --external:@cloudbase/node-sdk \
+--outfile=cloudfunctions/deploy/compat-api/index.js
+
+# ② 部署（**本清单不执行**；cloudbaserc.json 已配 functionRoot=./cloudfunctions/deploy、envId=liwu-d8gek6jjdab1d087c）
+tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c
+
+# ③ 重打包判据（两条都要）
+grep -c '|| "shi"' cloudfunctions/deploy/compat-api/index.js                     # → 0（旧静默兜底不得再出现）
+grep -Fc '\u65E0\u6CD5\u6CE8\u97F3' cloudfunctions/deploy/compat-api/index.js   # → 2（「无法注音」文案在产物内）
+# 注：esbuild 默认 --charset=ascii，产物里的中文是 \uXXXX 转义 → 中文判据须用 grep -F 定长匹配
+```
+
+- **产物体积 106,888 → 998,225 B**（≈ +0.9 MB，全部来自 `pinyin-pro` 拼音词典）；收尾轮再重打后实测 **998,150 B**（源码注释/短函数名增减所致，同一量级）；**本批（立支建树路径补 `surname_pinyin`）再次重打后为 998,338 B / md5 `d61a8aebfb3f3095baae4e1e731fd675`**（旧值 998,150 B / `dc5de32e0c92b5961703e3f0b3fcf8f0`；判据不变：`grep -c '|| "shi"'` = 0、`grep -c 'PINYIN_MAP'` = 0、`grep -Fc '\u65E0\u6CD5\u6CE8\u97F3'` = 2、`grep -c 'surname_pinyin'` = 4）。**部署前先确认云函数代码包体积限制**，并留意冷启动时间增长。
+- **内存缓存**：`lib/store.js` 的 `treeCache` / `metaCache` 进程内常驻 —— **云端部署后 / 本地改完数据后都必须重启实例**才生效（本地：`COMPAT_SOURCE=local node cloudfunctions/compat-api/local-server.js 3100`；云端：重新部署或触发一次冷启动）。不重启的症状 = 读接口继续返旧快照，且下一次保存会把旧 id/旧值写回。
+- 验收锚点（副本实例真 HTTP 实测，修后）：`POST /admin/create-tree {surname_char:"乥"}` → **HTTP 400** + body `{"error":"姓氏「乥」无法注音，请检查输入"}`（**不再是**「服务内部错误」），且**未建树、未扣籽**；`{surname_char:"中国"}` → 400「请填写单个汉字姓氏」；`{surname_char:"雷",founder_name:""}` → 400「请填写始祖姓名」。
+
+### 20-2 云端数据：3 棵树原地改名（**旧 URL 不留别名**）
+
+| 旧 tree_id | 新 tree_id | 改名载荷 |
+|---|---|---|
+| `shi_32426_01` | `ji_32426_01` | `tree-meta` 键 + `tree_id` + `path_alias`；`migrate-output/trees/<id>.json`（文件名 + 内部 `tree_id`）；`migrate-output/details/<id>:<handle>.json`（文件名前缀 + 内部 `tree_id`）；业务集合 **`jiazu_assets`**（`migrate-output/collections/jiazu_assets.json`）的 `ref.tree_id` 与 `desc` 文案 —— **实测 7 处**（4× `ref.tree_id` + 3× `desc`；行号 976 / 987 / 998 / 1009 / 1134 / 1145 / 1156）。复现：`python3 -c "s=open('migrate-output/collections/jiazu_assets.json').read();print(s.count('ji_32426_01')+s.count('rong_23481_01')+s.count('heng_24658_01'))"` → `7`（此前本节误记为「实测无引用」，已按上述实测更正） |
+| `shi_23481_01` | `rong_23481_01` | 同上 |
+| `shi_24658_01` | `heng_24658_01` | 同上 |
+
+- 本地已完成：`migrate-output/**` 与 `config/tree-meta.json` 内 `shi_32426` / `shi_23481` / `shi_24658` **内容与文件名命中均为 0**；`trees/` 15 个文件，3 棵改名树的详情文档共 **5 个**（`ji_32426_01` 1 个 / `rong_23481_01` 2 个 / `heng_24658_01` 2 个）已随迁。
+- 云端动作 = 重传 `tree-meta` + 上述 3 个树 JSON + 5 个详情文档 + **核对/重传 `jiazu_assets` 集合**（`CB_ENV=<envId> CB_KEY=<key> node scripts/upload-migrated-to-cloudbase.mjs`，密钥由用户给；`jiazu_assets` 已在 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS` 内，该命令会**确保集合存在**，但**不上传集合数据**）——**`jiazu_assets/global` 数据需另行核对**：本地件里 3 棵树旧 id 的 **7 处**（4× `ref.tree_id` + 3× `desc`）已被本次迁移改写为 `ji_32426_01` / `rong_23481_01` / `heng_24658_01`，云端该文档若仍是旧 id 需同步；⚠️ 该文档同时含**用户界面操作产生的流水**，**以云端实际为准**：云端已有更晚写入时**不要**用本地件全量覆盖（§16-3 追加的既有口径），只做逐条核对与定向改写；**不留 `path_alias` 旧值**（旧 URL 404 属预期）。
+- ⚠️ 重传/重启前先按 §20-1 末条刷新实例缓存，否则进程内 `treeCache` 仍是旧 id。
+
+### 20-3 阻塞点
+
+- **云函数包体积**：998 KB（`pinyin-pro` 词典为主）—— 超限则需裁剪词典或改按需加载，属部署前置判断。
+- **改名不可逆且旧 URL 不留别名**：部署前确认无对外引用 3 条旧链接；云端重传的数据项与 §20-1 的重打包**必须同批**执行（只做一半会出现「tree-meta 指向新 id、树 JSON 仍叫旧文件名」的坏链）。
+
+---
+
+## 21. 本批：首页卡片人数单列镜像（**代码批次：云函数新增出参字段 + 前端卡片文案**）
+
+> 规格 = `docs/marriage.spec.md` **§9-4 修订**（首页卡片口径）+ **§11-4**（原登记项「首页卡片人数未单列镜像 · 本轮不改」，**本批落地**）。
+> **本批性质**：云函数 `compat-api` 的 `GET /tree/rank` **新增出参字段 `mirror_count`**（**必须重打包**）+ 首页卡片文案改「N 人（含外树 M）」（**必须重打包**）；**CloudBase 集合：无变化**；**云端数据：无变化**（§21-2 / §21-3 均为「无」）。
+> **本批状态：已实施 + 冒烟（2026-09-19）** —— 数值证据见 §21-1「本地验证证据」；本节只登记**上云动作**。
+
+### 21-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包 + 部署**：`GET /tree/rank` **新增出参字段 `mirror_count`**（本树 `people` 中 `external_mirror === 'true'` 的节点数）→ 不重打包 = 云端响应无该字段、卡片只显「N 人」 | 无（产物已于 2026-09-19 12:50 重打，见 §19-7「现状」） |
+| 2 | CloudBase 集合 | **无**（不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **无**（不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰） | — |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传 | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 21-1 云函数 `compat-api`：`/tree/rank` 新增出参 `mirror_count`（**必须重打包 + 部署**）
+
+**为什么需要**：首页家族 / 祖谱卡片的人数口径要求**单列镜像**（规格 §9-4 修订 → 卡片显「N 人（含外树 M）」），而原出参只有 `person_count`（**含镜像**）—— 不重打包则云端无 `mirror_count`，前端兜底后卡片只显「N 人」。
+
+| 路由 | 变更内容 | 本地验证 |
+|---|---|---|
+| **`GET /tree/rank`** | **新增出参字段 `mirror_count`**（`index.js` 约 **486–489 行**：`Object.values(tree.people).filter(p => String(p.external_mirror) === 'true').length`）；**`person_count` 口径不变（仍含镜像）**；`access` / `activity` / `updated_at` / `rank_*` 元信息**一律不动** | ✅ **已实施 + 冒烟通过（2026-09-19）**：见下方实测表 + 单测 7/7 |
+
+**具体命令**（仓库根；写法同 §17-1 / §19-1 / §20-1）
+
+```bash
+# ① 重打包（产物 cloudfunctions/deploy/compat-api/index.js）
+frontend/node_modules/.bin/esbuild cloudfunctions/compat-api/index.js \
+--bundle --platform=node --format=cjs --external:@cloudbase/node-sdk \
+--outfile=cloudfunctions/deploy/compat-api/index.js
+
+# ② 部署（cloudbaserc.json 已配 functionRoot=./cloudfunctions/deploy、envId=liwu-d8gek6jjdab1d087c）
+tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c
+
+# ③ 重打包判据（≥ 1；未重打 = 0）
+grep -c 'mirror_count' cloudfunctions/deploy/compat-api/index.js
+```
+
+**本地验证证据**
+
+- ✅ **接口 / 真机实测（2026-09-19；数值照抄，不得改写）**：
+
+  | tree_id | `person_count` | `mirror_count` | 卡片文案（`pages/index/index.vue` `peopleText()`） |
+  |---|---|---|---|
+  | `gu_39038_01` | **23** | **4** | 23 人（含外树 4） |
+  | `ji_23395_01` | **89** | **3** | 89 人（含外树 3） |
+  | `long_40857_01` | **2** | **0** | 只显「**2 人**」（`mirror_count` **不 > 0** → 不加括号） |
+  | 祖谱 `ji_23395` | **2** | **1** | 2 人（含外树 1） |
+
+  （四个 tree_id 的 `people` 长度与 `String(external_mirror) === 'true'` 计数**已按真源 `migrate-output/trees/<tree_id>.json` 独立复核一致**。）
+- ✅ **单测**：`cloudfunctions/compat-api/lib/mirror-count.test.js` **7/7**，**已注册进根 `package.json` 的 `scripts.test`**；与既有 `cloudfunctions/compat-api/lib/home-sort-search.test.js` **合跑 30/30**。
+- ✅ **排序公式未动**：综合分**归一化仍用 `person_count`** —— `mirror_count` **只用于展示**（`frontend/src/business/api.ts` 的 `TreeRankInfo.mirror_count` 注释明写「**不参与任何排序归一化**」）；`0.4×norm(人数) + 0.4×norm(活跃度) + 0.2×norm(新近度)` 与 tie-break 规则**逐字不变**（`docs/home-sort-search.spec.md`）。
+- **并发批次产物现状（2026-09-19 12:50 校验）**：`cloudfunctions/deploy/compat-api/index.js` = **998,338 B** / md5 `d61a8aebfb3f3095baae4e1e731fd675`；`grep -c 'mirror_count'` = **7**、`grep -c 'search/marriage-candidates'` = **1** ⇒ 本批与 §19 的路由**同在一份产物内**。
+- **前端兜底口径**（`pages/index/index.vue` `peopleText()`）：`mirror_count` **缺失 / 非数值 / ≤ 0**（含本地后端未重启）→ 回退只显「N 人」；`person_count` 缺失 → 「— 人」；**任一分支都不产出 NaN / undefined**。
+
+**阻塞点**
+
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §16-4 / §17-4 / §18-1 / §19-4）。
+- **命名提示**：`TreeRankInfo.mirror_count`（全树镜像数）与 `ClanInfo.mirror_count`（祖谱顶端镜像段节点数）**同名字段、语义不同**，属两类型既有命名、**不重命名**（裁定见 `docs/marriage.spec.md` §11-8）。
+- **不阻塞本清单其它项**：本批无集合 / 无数据动作（§21-2 / §21-3「无」），与 §16 / §17 / §19 的云函数重打包**同一次发布**即可。
+
+### 21-2 CloudBase 集合：**无**
+
+- 不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（保持 §11-2 的 **12 项**）；本批只改一条既有路由的出参字段，不落任何新集合。
+
+### 21-3 云端数据：**无**
+
+- 不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰。
+
+### 21-4 本批**不需要**上云的东西
+
+- **测试文件**（`cloudfunctions/compat-api/lib/mirror-count.test.js`）：纯本地，**不进打包产物**。
+- **文档**：`docs/marriage.spec.md`（本批回写 §9-4 / §11-4 / §11-8）、本清单 **§21**：不进产物、不影响云端。
+- `/tmp` 下的副本与取证文件：临时产物。
+
+---
+
+## 22. 本批：家族树共享选择器（展示层）+ uni-app H5 遮罩关闭修复（**纯前端批次**）
+
+> 规格 = `docs/marriage.spec.md` **§9-9**（tree-picker 展示层 / 交互 / 冻结红线 / 真机质检证据 / 已知边界）与 **§9-10**（`@click.self` 在 uni-app H5 失效这一**跨模块通用坑** + 全仓 11 处修正清单）。
+> 性质：**纯前端批次** —— 只动 `frontend/`（**新增 1 个组件 + 修改 5 个 `.vue`**）；**云函数 `compat-api` 无新增路由、无任何改动**；**CloudBase 集合：无**；**云端数据：无**。
+> 状态：**已实施 + 真机质检通过（2026-09-19）**；本清单只登记上云动作，不表示已上线。
+
+### 22-0 三项「无」的结论（部署时不必为它做任何后端 / 数据动作）
+
+| 类别 | 本批变化 |
+|---|---|
+| 云函数 `compat-api` | **无新增路由、无改动**（不产生新的重打包需求；**§19 / §21 的云函数重打包仍然待执行**，见 §21-1 的产物校验） |
+| CloudBase 集合 | **无**：不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（保持 **12 项**） |
+| 云端数据 | **无**：不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；本批**未触碰** `migrate-output/**` 与 `config/tree-meta.json` |
+
+### 22-1 前端（**H5 必须重打包** + hosting 部署；**小程序需同批重打包上传**）
+
+**新增文件（1）**
+
+| 文件 | 内容 |
+|---|---|
+| `frontend/src/components/tree-picker/tree-picker.vue` | 家族树共享选择器：折叠态**恒一行（实测 44px，不随候选数变化）**；展开态**独立覆盖层 `z-index:1200`**（> 既有 `.modal-mask` 999）= 搜索框（本地过滤 `label`/`sub`/`tree_id`，大小写不敏感）+ 列表区 `max-height:36vh` 内部滚动 + 底部取消 / 确定；props `items`/`modelValue`/`placeholder`，emit `update:modelValue` + `select` |
+
+**被改文件（5；本批前端写入面 = 1 新增 + 5 修改，共 6 个文件）**
+
+| # | 文件 | 本批改动 |
+|---|---|---|
+| 1 | `frontend/src/components/person-archive/person-archive.vue` | ① **三处接入 tree-picker**：嫁出 / 娶入（选择目标家族树）、认祖（选择认祖目标）、挂载祖谱（选择要挂载的祖谱）——旧平铺 `.tree-opt` 列表整体删除（全仓 `grep 'tree-opt'` = **0**）；② **遮罩修复 6 处**：嫁出 / 娶入、删除节点、汇宗、认祖、挂载祖谱、绝婚 / 合离；③ `.modal` 补 `overflow-y:auto` + `margin:auto`、`.modal-mask` 补 `overflow-y:auto` + `padding:5vh 0`（超高不再外溢 / 顶裁） |
+| 2 | `frontend/src/components/clan-hall/clan-hall.vue` | 遮罩修复 1 处（编辑祖谱信息） |
+| 3 | `frontend/src/pages/hall/index.vue` | 遮罩修复 2 处（加入申请、建谱申请） |
+| 4 | `frontend/src/pages/mine/index.vue` | 遮罩修复 1 处（解绑申请） |
+| 5 | `frontend/src/pages/market/index.vue` | 遮罩修复 1 处（购买确认） |
+
+- **遮罩修复合计 11 处 = 6 + 1 + 2 + 1 + 1**，写法 = **遮罩 `@click="原 handler"` + 紧邻内层面板 `@click.stop`**（**两者必须同时改**：只改遮罩会得到「点弹窗内部任意处即关闭」的重大回归）。
+- **回归自查判据**：`grep -rn '@click.self' frontend/src --include=*.vue` = **0 命中**（本批实测 **0**）。
+- **冻结项（换壳不得顺手改）**：空态三态文案、「按全局编号指定（兜底，如 000052 / I000052）」label 与 placeholder、初娶 / 再娶（第 N 次）序号文案、身份确认块、提交按钮禁用条件、**候选集合（嫁出 / 娶入 仍为「非 `is_master` 且非本树」）**——逐条见 `docs/marriage.spec.md` **§9-9**。
+
+**构建与部署命令（与 §4 / §16-4 同）：**
+
+```bash
+cd frontend && VITE_API_BASE=<云函数 HTTP 域名> npm run build:h5   # H5 产物
+cd frontend && npm run build:mp-weixin                              # 小程序产物（同批上传）
+```
+
+### 22-2 CloudBase 集合：**无**
+
+- 不新建集合、不加索引、不改 `COLLECTIONS`（保持 §11-2 的 **12 项**）。
+
+### 22-3 云端数据：**无**
+
+- 不重跑迁移上传、不动 `jiazu_id_seq`；本批只改前端 `.vue`。
+
+### 22-4 部署后冒烟（按序做，任一步不符即视为发布带回退）
+
+1. 打开任意人物档案 → **🤵 娶入** → 弹窗出现（**弹窗不再被长列表撑开**）。
+2. **目标家族树选择器折叠态 = 一行**（实测 44px 量级）；旧平铺胶囊列表 `.tree-opt` **数量 0**。
+3. 点开选择器 → **搜索框**输入（如「顾」）→ 列表**收敛**；**分组小标题**只在 ≥2 组时出现；选中 → **确定 → 回填**显示所选树。
+4. **点遮罩 → 弹窗关闭**（这是本批修的核心症状：修复前点外面无反应）。
+5. **点弹窗内部（标题 / 表单空白处）→ 弹窗不关**（成对断言，防「点内部即关」回归）。
+6. 嫁出侧同样验一遍；空态文案 = 「未找到符合条件的女性节点 / 未找到符合条件的男性节点」；假 token → 「登录已过期，请重新登录」。
+7. 其余 5 个弹窗各点一次遮罩（祖谱编辑 / 加入申请 / 建谱申请 / 解绑申请 / 购买确认）→ 均能关闭。
+
+### 22-5 已知边界（登记项 —— 不当缺陷、不阻塞发布）
+
+1. **嵌套两层选择器时，在同一坐标快速连点两下**：第一下关内层、**第二下落在外层遮罩上把外层也关掉** —— 属**两次独立点击（非事件穿透）**；**不追加时间戳守卫**（登记于 `docs/marriage.spec.md` §9-9）。
+2. **两处无法真机触达**（因当前数据现状，非实现缺陷）：① `pages/market/index.vue`「购买确认」弹窗 —— 当前**无在售挂单**；其改动与**已验证的 4 处同构**、`vue-tsc --noEmit` **exit 0**；② **认祖选择器** —— 全库**无 `founder_state='none'`**（始祖均已挂载）。发布后一旦有数据，按 §22-4 第 3 / 第 7 步补验即可。
+
+**阻塞点**
+
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §16-4 / §17-4 / §18-1 / §19-4 / §21）。
+- **不阻塞本清单其它项**：本批与 §18（口径 A 纯前端）/ §19（发现通道）/ §21（mirror_count）的**前端改动同一次重打包发布**即可；它们各自的云函数重打包仍按 §19-1 / §21-1 执行。
+- **本批前端写入面（mtime 取证）**：1 个新增 + 5 个修改（`tree-picker.vue` / `person-archive.vue` / `clan-hall.vue` / `mine/index.vue` / `market/index.vue` / `hall/index.vue`），无其它前端文件被本批触碰。
+
+---
+
+## 23. 本批：家族人数口径修订（**代码批次：`GET /tree/rank` 出参语义变更 + 首页卡片文案 + 家族页统计栏**）
+
+> 规格 = `docs/home-sort-search.spec.md` **§10-6**（现行口径七条全文 · 2026-09-19 拍板；同时作废旧「N 人（含外树 M）」单列镜像显示口径）+ 本册 §23；权限侧补注 = `docs/permission-tier.spec.md` **§5 末条**（聚合计数不随节点级读裁剪变化）。
+> **本批性质**：云函数 `compat-api` 的 `GET /tree/rank` **`person_count` 语义变更**（**字段名 / 形状 / 类型不变** ⇒ **必须重打包**；不重打包**不报错**、只**静默返旧口径数值**）+ 首页家族 / 祖谱卡片文案改「N 人」+ 家族页（`hall`）树图统计栏改为同一口径（**H5 必须重打包 + hosting 部署**）；**CloudBase 集合：无变化**；**云端数据：无变化**（§23-2 / §23-3 均为「无」）。
+> **实施状态：已实施（本地已验证，2026-09-19（Zang 汇总））** —— 本地实施与验证已完成（实施侧证据见 §23-1「本地验证证据」：`npm test` **427/427**、运行中 3100 逐树实测、质检独立复算、UI 实测）；本节只登记**上云动作**，**部署仍未执行** ⇒ **不得**把本节任何本地数值当**线上已部署**证据引用。
+> **取代 §21 的卡片显示口径**（§21 = 旧「新增 `mirror_count` + 卡片 N 人（含外树 M）」批次）：**§21 正文不改写**；其 `mirror_count` **降级为保留字段、不再参与展示**（仍随出参下发，做形状兼容）。
+
+### 23-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包 + 部署**：`GET /tree/rank` 的 `person_count` 改新口径（出参字段名 / 形状 / 类型不变）；`mirror_count` **保留但不再用于展示** → 不重打包**不报错**，只静默返旧口径数值 | ⚠️ **无字符串型重打包判据**（新旧产物都含 `person_count`）⇒ 只能靠部署后**数值比对**（§23-5 第 1 条） |
+| 2 | CloudBase 集合 | **无**（不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **无**（不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰） | — |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传 | 需确认 hosting 目标与云函数 HTTP 域名（同 §4 / §16-4 / §19-4 / §21 / §22） |
+
+### 23-1 云函数 `compat-api`：`GET /tree/rank` 的 `person_count` 语义变更（**必须重打包 + 部署**）
+
+**为什么需要**
+
+- 家族人数口径本轮修订为「**本姓节点无论男女 + 外姓嫁入女性一律计入；本姓女性嫁出后所生的外姓子女不计入**」（全文 = `docs/home-sort-search.spec.md` §10-6 七条）；旧「树内全部节点数（含镜像）」口径**作废**。
+- 该路由的**字段名 / 形状 / 类型都不变** ⇒ 云端**不重打包不会 404、不会报错**，只会**继续返回旧口径数值**；判别只能靠**值**，不能靠**串**。
+- 同一批的**两处展示变更**（① 首页家族 / 祖谱卡片文案「N 人（含外树 M）」→「**N 人**」；② 家族页 `hall` 树图统计栏由「按登录档位裁剪后的人物列表长度」改为**读 `/tree/rank` 的 `person_count`**）**不重发 H5 就仍是旧行为**（前端动作见 §23-4）。
+- 排序**逐字不变**：归一化**继续用 `person_count`**，权重与 tie-break 见规格 §3-2 / §3-3 / §3-5。
+
+| 路由 | 变更内容 | 本地验证 |
+|---|---|---|
+| **`GET /tree/rank`** | `person_count` **取值口径变更**（新口径 = 规格 §10-6 七条）；**出参字段名 / 形状 / 类型一律不变**；`mirror_count` **保留（降级：不再参与展示、不参与排序）**；`access` / `activity` / `updated_at` / `rank_*` / `total_generations` / `root_count` **全不动** | ✅ **已实施（本地已验证，2026-09-19（Zang 汇总））**：实施侧测试 + 运行实测证据见下「本地验证证据」（**`npm test` 427/427**、运行中 3100 逐树数值与 §23-5 第 1 条逐位一致）；文档角色的**只读真源复算**见下（该复算本身**非实施证据**、只作交叉校验） |
+
+**具体命令**（仓库根；写法同 §17-1 / §19-1 / §20-1 / §21-1）
+
+```bash
+# ① 重打包（产物 cloudfunctions/deploy/compat-api/index.js）
+frontend/node_modules/.bin/esbuild cloudfunctions/compat-api/index.js \
+--bundle --platform=node --format=cjs --external:@cloudbase/node-sdk \
+--outfile=cloudfunctions/deploy/compat-api/index.js
+
+# ② 部署（cloudbaserc.json 已配 functionRoot=./cloudfunctions/deploy、envId=liwu-d8gek6jjdab1d087c）
+tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c
+
+# ③ 重打包判据：⚠️ 本批**没有字符串型判据** —— 字段名 / 出参形状均不变，
+#    `grep -c 'person_count'` 新旧产物都 ≥ 1、不区分口径，**不能**用作本批判据。
+#    替代判据 = ① 产物 mtime 晚于源码最后修改；② 部署后按 §23-5 第 1 条逐树比对数值。
+ls -l cloudfunctions/deploy/compat-api/index.js cloudfunctions/compat-api/index.js
+```
+
+- **本批不新增集合、不改 `cloudbaserc.json`、不动环境变量**（`MASTER_TREE_ID=zhonghua` / `COMPAT_SOURCE=cloud` 均沿用）。
+- ⚠️ 本批云函数改动与 **§16 / §17 / §19 / §20 / §21** 的改动**同在一份产物**：**一次重打包覆盖全部**，不要只重打一半（§19-7 / §20-1 登记的产物现状为 2026-09-19 12:50 重打）。
+- **内存缓存**：`lib/store.js` 的 `treeCache` / `metaCache` 进程内常驻 —— **云端部署后 / 本地改完数据后都必须重启实例**才生效（本地：`COMPAT_SOURCE=local node cloudfunctions/compat-api/local-server.js 3100`；云端：重新部署或触发一次冷启动）。
+
+**本地验证证据**
+
+- ✅ **已实施（本地已验证，2026-09-19（Zang 汇总））** —— 实施侧证据（由实施者提供、Zang 汇总；**数值照抄**）：① 全量 `npm test` = **# tests 427 / # pass 427 / # fail 0**（本批新增/修正：`lib/family-population.test.js` **22/22**、`lib/mirror-count.test.js` **7/7**）；② **运行中的 3100（重启后）实测** `person_count`：`ji_23395_01` **89** / `gu_39038_01` **22** / `liu_21016_01` **18** / `shen_27784_01` **11** / `zhonghua` **112** —— 与 §23-5 第 1 条**逐位一致**；③ **质检（Neng：独立 Python 复算 + 变异验证）**：16 棵树**逐棵与 3100 一致（0 不一致）**、全库共 **7 个节点**被排除、**24 个外树节点中仅 3 个** `child` 镜像被排除；④ **UI 实测（headless Chrome + CDP）**：首页卡片「**季氏费县白露家族 … 89 人**」（**无「含外树」字样**）、家族页 `共 89 人` —— 对应 §23-5 第 3 / 第 5 条**本地已过**。**本节只作「本地已验证」登记；上云 / 部署仍未执行**（重打包硬要求见 §23-1 / §23-4）。
+- ✅ **已实施（本地已验证，2026-09-19（Zang 汇总））：保险判据本姓保护修复** —— 契约收口：**规则 1（本姓无论男女一律计入）优先于规则 3 的保险判据** ⇒ `external_mirror === 'true'` 且 `external_link_type === 'child'` 的节点，**本人本姓时仍按规则 1 计入**，**仅当本人非本姓时才排除**（质检发现契约不一致 → Zang 终审；口径全文见 `docs/home-sort-search.spec.md` §10-6 规则 3 + 该节末修订记录）。**本姓保护已按 Zang 终审落地（规则 1 优先），真源数值零变化**（同批回归证据见上条 ①–④）。
+- 🔎 **文档角色只读复算（2026-09-19 · 非实施证据 · 未改真源）**：按规格 §10-6 的七条口径，对 `migrate-output/trees/*.json` + `config/tree-meta.json` 做**只读**重算（**未写任何文件、未实施、未改真源**），结果与规格 §10-6「真源期望值」表**逐位一致**：
+
+  | tree_id | 现状（`people` 长度） | 新口径期望 | `S` 解析来源 | 排除节点（命中规则） |
+  |---|---|---|---|---|
+  | `ji_23395_01` | 90 | **89** | `tree-meta.surname_char` = 季 | `I000237 满满`（规则 3） |
+  | `gu_39038_01` | 24 | **22** | 始祖节点兜底（该树 meta **无** `surname_char`）= 顾 | `I000293 季庭亦` / `I000294 季贺为`（规则 3 + 保险判据 `external_link_type='child'`） |
+  | `liu_21016_01` | 19 | **18** | 全树众数兜底 = 刘 | `I000266 李阳 独生 表哥`（规则 3） |
+  | `shen_27784_01` | 14 | **11** | 全树众数兜底 = 沈 | `I000286 季清昆`（规则 3 + `child` 镜像）/ `I000279 纪青森` / `I000281 秦铭铭`（规则 3） |
+  | `zhonghua` | 112 | **112** | `tree-meta.surname_char` = 华 | 无 |
+  | 其余 **11** 棵树 | 见规格 §10-6 | **不变** | — | 排除集为空 |
+
+- ⚠️ **§21 的旧证据锚点已被真源增长超越（登记项；不改写 §21）**：§21-1 登记 `gu_39038_01` = **23 / `mirror_count` 4**、`ji_23395_01` = **89 / 3**；按 2026-09-19 16:2x 真源只读复核，现为 `gu_39038_01` = **24 / 5**、`ji_23395_01` = **90 / 4**（各 +1 人 / +1 镜像）⇒ 部署后冒烟**以 §23-5 的数值为准**；`mirror_count` 仅作形状兼容，**不再有展示意义**。
+
+**阻塞点**
+
+- ⚠️ **无字符串型重打包判据**：旧口径与本批口径的产物**都含 `person_count`** ⇒ **唯一可判别手段 = 部署后逐树数值比对**（§23-5 第 1 条）；**漏重打包不会报错**、只会静默返旧口径数值。
+- **必须与 §23-4 的前端两项同批发布**：只发云函数不发 H5 ⇒ 数值已是新口径但文案仍「N 人（含外树 M）」、家族页统计栏仍按裁剪长度；只发 H5 不发云函数 ⇒ 新文案配旧数值。
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §4 / §16-4 / §17-4 / §18-1 / §19-4 / §21 / §22）。
+- ✅ **跨册回写已做（2026-09-19）**：`docs/marriage.spec.md` 已按关键字逐处加注「**已作废 2026-09-19**」（命中：§9-4 第 4 行、§9-7 第 7 条、§10 `tree-pedigree.vue` 条目、§11-4 及其交叉引用第 7 条、§11-8 命名说明）—— **只加标注、原句保留**；本清单 **§21 / §22 正文按约定不改写**。
+- **不阻塞本清单其它项**：本批**无集合 / 无数据动作**（§23-2 / §23-3「无」），与 §16 / §17 / §19 / §20 / §21 的云函数重打包**同一次发布**即可。
+
+### 23-2 CloudBase 集合：**无**
+
+- 不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（保持 §11-2 的 **12 项**）；本批只改一条既有路由的出参**取值口径**，不落任何新集合。
+
+### 23-3 云端数据：**无**
+
+- 不重跑迁移上传、不动 `jiazu_id_seq`、无手工删键；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰（口径只读真源，不写真源）。
+
+### 23-4 前端产物（**必须重打包：H5 + 小程序**）
+
+**为什么需要**
+
+- ① **首页卡片文案**：家族 / 祖谱卡片由「N 人（含外树 M）」改为「**N 人**」—— `mirror_count` 不再进入文案（`frontend/src/pages/index/index.vue` 的 `peopleText()`；**「— 人」兜底分支照旧**：`person_count` 缺失 / NaN → 「— 人」）。
+- ② **家族页统计栏**：普通家族树页（`hall`）树图统计栏「**共 N 人**」改为**与卡片同一口径** —— **读 `/tree/rank` 的 `person_count`**，**不再用「按登录档位裁剪后的人物列表长度」**（落点 `frontend/src/pages/hall/index.vue` / `frontend/src/components/tree-pedigree/tree-pedigree.vue`）。
+- **纯展示口径**：排序公式 / 权重 / tie-break **逐字不变**（规格 §3-2 / §3-3 / §3-5）；**不重发 H5 ⇒ 线上两项仍是旧行为**（旧文案 + 统计栏随登录档位变小）。
+
+**具体命令**
+
+```bash
+cd frontend && VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5   # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+
+cd frontend && npm run build:mp-weixin                                      # 小程序产物（同批上传）
+```
+
+**本地验证证据**
+
+- ✅ **已实施（本地已验证，2026-09-19（Zang 汇总））** —— 前端两项改动已完成，**UI 实测（headless Chrome + CDP）**：首页卡片「**季氏费县白露家族 … 89 人**」（**无「含外树」字样**）、家族页统计栏 `共 89 人`（与 §23-5 第 3 / 第 5 条一致）。本节**仍不登记**构建结果 / 产物版本 / `vue-tsc --noEmit` 结论（**未由本角色运行**，亦不得代为断言）；**H5 / 小程序重打包硬要求不变**（见下阻塞点）。
+
+**阻塞点**
+
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §4 / §16-4 / §19-4 / §21 / §22）。
+- ⚠️ **本批「必须重打包」是硬要求：不重打包就发 = 线上仍旧行为** —— `frontend/dist/build/h5/**` **当前仍是含旧文案与旧 prop 的构建产物**（质检 grep **命中「含外树」**，命中文件 = `frontend/dist/build/h5/assets/tree-pedigree.DI3CNQ9Z.js`；本角色只读复核该产物目录 mtime = **2026-09-16 23:17:19**，早于本批 2026-09-19 的源码改动）⇒ **沿用现有产物直接 `tcb hosting deploy` = 线上仍是旧文案「N 人（含外树 M）」+ 旧统计栏**（云函数若已更新则进一步变成「新数值配旧文案」）。**本批 H5 必须与 §23-1 的云函数产物在**同一次发布**里重打包后上线；本批不重打包即视为未完成本批**。
+- **与 §23-1 的云函数口径必须同批**（见 §23-1 阻塞点第 2 条）。
+- **家族页统计栏改数据源后依赖 `/tree/rank` 请求成功**：请求失败 / 字段缺失时须有兜底文案（与卡片「— 人」同类处理），**不得显示 `NaN` / `undefined`**（实现细节由实施者落定，本清单不代为断言）。
+
+### 23-5 部署后冒烟验证（按序做）
+
+1. `GET /tree/rank` 逐树核对 `person_count`：`ji_23395_01` **89** / `gu_39038_01` **22** / `liu_21016_01` **18** / `shen_27784_01` **11** / `zhonghua` **112**；其余树与规格 §10-6 表一致（**值不符 = 云函数产物未重打或未部署**，见 §23-1 阻塞点第 1 条）。
+2. **出参形状回归（不得因本批删字段）**：`person_count` 仍为 number；`mirror_count` **仍在**（降级保留）；`access` / `activity` / `updated_at` / `rank_*` / `total_generations` / `root_count` 逐字段仍在。
+3. **首页卡片文案**：家族档 / 祖谱档卡片均为「**N 人**」且**不再出现「含外树」字样**；`rank` 请求失败的树仍显「— 人」（无 NaN / undefined）。
+4. **首页排序回归**：三档排序序列与 tie-break 逐位不变（人数仍按 `person_count` 归一化）。
+5. **家族页统计栏 = 同一棵树 `/tree/rank` 的 `person_count`**（同一档位下与卡片数值**逐位相等**）。
+6. **统计栏不随登录档位变化**：同一棵树 guest / logged-in 两种身份下「共 N 人」**相同**（改前用「裁剪后人物列表长度」时会随档位变小）；同时**树图节点数仍按档位裁剪**（对照 `docs/permission-tier.spec.md` §4 基线）—— **聚合计数与节点列表长度是两件事**（§10 的「ji guest 可见 1–8 世」仍成立）。
+7. **`mirror_count` 降级回归**：前端**不再**因 `mirror_count` 改变卡片文案；该字段缺失 / 为 0 时「N 人」显示不变。
+
+### 23-6 本批**不需要**上云的东西
+
+- **本批无新增集合、无数据变更**（§23-2 / §23-3 均「无」）：`COLLECTIONS` 保持 §11-2 的 **12 项**；`jiazu_id_seq` 不动；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰。
+- **测试文件**（实施侧新增 / 修改的单测，如既有 `cloudfunctions/compat-api/lib/home-sort-search.test.js`）：纯本地，**不进打包产物**。
+- **文档**：`docs/home-sort-search.spec.md`（本批 §10-6 新增 · §10-2 作废标记 · §5-1 末条 · §9 部署指针）、`docs/permission-tier.spec.md`（§5 末条补注）、本清单 **§23**：不进产物、不影响云端。
+- `/tmp` 下的副本与取证文件：临时产物。

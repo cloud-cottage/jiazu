@@ -32,7 +32,7 @@ jiazu/
 │       ├── business/  # 纯业务逻辑（跨端复用）
 │       ├── pages/     # 页面组件
 │       └── api/       # API 封装
-├── auth-server/       # 【遗留】手机号验证码认证代理 (Node.js, 3000 → Gramps)，功能已迁入 compat-api
+├── auth-server/       # 【遗留】手机号验证码认证代理 (Node.js, 5197 → Gramps-Web 5198)，功能已迁入 compat-api
 ├── docker-compose.yml # 【遗留】Gramps-Web 部署编排
 ├── config/            # tree-meta.json 元数据（git seed）
 └── scripts/           # 迁移/导入导出/修复脚本
@@ -66,12 +66,13 @@ jiazu/
 COMPAT_SOURCE=local node cloudfunctions/compat-api/local-server.js 3100
 
 # 2. 前端（vite 默认把 /api 代理到 3100）
-cd frontend && npm run dev:h5   # http://localhost:5199（可用 PORT=5173 npm run dev:h5 改端口）
+cd frontend && npm run dev:h5   # http://localhost:5199（可用 PORT=5201 npm run dev:h5 改端口；**5173/5174 为保留端口，不得回退**）
 ```
 
 开发阶段验证码随 `POST /api/auth/send-code` 返回 `dev_code`（SMS_PROVIDER=console）。
 
-> 仅在排查历史链路时才需要 Gramps-Web(8000) + auth-server(3000)：`npm run dev:h5:legacy`
+> 仅在排查历史链路时才需要 Gramps-Web(5198) + auth-server(5197)：`npm run dev:h5:legacy`
+> （**2026-09 由 3000/8000 迁至 5197/5198**；生产 docker 映射仍为 `127.0.0.1:8000:5000`，**本地 dev 与生产不等价**）
 > （Gramps 启动见 `docs/LOCAL_DEV.md`；该链路不支持新写能力，如总谱续编 / 生卒编辑）。
 
 ### 数据修复/一次性脚本
@@ -101,8 +102,10 @@ docker compose up -d
 
 ### 新增家族树
 
-前端首页「＋ 新建家族树」（仅总编辑可见）→ 填姓氏 + 始祖名 → 服务端生成 tree_id（姓氏拼音_码点_序号）、
-写树 JSON（含始祖 I0001）+ tree-meta 注册，并从发起人余额扣建树费（默认 ¥9.90，`PUT /admin/wallet-fee` 可调）。
+前端首页「＋ 新建家族树」（仅总编辑可见）→ 填姓氏 + 始祖名 → 服务端生成 tree_id（**姓氏拼音_码点_两位序号**，
+注音用 `pinyin-pro` 姓氏模式、**无兜底**：取不到拼音 / 非单个汉字 / 空串一律 **400 抱错拒绝**，绝不生成伪前缀）、
+写树 JSON（含始祖 I0001）+ tree-meta 注册（条目含 `surname_pinyin`），并从发起人余额扣建树费（默认 ¥9.90，`PUT /admin/wallet-fee` 可调）。
+tree_id 生成完整口径（含 3 棵树改名的「不留旧别名」与遗留注音副本登记）见 `docs/tree-id.spec.md`。
 
 接口直调（`POST /api/admin/create-tree`，chief_editor）：
 

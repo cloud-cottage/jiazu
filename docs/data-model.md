@@ -187,6 +187,9 @@ tree-meta 从"配置文件"升级为**文档**（`_id = "global"`，内容 = 现
 { "_id": "global", "_schema": "1.1", "_root_domain": "jiapu100.com", "trees": { "zhonghua": { "...": "..." } } }
 ```
 
+**条目字段（`trees.<tree_id>`）补充**：`tree_id`、`path_alias`、`surname_char`（姓氏汉字）、**`surname_pinyin`**（该树**实际采用**的姓氏拼音；新建树 / 拆分 / 新建祖谱均写，口径与遗留缺口见 `docs/tree-id.spec.md` §4）、`kind`（`'master'` / `'clan'` / `'family'`，见 `docs/clan-tree.spec.md` §2）、`display_title` / `genealogy_name` / `hall_name` / `origin` / `description` / `founder_*` 等展示字段。
+条目的 `tree_id` **不是**自由填写的字符串：由 `<姓氏拼音>_<汉字码点>_<两位序号>` 规则生成（唯一真源 = `cloudfunctions/compat-api/lib/tree-write.js` 的 `surnamePinyin()` / `nextTreeId()` / `genClanTreeId()`；**无兜底**，取不到拼音一律 400）→ 完整口径见 **`docs/tree-id.spec.md`**。
+
 ### 5.6 `sms_codes`（临时验证码，TTL 索引 5 分钟）
 
 ```jsonc
@@ -272,7 +275,7 @@ body = Gramps RawPerson 形状 + 编辑表单约定顶层字段（仅 compat 消
 |---|---|
 | `POST /people/` | 新建人：生成 handle → 写树 JSON → 建详情文档（空档案） |
 | `POST /families/` / `PUT /families/<handle>` | 建/改家族：更新树 JSON families + 相关 person 的 parent_family/spouse_families |
-| `POST /admin/split-tree` | 子树分割：从树 JSON 复制子树 → 生成新树 JSON（含新 tree_id、始祖、姓氏）→ 原树移除节点 → tree_meta 注册新树 |
+| `POST /admin/split-tree` | 子树分割：从树 JSON 复制子树 → 生成新树 JSON（含新 tree_id、始祖、姓氏）→ 原树移除节点 → tree_meta 注册新树（新条目含 `surname_pinyin`；tree_id 生成口径见 `docs/tree-id.spec.md`） |
 | `POST /admin/remove-branch-link` | 校验占位节点后删除跨树软关联 |
 
 > 原 `POST /admin/promote`（晋宗：节点链并入 zhonghua + 原树移除）**已整体移除**（2026-09-17 产品决策：路由与 `promoteTree()` 均已删除）；

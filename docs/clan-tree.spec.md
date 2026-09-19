@@ -3,7 +3,7 @@
 > 内部代号 clan = 产品术语【祖谱】（标识符 / 文件名 / 路由 / 集合名 / kind 值保持不变）
 
 状态：**设计已确认 Kevin 2026-09-15 · 待实施**
-关联：`docs/founder-attach.spec.md`（同一原语）、`docs/marriage.spec.md`、`docs/data-model.md`、`docs/PENDING_DEPLOY.md`
+> 关联：`docs/founder-attach.spec.md`（同一原语）、`docs/marriage.spec.md`、`docs/data-model.md`、`docs/tree-id.spec.md`（tree_id 生成口径）、`docs/PENDING_DEPLOY.md`
 
 ## 1. 一句话
 
@@ -79,8 +79,9 @@ person: { gramps_id, external_tree: 'zhonghua', external_person_handle: <世本 
 ## 6. URL 与 tree_id
 
 - 祖谱 URL：`/z/<tree_id>`；普通树保持现状（`/<tree_id>`）。
-- `tree_id` 规范：`<姓拼音缩写>_<编号>`（例 `ji_23395`）；冲突时追加 `_01`（例 `ji_23395_01`）。
 - `kind` 决定前端版式；路由只认 `tree_id`，层级由 tree-meta 判定。
+- **`tree_id` 生成口径**：`<姓氏拼音>_<汉字 Unicode 十进制码点>_<两位支派序号>`（例 `ji_23395_01`）；祖谱为**无序号基形** `<拼音>_<码点>`（例 `ji_23395`），冲突时才追加 `_NN`。注音唯一真源 = `cloudfunctions/compat-api/lib/tree-write.js` 的 `surnamePinyin()`（`pinyin-pro` 姓氏模式：曾→zeng、单→shan；`v:true` → 吕→lv），**任何情况不得兜底**（空串 / 非单个汉字 / 取不到拼音一律 **400 抱错拒绝**，绝不生成伪前缀）；tree-meta 条目另存 `surname_pinyin` 记录实际采用的拼音。
+  → **完整口径（含 3 棵树原地迁移不留别名、遗留注音副本登记、未完成口径）见 `docs/tree-id.spec.md`；本册不重述。**
 
 ## 7. 实施清单
 
