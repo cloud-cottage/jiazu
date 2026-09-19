@@ -471,11 +471,13 @@ async function handleRequest(event) {
       const { totalGenerations, explicit } = computeTreeDepth(tree, gens);
       const rank = rankFromDepth(totalGenerations);
       const access = await resolveTreeAccess(headers, treeId, tree);
-      // person_count：家族人数新口径（用户 2026-09-19 拍板，见 lib/family-population.js 文件头）。
-      // 需要 tree-meta 条目解析本姓 S（surname_char → 始祖 → 众数）。
+      // person_count：家族人数口径 = **纯血缘图**（用户 2026-09-19 重新拍板，见 lib/family-population.js
+      // 文件头 §1–§7）。**姓文本（surname_char / 始祖 surname / 众数）已彻底不再参与计数**。
+      // 分层：仅 `kind === 'family'`（或缺省 ⇒ family）走新口径；
+      // `zhonghua`（is_master 世本）与 `kind === 'clan'`（祖谱）保持 = 树内 people 数。
       const rankMeta = await getMeta();
       const metaEntry = Object.values(rankMeta?.trees || {}).find((t) => t && t.tree_id === treeId) || null;
-      const personCount = countFamilyMembers(tree, metaEntry);
+      const personCount = countFamilyMembers(tree, metaEntry, { kind: metaEntry?.kind, is_master: !!metaEntry?.is_master });
       // activity：近 30 天与本树相关的互动事件数（lib/tree-activity.js；集合不可用恒 0，不抛）
       const activity = await treeActivity(treeId, { now: new Date() });
       return send(200, {

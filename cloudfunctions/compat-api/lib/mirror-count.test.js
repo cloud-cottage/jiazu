@@ -6,15 +6,15 @@
  *
  * 口径（用户 2026-09-19 拍板 A 档，逐条写死）：
  *   - `mirror_count` = 该树 `people` 中满足 `String(p.external_mirror) === 'true'` 的节点数（纯计数，**不涉权限裁剪**）；
- *   - `person_count` 语义已换为「家族人数新口径」（本姓一律计入 / 嫁出本姓女所生外姓子女不计入，
- *     见 lib/family-population.js）；本文件只保留其真源**快照值** + 一条不变量断言（随真源增长需同步）；
+ *   - `person_count` 口径已于 2026-09-19 二次换为「**纯血缘图**」（彻底弃用姓文本，见
+ *     lib/family-population.js 文件头）；本文件只保留其真源**快照值** + 一条不变量断言（随真源增长需同步）；
  *   - 严格字符串口径：`String(...) === 'true'` 之外一律不计（`'TRUE'` / `'1'` / `'false'` / 缺失 不计；
  *     布尔 `true` 因 `String(true) === 'true'` 同样计入）；`external_mirror:'true'` 但缺
  *     `external_person_handle` 的异常数据**仍计入**（判定只看 `external_mirror`）。
  *
  * 覆盖：
  *   M1 真源 gu_39038_01（树 + details 副本）→ 200，`mirror_count` 与真源树文件动态推导一致，`person_count`
- *      快照 22 + 不变量（people 总数 − 显式点名的被排除 handle 数），既有出参字段逐字段仍在；
+ *      快照 21 + 不变量（people 总数 − 显式点名的被排除 handle 数：I000292 / I000293 / I000294），既有出参字段逐字段仍在；
  *   M2 真源 gu 树源文件中 `external_mirror==='true'` 的 handle 集合**动态推导**，且**包含式点名**
  *      I000143 / I000292 / I000293 / I000294 / I000367（不写死总数，真源再漂不再假红）；
  *   M3 无镜像树（含「有 external_person_handle 但非镜像」「external_mirror:'false'」）→ 0；
@@ -22,7 +22,7 @@
  *   M5 权限档位变化（guest / 已登录非成员 / 树成员）`mirror_count` 与 `person_count` 恒定不变 —— 且用 computeAccess
  *      直证这些镜像节点在 guest 档确实被裁掉（证明计数与权限裁剪解耦）；真源 gu 的镜像数同样动态推导；
  *   M6 真源 ji_23395_01 → `mirror_count` 动态一致（包含式点名 I000209 / I000253 / I000291 / I000365）、
- *      `person_count` 快照 89 + 不变量（people 总数 − 排除集；ji 排除集现为空，I000237 已于 2026-09-19 删除）；
+ *      `person_count` 快照 87 + 不变量（people 总数 − 排除集：姑父 I000238 / 妹夫 I000240 —— 外姓男性姻亲，纯血缘口径剔除）；
  *   M7 真源体检：config/tree-meta.json + migrate-output/{trees,collections} 逐字节未变。
  *
  * 数据安全：`COMPAT_OUT_DIR` / `COMPAT_META_FILE` 一律指向 /tmp 副本（真源只读复制）；真源 md5 文末断言未变。
@@ -193,19 +193,17 @@ const assertGidsInRealTree = (tid, gids) => {
 const GU_MIRROR_GIDS = ['I000143', 'I000292', 'I000293', 'I000294', 'I000367'];
 /** 真源 ji 的镜像 handle 点名 */
 const JI_MIRROR_GIDS = ['I000209', 'I000253', 'I000291', 'I000365'];
-/** 真源 gu 被新口径排除的 handle 点名（外姓「季」child 镜像）—— 显式点名，不由实现函数反推 */
-const GU_EXCLUDED_GIDS = ['I000293', 'I000294'];
+/** 真源 gu 被新口径（纯血缘图）排除的 handle 点名：婚入男镜像 I000292 + 其子 child 镜像 I000293 / I000294 */
+const GU_EXCLUDED_GIDS = ['I000292', 'I000293', 'I000294'];
 /**
- * 真源 ji 被新口径排除的 handle 点名 —— 现为空集：
- * 原点名项 I000237（满满）已于 2026-09-19 经产品接口（promote 模式）从 ji_23395_01 删除，
- * 真源 ji 当前排除集为空，故 person_count === 真源 people 总数（89）；
- * 若日后 ji 再出现规则 3 排除项（外姓 child 镜像），必须在此重新点名并同步不变量右项。
+ * 真源 ji 被新口径（纯血缘图）排除的 handle 点名：姑父 I000238 / 妹夫 I000240（外来姻亲根）。
+ * people 总数 89 − 2 = 87；若日后真源再增删姻亲，必须在此重新点名并同步不变量右项。
  */
-const JI_EXCLUDED_GIDS = [];
+const JI_EXCLUDED_GIDS = ['I000238', 'I000240'];
 
 // ================= M1. 真源 gu 树：mirror_count 动态推导 + person_count 快照 =================
 
-test('M1 真源 gu_39038_01：mirror_count 与真源动态一致、person_count 快照 22，既有字段逐字段仍在', async () => {
+test('M1 真源 gu_39038_01：mirror_count 与真源动态一致、person_count 快照 21，既有字段逐字段仍在', async () => {
   const mirrors = realMirrors('gu_39038_01');
   const { status, body } = await rankOf('gu_39038_01');
   assert.equal(status, 200);
@@ -215,14 +213,14 @@ test('M1 真源 gu_39038_01：mirror_count 与真源动态一致、person_count 
     "mirror_count = 真源树文件里 String(p.external_mirror) === 'true' 的 handle 数（动态推导）",
   );
   assert.equal(typeof body.mirror_count, 'number', 'mirror_count 必须是 number');
-  assert.equal(body.person_count, 22, 'person_count 真源数据快照，随真源增长需同步');
+  assert.equal(body.person_count, 21, 'person_count 真源数据快照（24 − 季清昆 I000292 − 季庭亦 I000293 − 季贺为 I000294），随真源增长需同步');
 
   // 不变量：person_count === people 总数 − 被排除 handle 数（排除集合用例显式点名，不由实现函数反推）
   assertGidsInRealTree('gu_39038_01', GU_EXCLUDED_GIDS);
   assert.equal(
     body.person_count,
     realPeopleCount('gu_39038_01') - GU_EXCLUDED_GIDS.length,
-    'people 总数 − 点名的被排除 handle 数（gu：I000293 / I000294）',
+    'people 总数 − 点名的被排除 handle 数（gu：I000292 / I000293 / I000294）',
   );
 
   // 既有出参逐字段仍在（一个不许少 / 不许改）
@@ -319,7 +317,7 @@ test('M5 权限档位（guest / 已登录非成员 / 树成员）下 mirror_coun
 
 // ================= M6. 真源 ji 树 =================
 
-test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 89 + 不变量', async () => {
+test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 87 + 不变量', async () => {
   const mirrors = realMirrors('ji_23395_01');
   const { status, body } = await rankOf('ji_23395_01');
   assert.equal(status, 200);
@@ -329,7 +327,7 @@ test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 89
   for (const gid of JI_MIRROR_GIDS) {
     assert.ok(gids.includes(gid), `点名镜像 ${gid} 必须命中（I000209 founder / I000253 marriage / I000291 marriage / I000365 marriage）`);
   }
-  assert.equal(body.person_count, 89, 'person_count 真源数据快照，随真源增长需同步');
+  assert.equal(body.person_count, 87, 'person_count 真源数据快照（89 − 姑父 I000238 − 妹夫 I000240），随真源增长需同步');
   // 不变量：person_count === people 总数 − 被排除 handle 数（排除集合用例显式点名）
   // ji 当前排除集为空（I000237 满满 已于 2026-09-19 删除）→ 右项即真源 people 总数本身；
   // 因 snapshot(89) 与 realPeopleCount(89) 来自两处独立读源，本断言仍是对「真源人数口径」的交叉核对，非同源恒真。

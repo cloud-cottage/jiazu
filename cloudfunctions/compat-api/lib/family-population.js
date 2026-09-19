@@ -1,155 +1,181 @@
 /**
- * 家族人数新口径（`/tree/rank` 的 `person_count`）
+ * 家族人数口径（**纯血缘图**，用户 2026-09-19 重新拍板）
  *
- * 用户 2026-09-19 拍板（契约逐条写死，本轮唯一真源）：
- *   1. 本姓节点（`surname === 本树本姓 S`）无论男女一律计入。
- *   2. 外姓嫁入的女性一律直接计入，不再单独标注/单列（含 `external_mirror === 'true'` 且
- *      `external_link_type === 'marriage'` 的外树媳妇镜像节点）。
- *   3. 「本姓女性嫁出后所生的子女」不计入。纯结构判据：节点 P 被排除 ⟺ 存在家族 F 使
- *      P ∈ F.child_handles，且 F.mother_handle 非空且 surname(F.mother_handle) === S，
- *      且（F.father_handle 为空 或 surname(F.father_handle) !== S），且 surname(P) !== S。
- *      另加等价保险判据：`external_mirror === 'true'` 且 `external_link_type === 'child'`
- *      （跨树婚姻的外树子女镜像）命中即排除。
- *      **保险判据受本姓保护（规则 1 优先于规则 3，2026-09-19 终审）**：本人 `surname === S`
- *      时按规则 1 计入，即使它是 `child` 镜像也不排除；只有 `surname !== S`（含 surname 为空串
- *      或缺失）的外树子女镜像才被排除。
- *      说明：孩子本身本姓时按规则 1 计入（保留下面的 `surname(P) !== S` 就是这条，
- *      招赘/入谱的本姓孩子不受影响）。
- *   4. 其余节点（外姓男性姻亲、无家族关系的记录、外部登记占位节点）本轮**照旧计入** ——
- *      只实现上面三条，不自行扩大排除范围。
- *   5. 本姓 S 解析顺序（`resolveTreeSurname`，路由里不得另写一套）：
- *      tree-meta 条目 `surname_char` → 始祖节点（`founder_handle` → `founder_gramps_id`
- *      → 字面量 `'I0001'` 三级兜底）的 `surname` → 全树非空 `surname` 的众数
- *      （并列取字典序最小，保证确定性）→ `''`（S 为空则规则 3 不生效，直接返回全树人数）。
+ * 本文件是 `/tree/rank` → `person_count` 的唯一真源。**姓文本已彻底弃用**：
+ * `tree-meta.surname_char` / 始祖 surname / 全树众数 三级兜底全部删除，不再参与任何计算。
+ * 旧实现（`resolveTreeSurname` / 姓文本排除判据）已整体移除；`index.js` 路由也不再读 surname。
  *
- * 计数域与既有 `computeTreeDepth().personCount` 完全一致：`tree.people` 的 handle
- *  ∪ 所有 `families` 里 father_handle / mother_handle / child_handles 引用的 handle
- * （真源数据里两者相等；保留并集以免旧数据里「被家族引用但无 people 记录」的节点漏计）。
+ * ---------------- 口径（逐条） ----------------
+ * 1. 父/母映射：对每个家族 F，`F.father_handle` → F 的全部 `child_handles` 的父；
+ *    `F.mother_handle` → 母。**只认树内 `people` 里存在的 handle**（引用不到人的槽位等于空）。
+ * 2. 根 = 树内「无父」节点（有母无父也算根 —— 父系链到此为止；世本「华胥→风伏羲」
+ *    这类母系起始节点因此不断链）。
+ * 3. 外来姻亲根 = 根 X，X 占某家族配偶槽（father / mother），且该家族另一槽 Y **不是根**
+ *    （Y 有父记录 ⇒ Y 属本树谱系）⇒ X 是通过婚配进入本树的外来者（姑父 / 妹夫 / 女婿类）。
+ * 4. 本族 = （根 − 外来姻亲根）沿「父→子女」向下闭包：P 本族 ⟺ P 的父是本族。
+ *    女性后代的子女自然不入（其父是别人）；树内婚配由男方算入，自动成立。
+ * 5. 婚入妇 = 非本族 且 性别 ≠ `'M'`（含 `'F'` / `'U'`） 且 作为配偶槽出现在
+ *    「其配偶是本族」的家族里。
+ * 6. **人数（`person_count`） = |本族 ∪ 婚入妇|**（分层见下）。
+ *    镜像（`external_mirror === 'true'`）**不单独过滤**：一律以**血缘位置**判定 ——
+ *    镜像节点若是某家族的 father/mother 槽，它照常参与父系链推导；它坐在本树血位（本族 / 婚入妇）
+ *    就计入，坐在外来姻亲位（如 shen 的季志全 / 纪恒山、gu 的季清昆）或挂在非本族父亲之下
+ *    （gu 的季庭亦 / 季贺为）就自然出局。**这条与真源实测验收数值逐条一致**
+ *    （ji 87 / gu 21 / liu 17 / shen 10）；若改成「镜像一律剔除」会得到 83 / 19 / 17 / 8，
+ *    与验收数值全部不符，故实现以血缘位置为准。
+ * 7. 分层：**新口径只对 `kind === 'family'`（或缺省 ⇒ 按 family）生效**；
+ *    `zhonghua`（`is_master`，世本）与 `kind === 'clan'`（祖谱）**保持 —— 树内 people 数**
+ *    （实测世本 112、祖谱 2 / 2 / 37 / 4 均不变）。
  *
- * 零 IO、零全局状态：纯函数，只吃 `(tree, entry)`。
+ * 计数域 = `tree.people` 的键（真源数据里 people ⊇ families 引用；引用不到人的 handle 不是人）。
+ * 零 IO、零全局状态：纯函数。
  */
 
-/** `entry.surname_char` 的规范化：非字符串 / 空白 → '' */
-function charOf(entry) {
-  return entry && typeof entry.surname_char === 'string' ? entry.surname_char.trim() : '';
+/** 家族树种类：`master`（世本）/ `clan`（祖谱）/ `family`（缺省）。 */
+export function treeKind(entry) {
+  if (!entry) return 'family';
+  if (entry.is_master === true || String(entry.kind || '') === 'master') return 'master';
+  if (String(entry.kind || '') === 'clan') return 'clan';
+  return 'family';
 }
 
-/** 节点 surname 的规范化：非字符串 → ''（缺失 ≠ 本姓，恒不等于 S） */
-function surnameOf(people, handle) {
-  const p = handle ? people[handle] : null;
-  return p && typeof p.surname === 'string' ? p.surname.trim() : '';
+/** 镜像节点判定（保留 `external_mirror` 语义：别处真身在本树的显示占位） */
+export function isMirrorNode(person) {
+  return !!person && String(person.external_mirror) === 'true';
 }
 
-/** 按 gramps_id 找节点（找不到 → undefined） */
-function byGrampsId(people, grampsId) {
-  if (!grampsId) return undefined;
-  return Object.values(people).find((p) => p && p.gramps_id === grampsId);
+/** 性别规范化：非字符串 / 空 → 'U'（未知） */
+function genderOf(person) {
+  const g = person && typeof person.gender === 'string' ? person.gender.trim() : '';
+  return g || 'U';
 }
 
 /**
- * 本姓 S。解析顺序见文件头 §5；四级全部落空 → ''。
- * @param {{people?: Record<string, any>}} tree
- * @param {{surname_char?: string, founder_handle?: string, founder_gramps_id?: string}|null|undefined} entry tree-meta 条目
- * @returns {string}
+ * 血缘图分析（全部口径的唯一实现）。
+ * @param {{people?: Record<string, any>, families?: Record<string, any>}} tree
+ * @returns {{
+ *   people: Record<string, any>,
+ *   roots: Set<string>, inLawRoots: Set<string>, clan: Set<string>, marriedIn: Set<string>,
+ *   counted: Set<string>, fatherOf: Map<string, string>,
+ * }}
  */
-export function resolveTreeSurname(tree, entry) {
+export function analyzeFamilyGraph(tree) {
   const people = (tree && tree.people) || {};
-  const fromMeta = charOf(entry);
-  if (fromMeta) return fromMeta;
-  // 始祖三级兜底：founder_handle → founder_gramps_id → 'I0001'
-  const candidates = [
-    entry && entry.founder_handle ? people[entry.founder_handle] : undefined,
-    byGrampsId(people, entry && entry.founder_gramps_id),
-    byGrampsId(people, 'I0001'),
-  ];
-  for (const node of candidates) {
-    const s = node && typeof node.surname === 'string' ? node.surname.trim() : '';
-    if (s) return s;
-  }
-  // 众数（并列取字典序最小 → 与 key 顺序无关，确定性）
-  const freq = new Map();
-  for (const p of Object.values(people)) {
-    const s = p && typeof p.surname === 'string' ? p.surname.trim() : '';
-    if (s) freq.set(s, (freq.get(s) || 0) + 1);
-  }
-  let best = '';
-  let bestCount = 0;
-  for (const key of [...freq.keys()].sort()) {
-    const n = freq.get(key);
-    if (n > bestCount) {
-      best = key;
-      bestCount = n;
+  const families = Object.values((tree && tree.families) || {}).filter(Boolean);
+  const inPeople = (h) => !!h && Object.prototype.hasOwnProperty.call(people, h);
+
+  // 1. 父/母映射（只认树内 people）
+  const fatherOf = new Map();
+  const motherOf = new Map();
+  for (const f of families) {
+    for (const c of f.child_handles || []) {
+      if (!inPeople(c)) continue;
+      if (inPeople(f.father_handle) && !fatherOf.has(c)) fatherOf.set(c, f.father_handle);
+      if (inPeople(f.mother_handle) && !motherOf.has(c)) motherOf.set(c, f.mother_handle);
     }
   }
-  return best;
-}
 
-/** 计数域：people ∪ families 引用到的全部 handle */
-function populationHandles(tree) {
-  const set = new Set();
-  const people = (tree && tree.people) || {};
-  const families = (tree && tree.families) || {};
-  for (const h of Object.keys(people)) set.add(h);
-  for (const f of Object.values(families)) {
-    if (!f) continue;
-    if (f.father_handle) set.add(f.father_handle);
-    if (f.mother_handle) set.add(f.mother_handle);
-    for (const c of f.child_handles || []) set.add(c);
+  // 2. 根 = 无父记录
+  const roots = new Set();
+  for (const h of Object.keys(people)) if (!fatherOf.has(h)) roots.add(h);
+
+  // 3. 外来姻亲根：占配偶槽，且另一槽不是根（对方有父记录 ⇒ 本树谱系）
+  const inLawRoots = new Set();
+  for (const f of families) {
+    const fa = inPeople(f.father_handle) ? f.father_handle : '';
+    const mo = inPeople(f.mother_handle) ? f.mother_handle : '';
+    for (const [x, y] of [[fa, mo], [mo, fa]]) {
+      if (!x || !y) continue;
+      if (!roots.has(x)) continue;
+      if (!fatherOf.has(y)) continue;
+      inLawRoots.add(x);
+    }
   }
-  return set;
+
+  // 4. 本族：从（根 − 外来姻亲根）沿父→子女闭包
+  const kidsOf = new Map();
+  for (const [c, fa] of fatherOf) {
+    if (!kidsOf.has(fa)) kidsOf.set(fa, []);
+    kidsOf.get(fa).push(c);
+  }
+  const clan = new Set();
+  const queue = [];
+  for (const h of roots) {
+    if (inLawRoots.has(h)) continue;
+    clan.add(h);
+    queue.push(h);
+  }
+  while (queue.length) {
+    const h = queue.shift();
+    for (const c of kidsOf.get(h) || []) {
+      if (clan.has(c)) continue;
+      clan.add(c);
+      queue.push(c);
+    }
+  }
+
+  // 5. 婚入妇：非本族、性别 ≠ 'M'、配偶为本族的配偶槽
+  const marriedIn = new Set();
+  for (const f of families) {
+    const fa = inPeople(f.father_handle) ? f.father_handle : '';
+    const mo = inPeople(f.mother_handle) ? f.mother_handle : '';
+    for (const [sp, other] of [[mo, fa], [fa, mo]]) {
+      if (!sp || !other) continue;
+      if (clan.has(sp) || !clan.has(other)) continue;
+      if (genderOf(people[sp]) === 'M') continue;
+      marriedIn.add(sp);
+    }
+  }
+
+  // 6. 人数 = 本族 ∪ 婚入妇（镜像按血缘位置，不额外过滤，见文件头 §6）
+  const counted = new Set([...clan, ...marriedIn]);
+  return { people, roots, inLawRoots, clan, marriedIn, counted, fatherOf, motherOf };
 }
 
 /**
- * 被排除的 handle 列表（规则 3 主判据 + 保险判据），按「先主判据家族顺序、后保险判据
- * people 顺序」去重收集。返回的是谓词命中的全部 handle（含不在计数域内的引用 handle，
- * 由调用方自行按需过滤；真源数据里不存在这种节点）。
- * @returns {string[]}
+ * 分层解析：`kindOrOptions` 可为 `'family'|'clan'|'master'` 字符串、`{ kind, is_master }` 对象，
+ * 或省略（⇒ 由 tree-meta 条目 `entry` 推导）。向后兼容旧调用 `(tree, entry)`。
+ * @returns {'family'|'clan'|'master'}
  */
-export function listExcludedMembers(tree, entry) {
-  const people = (tree && tree.people) || {};
-  const families = (tree && tree.families) || {};
-  const surname = resolveTreeSurname(tree, entry);
-  const out = [];
-  const seen = new Set();
-  const push = (h) => {
-    if (!h || seen.has(h)) return;
-    seen.add(h);
-    out.push(h);
-  };
-  // S 为空 → 规则 3 不生效（规则 4：其余节点照旧计入）
-  if (surname) {
-    for (const f of Object.values(families)) {
-      if (!f || !f.mother_handle) continue;
-      if (surnameOf(people, f.mother_handle) !== surname) continue;
-      const father = f.father_handle;
-      if (father && surnameOf(people, father) === surname) continue;
-      for (const c of f.child_handles || []) {
-        if (surnameOf(people, c) !== surname) push(c);
-      }
-    }
-    // 等价保险判据：跨树婚姻的外树子女镜像（受本姓保护 —— 规则 1 优先：本人本姓时计入）
-    for (const [h, p] of Object.entries(people)) {
-      if (!p) continue;
-      if (String(p.external_mirror) === 'true' && String(p.external_link_type) === 'child') {
-        if (surnameOf(people, h) !== surname) push(h);
-      }
-    }
+function resolveKind(entry, kindOrOptions) {
+  if (typeof kindOrOptions === 'string') {
+    return treeKind({ kind: kindOrOptions, is_master: kindOrOptions === 'master' });
   }
-  return out;
+  if (kindOrOptions && typeof kindOrOptions === 'object') {
+    return treeKind({
+      kind: kindOrOptions.kind === undefined ? entry && entry.kind : kindOrOptions.kind,
+      is_master: kindOrOptions.is_master === undefined ? !!(entry && entry.is_master) : kindOrOptions.is_master,
+    });
+  }
+  return treeKind(entry);
 }
 
 /**
- * 家族人数（新口径）。`(tree, entry)` → number。
- * S 为空 → 全树人数（规则 3 不生效）；空树 → 0。
+ * 家族人数（纯血缘图口径）。
+ * @param {{people?: Record<string, any>, families?: Record<string, any>}} tree
+ * @param {{kind?: string, is_master?: boolean}|null} [entry] tree-meta 条目（**只用于分层**，不再读 surname）
+ * @param {'family'|'clan'|'master'|{kind?: string, is_master?: boolean}} [kindOrOptions]
+ *        `'family' | 'clan' | 'master'`，或 `{ kind }` / `{ entry }` 形状；缺省 ⇒ 由 entry 推导（缺省 family）
+ *        向后兼容：旧调用 `countFamilyMembers(tree, entry)` 照常工作。
  * @returns {number}
  */
-export function countFamilyMembers(tree, entry) {
-  const handles = populationHandles(tree);
-  if (!handles.size) return 0;
-  const excluded = new Set(listExcludedMembers(tree, entry));
-  let out = 0;
-  for (const h of handles) {
-    if (!excluded.has(h)) out++;
-  }
-  return out;
+export function countFamilyMembers(tree, entry, kindOrOptions) {
+  const kind = resolveKind(entry, kindOrOptions);
+  const people = (tree && tree.people) || {};
+  // 7. 分层：世本 / 祖谱 保持 = 树内 people 数
+  if (kind !== 'family') return Object.keys(people).length;
+  return analyzeFamilyGraph(tree).counted.size;
+}
+
+/**
+ * 本树「不计入人数」的节点 handle 列表（= people − (本族 ∪ 婚入妇)）。
+ * 世本 / 祖谱恒为空数组（保持 people 数口径）。
+ * **语义已变**：不再基于姓文本，纯血缘图；返回顺序 = people 键顺序。
+ * @returns {string[]}
+ */
+export function listExcludedMembers(tree, entry, kindOrOptions) {
+  const kind = resolveKind(entry, kindOrOptions);
+  if (kind !== 'family') return [];
+  const { people, counted } = analyzeFamilyGraph(tree);
+  return Object.keys(people).filter((h) => !counted.has(h));
 }
