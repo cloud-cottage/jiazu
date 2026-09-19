@@ -8,13 +8,13 @@
  * 输出无效引用告警。
  *
  * 用法:
- *   node shell-scripts/validate-cross-refs.mjs [--gramps-api=http://localhost:8000]
+ *   node shell-scripts/validate-cross-refs.mjs [--gramps-api=http://127.0.0.1:5198]
  */
 
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
-const GRAMPS_API = process.env.GRAMPS_API || 'http://localhost:8000';
+const GRAMPS_API = process.env.GRAMPS_API || 'http://127.0.0.1:5198';
 const META_PATH = resolve(process.cwd(), 'config/tree-meta.json');
 
 async function main() {

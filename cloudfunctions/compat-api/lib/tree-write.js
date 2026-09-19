@@ -7,6 +7,7 @@
  * - 交叉操作固定顺序 + 幂等；孤儿详情由清理脚本兜底
  */
 import crypto from 'node:crypto';
+import { pinyin } from 'pinyin-pro';
 import {
   getTree,
   updateTree,
@@ -861,27 +862,36 @@ function collectSubtree(tree, rootHandle) {
   return { people, families };
 }
 
-/** 简易姓氏 → 拼音（tree-id 前缀，与 frontend tree-id.ts PINYIN_MAP 对齐子集） */
-const PINYIN_MAP = {
-  季: 'ji', 顾: 'gu', 刘: 'liu', 沈: 'shen', 秦: 'qin', 李: 'li', 王: 'wang', 张: 'zhang',
-  陈: 'chen', 杨: 'yang', 赵: 'zhao', 黄: 'huang', 周: 'zhou', 吴: 'wu', 徐: 'xu', 孙: 'sun',
-  胡: 'hu', 朱: 'zhu', 高: 'gao', 林: 'lin', 何: 'he', 郭: 'guo', 马: 'ma', 罗: 'luo',
-  梁: 'liang', 宋: 'song', 郑: 'zheng', 谢: 'xie', 韩: 'han', 唐: 'tang', 冯: 'feng',
-  于: 'yu', 董: 'dong', 萧: 'xiao', 程: 'cheng', 曹: 'cao', 袁: 'yuan', 邓: 'deng',
-  许: 'xu', 傅: 'fu', 曾: 'zeng', 彭: 'peng', 吕: 'lv', 苏: 'su', 卢: 'lu',
-  蒋: 'jiang', 蔡: 'cai', 贾: 'jia', 丁: 'ding', 魏: 'wei', 薛: 'xue', 叶: 'ye', 阎: 'yan',
-  余: 'yu', 潘: 'pan', 杜: 'du', 戴: 'dai', 夏: 'xia', 钟: 'zhong', 汪: 'wang', 田: 'tian',
-  任: 'ren', 姜: 'jiang', 范: 'fan', 方: 'fang', 石: 'shi', 姚: 'yao', 谭: 'tan', 廖: 'liao',
-  邹: 'zou', 熊: 'xiong', 金: 'jin', 陆: 'lu', 郝: 'hao', 孔: 'kong', 白: 'bai', 崔: 'cui',
-  康: 'kang', 毛: 'mao', 邱: 'qiu', 江: 'jiang', 史: 'shi', 侯: 'hou', 邵: 'shao',
-  孟: 'meng', 龙: 'long', 万: 'wan', 段: 'duan', 雷: 'lei', 钱: 'qian', 汤: 'tang', 尹: 'yin',
-  易: 'yi', 常: 'chang', 武: 'wu', 乔: 'qiao', 贺: 'he', 赖: 'lai', 龚: 'gong', 文: 'wen',
-};
-
-/** 姓氏 → 拼音缩写（tree_id 前缀；未收录按 shi 兜底） */
+/**
+ * 姓氏 → 拼音缩写（tree_id 前缀）——**唯一真源**
+ *
+ * 用 pinyin-pro 姓氏模式：`mode:'surname'` 优先百家姓读音（曾→zeng、单→shan），
+ * `toneType:'none'` 去声调，`v:true` 把 ü 写作 v（吕→lv）——否则会违反既有
+ * `^[a-z]+_\d+_\d{2}$` 与前端 `isValidTreeId` 正则。
+ *
+ * 手工拼音表已整体废弃：三份表长期漂移（后端独缺「纪」），且旧实现
+ * `PINYIN_MAP[char] || 'shi'` 会把未收录姓氏静默命名成 shi_*（纪/容/恒 三棵树的事故根因）。
+ *
+ * **任何情况下不得兜底**：空串 / 非单个汉字 / 取不到拼音一律抛明确错误。
+ *
+ * **错误自带 `status: 400`**（复用本文件 `fail()`；函数声明提升，调用点在其定义之前也成立）：
+ * 否则 `/admin/create-tree` 的 catch（`send(e.status || 400, eco.errorPayload(e, …))`）会因「无 code 且无
+ * 有限 status」把它判成系统错误 → HTTP 400 + body `{"error":"服务内部错误","status":500}`（状态码与
+ * 文案互相矛盾，用户看不到真实原因）。lib 层单一错误约定 = 输入/校验类错误自带 4xx。
+ */
 export function surnamePinyin(surnameChar) {
-  const char = String(surnameChar || '').trim();
-  return PINYIN_MAP[char] || 'shi';
+  const char = String(surnameChar ?? '').trim();
+  if (!char) throw fail('缺少姓氏，无法生成家族树编号前缀');
+  if (!/^[\u4e00-\u9fa5]$/.test(char)) throw fail(`姓氏「${char}」不是单个汉字，无法注音`);
+  let syllable = '';
+  try {
+    const result = pinyin(char, { mode: 'surname', toneType: 'none', type: 'array', v: true });
+    syllable = String((Array.isArray(result) ? result[0] : result) || '').trim().toLowerCase();
+  } catch {
+    syllable = '';
+  }
+  if (!/^[a-z]+$/.test(syllable)) throw fail(`姓氏「${char}」无法注音，请检查输入`);
+  return syllable;
 }
 
 /**
@@ -895,7 +905,7 @@ export function nextTreeId(meta, surnameChar) {
     const candidate = `${pinyin}_${codePoint}_${String(seq).padStart(2, '0')}`;
     if (!Object.values(meta.trees || {}).some((t) => t.tree_id === candidate)) return candidate;
   }
-  throw new Error(`姓氏「${char}」下支派序号已用尽（≥99）`);
+  throw fail(`姓氏「${char}」下支派序号已用尽（≥99）`);
 }
 
 /**
@@ -918,9 +928,9 @@ export async function createTree({
   onBeforeWrite = null,
 }) {
   const char = String(surnameChar || '').trim();
-  if (!/^[\u4e00-\u9fa5]$/.test(char)) throw new Error('请填写单个汉字姓氏');
+  if (!/^[\u4e00-\u9fa5]$/.test(char)) throw fail('请填写单个汉字姓氏');
   const given = String(founderName || '').trim();
-  if (!given) throw new Error('请填写始祖姓名');
+  if (!given) throw fail('请填写始祖姓名');
   const gender = ['M', 'F', 'U'].includes(founderGender) ? founderGender : 'M';
 
   const meta = await getMeta();
@@ -977,6 +987,7 @@ export async function createTree({
     tree_id: treeId,
     path_alias: `/${treeId}`,
     surname_char: char,
+    surname_pinyin: surnamePinyin(char),
     display_title: String(displayTitle || '').trim() || `${char}氏家族`,
     genealogy_name: String(genealogyName || '').trim() || `${char}氏家谱`,
     archive_url: '',
@@ -1007,17 +1018,17 @@ export async function createTree({
 export async function splitTree({ treeId, ancestorHandle, ancestorName = '', initiatorPhone }) {
   const meta = await getMeta();
   const entry = Object.values(meta.trees).find((t) => t.tree_id === treeId);
-  if (!entry) throw new Error(`未找到 tree: ${treeId}`);
+  if (!entry) throw fail(`未找到 tree: ${treeId}`);
 
   let newTreeId = null;
   let movedPeople = 0;
 
   await updateTree(treeId, async (tree) => {
     const ancestor = tree.people[ancestorHandle];
-    if (!ancestor) throw new Error('祖先节点不存在于该树');
+    if (!ancestor) throw fail('祖先节点不存在于该树');
 
     const { people, families } = collectSubtree(tree, ancestorHandle);
-    if (people.size <= 0) throw new Error('无节点可拆分');
+    if (people.size <= 0) throw fail('无节点可拆分');
 
     // 新树 tree_id：姓氏拼音 + Unicode 码点 + 未用序号（生成规则与新建家族树共用 nextTreeId）
     const surnameChar = (ancestor.surname || entry.surname_char || '氏').slice(0, 1);
@@ -1064,6 +1075,7 @@ export async function splitTree({ treeId, ancestorHandle, ancestorName = '', ini
       tree_id: newTreeId,
       path_alias: `/${newTreeId}`,
       surname_char: surnameChar,
+      surname_pinyin: surnamePinyin(surnameChar),
       display_title: `${surnameChar}氏家族`,
       genealogy_name: `${surnameChar}氏家谱`,
       archive_url: '',
@@ -1258,14 +1270,14 @@ export async function reparentNode({
 }) {
   const tree0 = await getTree(treeId);
   const person = tree0.people[personHandle];
-  if (!person) throw new Error('节点不存在');
+  if (!person) throw fail('节点不存在');
 
   const refText = String(newParentRef || '').trim();
   // 统一解析（docs/id-system.spec.md §5）：全局编号 / handle / 树内旧号（带 tree_id）
   const hit = await resolveNode(refText, treeId, { targetTreeId, listIdsFn });
   if (!hit) {
-    if (targetTreeId) throw new Error(`目标家族树 ${targetTreeId} 中找不到编号为「${refText}」的节点`);
-    throw new Error(`找不到编号为「${refText}」的节点`);
+    if (targetTreeId) throw fail(`目标家族树 ${targetTreeId} 中找不到编号为「${refText}」的节点`);
+    throw fail(`找不到编号为「${refText}」的节点`);
   }
   if (hit.tree_id !== treeId) {
     // 编号属于别的家族树 → 跨树改父 = 节点及其全部后代整体迁到目标树（换树不换号）
@@ -1282,14 +1294,14 @@ export async function reparentNode({
     });
   }
   const parentHandle = hit.handle;
-  if (parentHandle === personHandle) throw new Error('不能把节点设为自己的父节点');
+  if (parentHandle === personHandle) throw fail('不能把节点设为自己的父节点');
   const parent = tree0.people[parentHandle];
   if (descendantsOf(tree0, personHandle).has(parentHandle)) {
-    throw new Error(`「${parent.name}」是「${person.name}」的后代，不能作为其父节点（会形成环）`);
+    throw fail(`「${parent.name}」是「${person.name}」的后代，不能作为其父节点（会形成环）`);
   }
   const oldFam = person.parent_family ? tree0.families[person.parent_family] : null;
   if (oldFam && (oldFam.father_handle === parentHandle || oldFam.mother_handle === parentHandle)) {
-    throw new Error(`「${person.name}」的父母已经是「${parent.name}」，无需改动`);
+    throw fail(`「${person.name}」的父母已经是「${parent.name}」，无需改动`);
   }
 
   // 世数平移量（仅当双方都在源流链上；聚合虚位节点不代表单世 → 不平移）
@@ -1476,7 +1488,14 @@ function promoteScopeText(promotedCount, toFamily) {
 /** subtree 模式范围措辞：实际删的是整支后代，统一说「全部后代」而不是「全部子节点」 */
 const DELETE_SCOPE_SUBTREE = '及其全部后代';
 
-/** 统一错误构造（带 HTTP 状态；路由直接透传） */
+/**
+ * 统一错误构造（带 HTTP 状态；路由直接透传）。
+ *
+ * **本文件输入 / 校验类拒统一用它**（默认 400）：错误必须自带 `status`，否则计费路由 catch 的
+ * `eco.errorPayload` 会把它判成系统错误 → body `{"error":"服务内部错误","status":500}`
+ * （HTTP 状态码与文案互相矛盾；见 `surnamePinyin` / `createTree` / `splitTree` / `reparentNode`）。
+ * 函数声明提升，故调用点可以出现在本定义之前。
+ */
 function fail(message, status = 400) {
   const e = new Error(message);
   e.status = status;

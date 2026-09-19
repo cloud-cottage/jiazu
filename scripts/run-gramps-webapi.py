@@ -6,7 +6,7 @@ macOS 本地开发环境适配:
 2. Gramps 创建数据库时弹 GTK 对话框 → web 模式下抑制（headless 兼容）
 
 用法（与官方 CLI 一致）:
-    python scripts/run-gramps-webapi.py run -t '*' -p 8000
+    python scripts/run-gramps-webapi.py run -t '*' -p 5198
     python scripts/run-gramps-webapi.py user add admin <pw> --role 5
     python scripts/run-gramps-webapi.py tree list
 """

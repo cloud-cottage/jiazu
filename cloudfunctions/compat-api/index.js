@@ -56,6 +56,7 @@ import * as bco from './lib/branch-clan-ops.js';
 import { resolveNode } from './lib/id-resolve.js';
 import { idAllocator, reserveFamilyIds, reservePersonIds, numberOfId } from './lib/id-seq.js';
 import { treeActivity } from './lib/tree-activity.js';
+import { countFamilyMembers } from './lib/family-population.js';
 import { computeAccess, isHiddenFamily, accessToPayload, computePersonDepth } from './lib/tree-access.js';
 
 const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
@@ -467,9 +468,14 @@ async function handleRequest(event) {
         const g = d.attributes?.find((a) => a.key === 'external_chain_gen');
         if (g) gens.set(d.handle, parseInt(g.value, 10) || 0);
       }
-      const { totalGenerations, personCount, explicit } = computeTreeDepth(tree, gens);
+      const { totalGenerations, explicit } = computeTreeDepth(tree, gens);
       const rank = rankFromDepth(totalGenerations);
       const access = await resolveTreeAccess(headers, treeId, tree);
+      // person_count：家族人数新口径（用户 2026-09-19 拍板，见 lib/family-population.js 文件头）。
+      // 需要 tree-meta 条目解析本姓 S（surname_char → 始祖 → 众数）。
+      const rankMeta = await getMeta();
+      const metaEntry = Object.values(rankMeta?.trees || {}).find((t) => t && t.tree_id === treeId) || null;
+      const personCount = countFamilyMembers(tree, metaEntry);
       // activity：近 30 天与本树相关的互动事件数（lib/tree-activity.js；集合不可用恒 0，不抛）
       const activity = await treeActivity(treeId, { now: new Date() });
       return send(200, {
@@ -483,6 +489,10 @@ async function handleRequest(event) {
         max_depth: MAX_DEPTH,
         root_count: Object.values(tree.people).filter((p) => !p.parent_family).length,
         person_count: personCount,
+        // mirror_count：本树 people 中「外树镜像」节点数（`String(external_mirror) === 'true'`，
+        // 纯计数、不涉权限裁剪）。**保留字段**：首页卡片已不再使用「N 人（含外树 M）」说明，
+        // 新前端只读 person_count；三档排序归一化继续用 person_count（新口径）。
+        mirror_count: Object.values(tree.people).filter((p) => String(p.external_mirror) === 'true').length,
         explicit,
         activity,
         updated_at: tree.updated_at === undefined || tree.updated_at === null ? '' : String(tree.updated_at),
@@ -2325,6 +2335,100 @@ async function handleRequest(event) {
         ...shape(t, p, matched),
         restricted,
       })));
+    }
+
+    // ===== 跨树嫁娶配偶发现通道 GET /search/marriage-candidates（docs/marriage.spec.md §9-8）=====
+    // 背景（本通道存在的唯一理由）：读路径的节点级分层按「发起人对目标树的关系」裁剪（lib/tree-access.js
+    // computeAccess：非成员只剩最古老 1 世，FLOOR_VISIBLE_DEPTH=1）→ 对方树里适婚世代整段消失
+    // （实测 gu_39038_01 搜「景月」：guest 0 / 季树 member 0 / chief 1），而写侧 /marriage-request
+    // （第 1121-1128 行）本就按 handle / 全局编号放开 → 「发现被拦、写许可开着」的不对称。
+    // 本通道 = **白名单字段下的定点例外**：需登录（**绝不静默降级 guest 档**）、**不套节点级读裁剪**、
+    // 出参五键白名单。**必须注册在树编辑闸门之前**（闸门 = 下面的 `缺少 X-Tree-Id`，同段先例 = /search/global）
+    // → tree_id 走查询参数（闸门之前没有 X-Tree-Id 语义）。
+    if (pathname === '/search/marriage-candidates' && method === 'GET') {
+      // ① 鉴权：与写侧同档（有效 JWT **且** jiazu_users 中存在该用户）→ 缺失 / 失效 / 过期一律 401。
+      //    **不得**回落 resolveTreeAccess 的 guest 档：那正是「前端仍显示 chief、服务端按 guest 藏 18 世」
+      //    这层缺陷的放大器（用户看不出任何原因）。
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '登录已过期或未登录' });
+      // ② 参数：tree_id 必填（缺失 → 400）；query trim 后为空 → 200 + 空列表（与树内 /search 同口径）
+      const targetTreeId = String(query.tree_id ?? '').trim();
+      if (!targetTreeId) return send(400, { error: '缺少 tree_id' });
+      const raw = String(query.query ?? '').trim();
+      if (!raw) return send(200, { ok: true, tree_id: targetTreeId, candidates: [], total: 0 });
+      // gender：仅 'F' / 'M' 生效，其它值（含缺失）一律忽略；limit：默认 20，clamp 1..50
+      const wantGender = query.gender === 'F' || query.gender === 'M' ? query.gender : '';
+      const parsedLimit = parseInt(String(query.limit ?? ''), 10);
+      const limit = Number.isFinite(parsedLimit) ? Math.min(50, Math.max(1, parsedLimit)) : 20;
+      const target = await getTree(targetTreeId);
+      if (!target || !target.people) return send(404, { error: `树不存在: ${targetTreeId}` });
+
+      const qNorm = raw.replace(/\s+/g, '').toLowerCase(); // 去空格 + 小写（大小写不敏感）
+      const qNum = numberOfId(raw); // `123` / `000123` / `I000123` → 123；非编号 → null
+      // ※ **不调用** resolveTreeAccess / computeAccess 的 isHiddenPerson：本通道刻意不套节点级读裁剪
+      //   （否则「近代世女性节点搜不到」的缺陷原样复现）。分层阈值三处数值（18 / 9 / 1）均未改动，
+      //   本路由只是不受其约束；其余读路径（/search、/people、/families、/tree/rank）行为不变。
+      // ※ **镜像排除**：external_mirror === 'true' 的节点不列入 —— 娶入 / 嫁出对象应为**真身**
+      //   （镜像只是本树里替外树人物占位的镜像；若某人真身就在本树，跨树婚配本就不适用），
+      //   且白名单不含 external_* → 前端无法辨别镜像（docs/marriage.spec.md §11-5）。
+      const isMirrorNode = (p) => String(p?.external_mirror) === 'true';
+      // 性别口径不变：娶入强制女性 / 嫁出强制男性；**性别未知（U / 0 / 空）一律不列入**
+      const genderOk = (p) => {
+        const g = String(p?.gender ?? '').trim().toUpperCase();
+        if (g !== 'M' && g !== 'F') return false;
+        return wantGender ? g === wantGender : true;
+      };
+      const eligible = (p) => !!p && !!p.handle && !isMirrorNode(p) && genderOk(p);
+      // ③ 出参**五键白名单**（handle / gramps_id / name / gender / is_living）：
+      //    **不得**透传 toRawPerson 全量对象（会夹带生卒 / profile / 家族关系 / external_* 指针 /
+      //    真身 handle・编号・树）；发现环节只需「能选人」，把关靠口径 C 的申请-审批。
+      const shapeCand = (p) => ({
+        handle: p.handle,
+        gramps_id: p.gramps_id || '',
+        name: p.name || `${p.surname || ''}${p.given || ''}`,
+        gender: p.gender || '',
+        is_living: p.is_living !== undefined ? p.is_living : !p.death_date,
+      });
+
+      const picked = [];
+      const seen = new Set();
+      // ① 编号 / handle / 树内旧号精确命中（限定目标树，复用 lib/id-resolve.js）→ 置顶
+      let refHit = null;
+      try {
+        refHit = await resolveNode(raw, '', { targetTreeId });
+      } catch {
+        refHit = null; // 多树重号等歧义 → 退回下方扫描，不让通道整体失败
+      }
+      if (refHit && refHit.tree_id === targetTreeId) {
+        const p = target.people[refHit.handle];
+        if (eligible(p)) {
+          seen.add(p.handle);
+          picked.push(p);
+        }
+      }
+      // ② 编号匹配（gramps_id 数字形态相等）/ ③ 姓名匹配（name / surname / given contains）
+      //    其余候选保持**树内 people 键序**（单遍扫描天然保序 → 排序 = ① 置顶 + 键序）
+      for (const p of Object.values(target.people)) {
+        if (!p || !p.handle || seen.has(p.handle)) continue;
+        if (!eligible(p)) continue;
+        const idHit = qNum !== null && numberOfId(p.gramps_id) === qNum;
+        const nameHit = [p.name, p.surname, p.given].some((f) =>
+          String(f === undefined || f === null ? '' : f)
+            .replace(/\s+/g, '')
+            .toLowerCase()
+            .includes(qNorm),
+        );
+        if (!idHit && !nameHit) continue;
+        seen.add(p.handle);
+        picked.push(p);
+      }
+      // total = 命中总数（**截断前**）；candidates = 截断到 limit 的候选
+      return send(200, {
+        ok: true,
+        tree_id: targetTreeId,
+        candidates: picked.slice(0, limit).map(shapeCand),
+        total: picked.length,
+      });
     }
 
     // ================= 树编辑 =================

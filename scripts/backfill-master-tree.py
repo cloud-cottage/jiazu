@@ -10,7 +10,7 @@
 用法:
   python3 scripts/backfill-master-tree.py
 环境变量（或 .env）:
-  GRAMPS_BASE_URL=http://localhost:8000
+  GRAMPS_BASE_URL=http://127.0.0.1:5198
   通过 auth-server/data/gramps-owners.json 读取各树 owner 凭据
 """
 
@@ -21,7 +21,7 @@ import time
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE = os.environ.get("GRAMPS_BASE_URL", "http://localhost:8000")
+BASE = os.environ.get("GRAMPS_BASE_URL", "http://127.0.0.1:5198")
 OWNERS_FILE = os.path.join(ROOT, "auth-server", "data", "gramps-owners.json")
 META_FILE = os.path.join(ROOT, "config", "tree-meta.json")
 CHIEF_USER = os.environ.get("GRAMPS_CHIEF_USERNAME", "chief_editor")

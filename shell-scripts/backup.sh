@@ -19,7 +19,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_DIR="${PROJECT_DIR}/backups/$(date +%Y%m%d_%H%M%S)"
-GRAMPS_API="${GRAMPS_API:-http://localhost:8000}"
+GRAMPS_API="${GRAMPS_API:-http://127.0.0.1:5198}"
 
 # 从 .env 加载配置
 if [ -f "${PROJECT_DIR}/.env" ]; then

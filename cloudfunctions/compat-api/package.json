@@ -5,6 +5,7 @@
   "main": "index.js",
   "description": "jiazu 兼容层 API（CloudBase 云函数，输出 Gramps-Web 形状）",
   "dependencies": {
-    "@cloudbase/node-sdk": "^3.18.3"
+    "@cloudbase/node-sdk": "^3.18.3",
+    "pinyin-pro": "^3.29.4"
   }
 }

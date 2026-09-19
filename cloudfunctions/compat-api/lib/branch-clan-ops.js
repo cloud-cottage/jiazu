@@ -54,6 +54,7 @@ import {
   nextTreeId,
   repairTreeRefs,
   scanExternalRefs,
+  surnamePinyin,
   treeLabelOf,
 } from './tree-write.js';
 import { idAllocator, reserveFamilyIds, reservePersonIds } from './id-seq.js';
@@ -705,6 +706,8 @@ export async function establishBranch({
       kind: TREE_KIND.FAMILY,
       path_alias: `/${newTreeId}`,
       surname_char: surnameChar,
+      // §5-2 / tree-id.spec §4：新建树一律登记「实际采用的」拼音前缀，与 createTree / splitTree / 祖谱同口径
+      surname_pinyin: surnamePinyin(surnameChar),
       display_title: newTreeTitle,
       genealogy_name: `${surnameChar}氏家谱`,
       archive_url: '',

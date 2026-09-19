@@ -11,7 +11,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyLifespan, nextChainGen, nextGrampsId, nextTreeId, inheritedSurname, spouseSlots, resolvePersonRef, parentSlot, descendantsOf } from './tree-write.js';
+import { applyLifespan, nextChainGen, nextGrampsId, nextTreeId, surnamePinyin, createTree, inheritedSurname, spouseSlots, resolvePersonRef, parentSlot, descendantsOf } from './tree-write.js';
 
 function base() {
   return {
@@ -151,8 +151,86 @@ test('同姓已占序号跳号：季 01/04 已存在 → ji_23395_02', () => {
   assert.equal(nextTreeId(meta, '季'), 'ji_23395_02');
 });
 
-test('姓氏不在拼音表 → 前缀回退 shi；非单字姓氏由 createTree 拦截', () => {
-  assert.equal(nextTreeId({ trees: {} }, '禚'), 'shi_31130_01');
+test('姓氏注音无手工表：旧表未收录的「禚」也按 pinyin-pro 注音（不再静默兜底 shi）', () => {
+  // 旧实现 PINYIN_MAP['禚'] 未收录 → `|| 'shi'` 兜底成 shi_31130_01（该错误契约已废弃）
+  assert.equal(nextTreeId({ trees: {} }, '禚'), 'zhuo_31130_01');
+});
+
+// ---- 事故回归：纪/容/恒 三棵树曾被静默命名成 shi_*（pinyin-pro 姓氏模式修复） ----
+
+test('姓氏模式注音：3 棵污染树的姓氏 → 正确拼音', () => {
+  assert.equal(surnamePinyin('纪'), 'ji');
+  assert.equal(surnamePinyin('容'), 'rong');
+  assert.equal(surnamePinyin('恒'), 'heng');
+});
+
+test('迁移后 tree_id：纪 → ji_32426_01 / 容 → rong_23481_01 / 恒 → heng_24658_01', () => {
+  assert.equal(nextTreeId({ trees: {} }, '纪'), 'ji_32426_01');
+  assert.equal(nextTreeId({ trees: {} }, '容'), 'rong_23481_01');
+  assert.equal(nextTreeId({ trees: {} }, '恒'), 'heng_24658_01');
+});
+
+test('姓氏模式优先百家姓读音（多音字）：曾→zeng、单→shan', () => {
+  assert.equal(surnamePinyin('曾'), 'zeng');
+  assert.equal(surnamePinyin('单'), 'shan');
+  assert.equal(nextTreeId({ trees: {} }, '曾'), 'zeng_26366_01');
+  assert.equal(nextTreeId({ trees: {} }, '单'), 'shan_21333_01');
+});
+
+test('ü 写作 v：吕 → lv（否则会违反 ^[a-z]+_\\d+_\\d{2}$ 与 isValidTreeId）', () => {
+  assert.equal(surnamePinyin('吕'), 'lv');
+  assert.equal(nextTreeId({ trees: {} }, '吕'), 'lv_21525_01');
+  assert.match(nextTreeId({ trees: {} }, '吕'), /^[a-z]+_\d+_\d{2}$/);
+});
+
+test('注音失败 / 空串 / 非单个汉字 → 抛明确错误，绝不兜底', () => {
+  // 生僻字（U+4E65 乥）pinyin-pro 取不到读音，只会原样返回字符 → 判为注音失败
+  assert.throws(() => surnamePinyin('乥'), /姓氏「乥」无法注音，请检查输入/);
+  assert.throws(() => nextTreeId({ trees: {} }, '乥'), /姓氏「乥」无法注音，请检查输入/);
+  assert.throws(() => surnamePinyin(''), /缺少姓氏/);
+  assert.throws(() => surnamePinyin('   '), /缺少姓氏/);
+  assert.throws(() => surnamePinyin(undefined), /缺少姓氏/);
+  assert.throws(() => surnamePinyin('中国'), /不是单个汉字/);
+  assert.throws(() => surnamePinyin('A'), /不是单个汉字/);
+});
+
+test('注音 / 输入类校验错误**自带 status 400**（否则被 eco.errorPayload 吞成「服务内部错误」）', () => {
+  // lib 层单一错误约定：输入 / 校验类错误自带 4xx status。
+  // 回归锚点：`/admin/create-tree` 的 catch 是 `send(e.status || 400, eco.errorPayload(e, …))`，
+  // 而 errorPayload 对「无 code 且 status 非有限数」的异常一律回 500 + 「服务内部错误」
+  // → 实测过 HTTP 400 + body `{"error":"服务内部错误","status":500}`（状态码与文案互相矛盾）。
+  const cases = [
+    ['乥（注音失败）', () => surnamePinyin('乥'), /姓氏「乥」无法注音，请检查输入/],
+    ['nextTreeId 乥', () => nextTreeId({ trees: {} }, '乥'), /姓氏「乥」无法注音，请检查输入/],
+    ['空串', () => surnamePinyin(''), /缺少姓氏/],
+    ['非单个汉字', () => surnamePinyin('中国'), /不是单个汉字/],
+  ];
+  for (const [label, fn, re] of cases) {
+    let err = null;
+    try {
+      fn();
+    } catch (e) {
+      err = e;
+    }
+    assert.ok(err, `${label} 应抛错`);
+    assert.match(err.message, re);
+    assert.equal(err.status, 400, `${label}：错误必须自带 status 400（实际 ${err.status}）`);
+  }
+});
+
+test('createTree 输入校验（单字姓氏 / 始祖姓名）→ 拒绝且 status 400', async () => {
+  // 两条都在任何 IO 之前抛出（校验顺序：单字姓氏 → 始祖姓名 → getMeta/nextTreeId 注音）。
+  // 注音失败那一条不在此调用 createTree：它要先 `getMeta()`，而本测试文件的环境没有本地数据根
+  // → 只会拿到 cloud 连接错误（噪声），故该路径由「nextTreeId 乥 → status 400」断言 +
+  // 副本实例 HTTP 证据（`POST /admin/create-tree`）共同覆盖。
+  await assert.rejects(
+    () => createTree({ surnameChar: '中国', founderName: '测试' }),
+    (e) => e.status === 400 && /请填写单个汉字姓氏/.test(e.message),
+  );
+  await assert.rejects(
+    () => createTree({ surnameChar: '雷', founderName: '' }),
+    (e) => e.status === 400 && /请填写始祖姓名/.test(e.message),
+  );
 });
 
 // ---- 随父姓继承规则（inheritedSurname）：挂接节点为父/为母/无配偶家族 ----

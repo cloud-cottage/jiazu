@@ -17,7 +17,7 @@ import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BASE = os.environ.get("GRAMPS_BASE_URL", "http://localhost:8000")
+BASE = os.environ.get("GRAMPS_BASE_URL", "http://127.0.0.1:5198")
 CHIEF_USER = os.environ.get("GRAMPS_CHIEF_USERNAME", "chief_editor")
 CHIEF_PASS = os.environ.get("GRAMPS_CHIEF_PASSWORD", "")
 MASTER_TREE = os.environ.get("MASTER_TREE_ID", "zhonghua")

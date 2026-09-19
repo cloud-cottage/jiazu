@@ -891,6 +891,11 @@ test('§10-1-1/2/3/5 立支正例：祖先链上移 + 换树不换号 + 详情�
   const newEntry = meta.trees[NEW_TREE_ID];
   assert.ok(newEntry, '新树必须登记进 tree-meta');
   assert.equal(newEntry.kind, 'family');
+  // §5-2（docs/branch-clan-ops.spec.md）/ docs/tree-id.spec.md §4：立支新树条目必须登记 surname_pinyin，
+  // 口径与 createTree / splitTree / 祖谱一致 —— 值 = surnamePinyin(surname_char)，即 tree_id 的拼音前缀。
+  assert.equal(newEntry.surname_char, '季');
+  assert.equal(newEntry.surname_pinyin, 'ji', '立支新树条目必须写 surname_pinyin（缺口登记见 branch-clan-ops.spec §5-2 / tree-id.spec §7-③）');
+  assert.equal(newEntry.surname_pinyin, NEW_TREE_ID.split('_')[0], 'surname_pinyin 必须等于 tree_id 的拼音前缀（同一注音来源，不得是 shi 一类的兜底值）');
   assert.equal(newEntry.clan_tree_id, CLAN, '新树与原树同宗谱');
   assert.equal(newEntry.display_title.includes('季bc_src立支点'), true);
   assert.equal(treeFileCount(), treesBefore + 1, '新增 1 个新树文件');

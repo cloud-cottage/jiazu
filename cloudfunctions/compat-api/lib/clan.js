@@ -687,6 +687,7 @@ export async function createClanTree({
     path_alias: `/z/${treeId}`,
     surname: char,
     surname_char: char,
+    surname_pinyin: surnamePinyin(char),
     display_title: String(clanTitle || '').trim() || `${char}氏祖谱`,
     genealogy_name: String(genealogyName || '').trim() || `${char}氏祖谱`,
     archive_url: '',
