@@ -594,7 +594,7 @@ test('路由 POST /admin/reparent（跨树）：200 + 双树落库；未登录 4
 
 // ================= 真实数据副本 =================
 
-test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情），真实 shen/ji 与详情零改动', async () => {
+test('真实数据副本：shen → ji 迁移「沈丽琴」整支（含详情），真实 shen/ji 与详情零改动', async () => {
   for (const t of ['shen_27784_01', 'ji_23395_01']) {
     fs.copyFileSync(path.join(REAL_TREES, `${t}.json`), path.join(TMP, 'trees', `${t}.json`));
   }
@@ -603,12 +603,29 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
       fs.copyFileSync(path.join(REAL_DETAILS, f), path.join(TMP, 'details', f));
     }
   }
-  const YQ = '103f95b876413b7835fdaa325fc5'; // 沈云琴（母，shen 侧真身）
-  const QS = '103f95b876f8707f0386a907eb0b'; // 纪青森（子）
-  const FAM_YQ = '103f95b876443dfbb3877d6712b'; // 沈云琴 → 纪青森 的家庭
-  const FAM_QS = '103f95b876fe2713641471ed4f05'; // 纪青森留下的无子女家庭
+  // 夹具换代（2026-09-19）：原「沈云琴 + 纪青森」整支随纪青森 / 家庭 F000143 被删而消失，
+  // 改用当前真源仍在、且恰为「母 + 单子」二节点整支的「沈丽琴 → 秦铭铭」（真源只读脚本核实 handle/姓名/家族）：
+  //   沈丽琴 103f95b87705138ea3e10d5e3ec1（I000280，真身非镜像）、秦铭铭 103f95b877284a73f3c0323e4e05（I000281）
+  //   家族 F000141 103f95b8770d2012dc9bcfb4a803（母 沈丽琴 → 子 秦铭铭，有子女 → 随迁）
+  //   家族 F000144 103f95b8772e2a1e1417ab0bb02c（父 秦铭铭、无子女 → 不随迁）
+  //   原生家族 F000139 103f95b86fb02757d53eb366a90e（沈丽琴出生家族，迁移后应摘除该子）
+  // 真源实算：整支 2 人、随迁家族 1 个（F000141）。
+  const LQ = '103f95b87705138ea3e10d5e3ec1'; // 沈丽琴（母，shen 侧真身）
+  const MM = '103f95b877284a73f3c0323e4e05'; // 秦铭铭（子）
+  const FAM_LQ = '103f95b8770d2012dc9bcfb4a803'; // F000141 沈丽琴 → 秦铭铭 的家庭
+  const FAM_MM = '103f95b8772e2a1e1417ab0bb02c'; // F000144 秦铭铭留下的无子女家庭
+  const FAM_LQ_PARENT = '103f95b86fb02757d53eb366a90e'; // F000139 沈丽琴的原生家族
   const jiBefore = readTree('ji_23395_01');
   const shenBefore = readTree('shen_27784_01');
+
+  // 夹具前提：handle 与姓名、家族结构对得上（真源重排则此处即红，而非悄悄降级为别的分支）
+  assert.equal(shenBefore.people[LQ].name, '沈丽琴');
+  assert.equal(shenBefore.people[MM].name, '秦铭铭');
+  assert.equal(shenBefore.people[LQ].external_mirror, undefined, '迁移根必须是真身，不得是外树镜像');
+  assert.equal(shenBefore.families[FAM_LQ].mother_handle, LQ);
+  assert.deepEqual(shenBefore.families[FAM_LQ].child_handles, [MM]);
+  assert.deepEqual(shenBefore.families[FAM_MM].child_handles, []);
+  assert.ok((shenBefore.families[FAM_LQ_PARENT].child_handles || []).includes(LQ), '夹具前提：原生家族确实登记着沈丽琴');
 
   // 定位一律按姓名/性别 + handle，不写死 gramps_id：编号会随「全站唯一编号」迁移整站变化。
   const jiTarget = Object.values(jiBefore.people).find(
@@ -620,15 +637,15 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
   );
   assert.ok(jiFam, '「季志全」应已有家庭（本次迁移复用，不新建）');
   // 迁移前编号快照：编号终身不变 ⇒ 迁移后必须逐字等于迁移前，而不是等于某个写死的旧号
-  const yqIdBefore = shenBefore.people[YQ].gramps_id;
-  const qsIdBefore = shenBefore.people[QS].gramps_id;
-  const famIdBefore = shenBefore.families[FAM_YQ].gramps_id;
-  assert.ok(yqIdBefore && qsIdBefore && famIdBefore, '迁出侧节点/家族都应带编号');
-  assert.equal(shenBefore.families[FAM_YQ].mother_handle, YQ);
+  const lqIdBefore = shenBefore.people[LQ].gramps_id;
+  const mmIdBefore = shenBefore.people[MM].gramps_id;
+  const famIdBefore = shenBefore.families[FAM_LQ].gramps_id;
+  assert.ok(lqIdBefore && mmIdBefore && famIdBefore, '迁出侧节点/家族都应带编号');
+  assert.equal(shenBefore.families[FAM_LQ].mother_handle, LQ);
 
   const r = await tw.reparentNode({
     treeId: 'shen_27784_01',
-    personHandle: YQ,
+    personHandle: LQ,
     newParentRef: jiTarget.handle,
     targetTreeId: 'ji_23395_01',
     masterTreeId: 'zhonghua',
@@ -637,35 +654,39 @@ test('真实数据副本：shen → ji 迁移「沈云琴」整支（含详情�
   });
   assert.equal(r.cross_tree, true);
   assert.equal(r.target_tree_id, 'ji_23395_01');
-  assert.equal(r.moved_people, 2, '沈云琴 + 纪青森');
-  assert.equal(r.moved_families, 1, 'F0004 随迁');
+  assert.equal(r.moved_people, 2, '沈丽琴 + 秦铭铭');
+  assert.equal(r.moved_families, 1, 'F000141 随迁（F000144 无子女 → 不随迁）');
   assert.equal(r.parent_handle, jiTarget.handle);
   assert.equal(r.created_family, false, '复用季志全已有的家族');
 
   const shenAfter = readTree('shen_27784_01');
   const jiAfter = readTree('ji_23395_01');
-  assert.equal(shenAfter.people[YQ], undefined);
-  assert.equal(shenAfter.people[QS], undefined);
-  assert.equal(shenAfter.families[FAM_YQ], undefined);
-  assert.equal(shenAfter.families[FAM_QS], undefined, '纪青森留下的无子女家族一并清理');
+  assert.equal(shenAfter.people[LQ], undefined);
+  assert.equal(shenAfter.people[MM], undefined);
+  assert.equal(shenAfter.families[FAM_LQ], undefined);
+  assert.equal(shenAfter.families[FAM_MM], undefined, '秦铭铭留下的无子女家族一并清理');
   assert.ok(shenAfter.people['103f95b87734468f47e53dde8c70'], '其余节点不受影响');
+  assert.ok(
+    !(shenAfter.families[FAM_LQ_PARENT].child_handles || []).includes(LQ),
+    '原生家族 F000139 摘除迁出的沈丽琴',
+  );
 
   // 跨树迁移不再重编号（docs/id-system.spec.md §8-4）：编号随节点原样迁到目标树
-  assert.equal(jiAfter.people[YQ].gramps_id, yqIdBefore, '编号终身不变（迁出侧编号原样保留）');
-  assert.equal(jiAfter.people[QS].gramps_id, qsIdBefore);
-  assert.equal(jiAfter.people[YQ].parent_family, jiFam, '挂到目标父「季志全」的家族下');
-  assert.ok(jiAfter.families[jiFam].child_handles.includes(YQ));
-  assert.equal(jiAfter.families[FAM_YQ].gramps_id, famIdBefore, '随迁家族编号不变（原编号原样保留）');
-  assert.equal(jiAfter.families[FAM_YQ].mother_handle, YQ);
-  assert.deepEqual(jiAfter.families[FAM_YQ].child_handles, [QS]);
+  assert.equal(jiAfter.people[LQ].gramps_id, lqIdBefore, '编号终身不变（迁出侧编号原样保留）');
+  assert.equal(jiAfter.people[MM].gramps_id, mmIdBefore);
+  assert.equal(jiAfter.people[LQ].parent_family, jiFam, '挂到目标父「季志全」的家族下');
+  assert.ok(jiAfter.families[jiFam].child_handles.includes(LQ));
+  assert.equal(jiAfter.families[FAM_LQ].gramps_id, famIdBefore, '随迁家族编号不变（原编号原样保留）');
+  assert.equal(jiAfter.families[FAM_LQ].mother_handle, LQ);
+  assert.deepEqual(jiAfter.families[FAM_LQ].child_handles, [MM]);
   assert.deepEqual(tw.checkTreeIntegrity(jiAfter), []);
   assert.deepEqual(tw.checkTreeIntegrity(shenAfter), []);
 
   // 详情随迁
-  const d1 = readDetail('ji_23395_01', YQ);
-  assert.ok(d1 && d1.tree_id === 'ji_23395_01' && d1.gramps_id === yqIdBefore, '沈云琴详情迁到 ji（编号不变）');
-  assert.ok(readDetail('ji_23395_01', QS), '纪青森详情迁到 ji');
-  assert.equal(readDetail('shen_27784_01', YQ), null, 'shen 侧旧详情删除');
+  const d1 = readDetail('ji_23395_01', LQ);
+  assert.ok(d1 && d1.tree_id === 'ji_23395_01' && d1.gramps_id === lqIdBefore, '沈丽琴详情迁到 ji（编号不变）');
+  assert.ok(readDetail('ji_23395_01', MM), '秦铭铭详情迁到 ji');
+  assert.equal(readDetail('shen_27784_01', LQ), null, 'shen 侧旧详情删除');
 
   // 真实数据零改动
   assert.equal(md5(REAL_META), realMetaMd5, '真实 config/tree-meta.json 被改动了');

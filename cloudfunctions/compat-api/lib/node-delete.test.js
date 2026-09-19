@@ -536,7 +536,7 @@ test('路由 POST /admin/delete-node：鉴权/权限/成功删除/dry-run/跨树
 
 // ================= 真实数据副本 =================
 
-test('真实数据副本：shen 树删「沈云琴」子树 → 副本 2 人 2 家族与详情一并删除，真实数据零改动', async () => {
+test('真实数据副本：shen 树删「沈丽琴」子树 → 副本 2 人 2 家族与详情一并删除，真实数据零改动', async () => {
   for (const f of fs.readdirSync(REAL_TREES)) {
     if (f === 'shen_27784_01.json') {
       fs.copyFileSync(path.join(REAL_TREES, f), path.join(TMP, 'trees', f));
@@ -547,24 +547,40 @@ test('真实数据副本：shen 树删「沈云琴」子树 → 副本 2 人 2 �
       fs.copyFileSync(path.join(REAL_DETAILS, f), path.join(TMP, 'details', f));
     }
   }
-  const YQ = '103f95b876413b7835fdaa325fc5'; // 沈云琴 I0009
-  const QS = '103f95b876f8707f0386a907eb0b'; // 纪青森 I0011
-  const FAM_YQ = '103f95b876443dfbb3877d6712b'; // F0004：母 沈云琴 → 子 纪青森
-  const FAM_QS = '103f95b876fe2713641471ed4f05'; // F0015：父 纪青森（无子女）
+  // 夹具换代（2026-09-19）：原「沈云琴 + 纪青森」母子树随纪青森 / 家庭 F000143 一并被删而消失，
+  // 改用当前真源仍在、且子树恰为 2 人的「沈丽琴（母）→ 秦铭铭（子）」小分支（真源只读脚本核实 handle/姓名/家族）：
+  //   沈丽琴 103f95b87705138ea3e10d5e3ec1（I000280，真身非镜像，有父母家族 → 非始祖）
+  //   秦铭铭 103f95b877284a73f3c0323e4e05（I000281，子树唯一子节点）
+  //   家族 F000141 103f95b8770d2012dc9bcfb4a803（母 沈丽琴 → 子 秦铭铭）
+  //   家族 F000144 103f95b8772e2a1e1417ab0bb02c（父 秦铭铭、无子女）
+  // 真源实算：待删子树 2 人；随删家族 2 个（F000141 母子俱删、F000144 父删且无子女而清空）。
+  const LQ = '103f95b87705138ea3e10d5e3ec1'; // 沈丽琴 I000280（母）
+  const MM = '103f95b877284a73f3c0323e4e05'; // 秦铭铭 I000281（子）
+  const FAM_LQ = '103f95b8770d2012dc9bcfb4a803'; // F000141：母 沈丽琴 → 子 秦铭铭
+  const FAM_MM = '103f95b8772e2a1e1417ab0bb02c'; // F000144：父 秦铭铭（无子女）
   const before = JSON.parse(fs.readFileSync(path.join(TMP, 'trees', 'shen_27784_01.json'), 'utf8'));
-  assert.ok(before.people[YQ] && before.people[QS]);
+  assert.ok(before.people[LQ] && before.people[MM]);
+  // 夹具前提：handle 与姓名、家族结构对得上（真源重排则此处即红，而非悄悄降级为别的分支）
+  assert.equal(before.people[LQ].name, '沈丽琴');
+  assert.equal(before.people[MM].name, '秦铭铭');
+  assert.equal(before.people[LQ].external_mirror, undefined, '待删根必须是真身，不得是外树镜像');
+  assert.equal(before.families[FAM_LQ].mother_handle, LQ);
+  assert.deepEqual(before.families[FAM_LQ].child_handles, [MM]);
+  assert.equal(before.families[FAM_MM].father_handle, MM);
+  assert.deepEqual(before.families[FAM_MM].child_handles, []);
 
-  const r = await tw.deleteNode({ treeId: 'shen_27784_01', personHandle: YQ, masterTreeId: 'zhonghua' });
-  assert.equal(r.people_count, 2, '沈云琴 + 纪青森');
-  assert.equal(r.families_count, 2, 'F0004（无家长无子女）与 F0015（父被删、无子女）');
+  const r = await tw.deleteNode({ treeId: 'shen_27784_01', personHandle: LQ, masterTreeId: 'zhonghua' });
+  assert.equal(r.people_count, 2, '沈丽琴 + 秦铭铭');
+  assert.equal(r.families_count, 2, 'F000141（母子俱删）与 F000144（父被删、无子女）');
   const after = readTree('shen_27784_01');
-  assert.equal(after.people[YQ], undefined);
-  assert.equal(after.people[QS], undefined);
-  assert.equal(after.families[FAM_YQ], undefined);
-  assert.equal(after.families[FAM_QS], undefined);
+  assert.equal(after.people[LQ], undefined);
+  assert.equal(after.people[MM], undefined);
+  assert.equal(after.families[FAM_LQ], undefined);
+  assert.equal(after.families[FAM_MM], undefined);
   assert.equal(after.people['103f95b87734468f47e53dde8c70'].name, '沈廷如', '其余节点不受影响');
-  assert.equal(readDetail('shen_27784_01', YQ), null, '详情随人删除（副本内）');
-  assert.ok(fs.existsSync(path.join(REAL_DETAILS, `shen_27784_01:${YQ}.json`)), '真实详情文档仍在');
+  assert.equal(readDetail('shen_27784_01', LQ), null, '详情随人删除（副本内）');
+  assert.equal(readDetail('shen_27784_01', MM), null, '子树内子节点详情一并删除');
+  assert.ok(fs.existsSync(path.join(REAL_DETAILS, `shen_27784_01:${LQ}.json`)), '真实详情文档仍在');
 
   // 真实数据逐字节未变
   assert.equal(md5(REAL_META), realMetaMd5, '真实 config/tree-meta.json 被改动了');

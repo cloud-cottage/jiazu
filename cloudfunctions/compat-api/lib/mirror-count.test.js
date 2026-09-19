@@ -22,7 +22,8 @@
  *   M5 权限档位变化（guest / 已登录非成员 / 树成员）`mirror_count` 与 `person_count` 恒定不变 —— 且用 computeAccess
  *      直证这些镜像节点在 guest 档确实被裁掉（证明计数与权限裁剪解耦）；真源 gu 的镜像数同样动态推导；
  *   M6 真源 ji_23395_01 → `mirror_count` 动态一致（包含式点名 I000209 / I000253 / I000291 / I000365）、
- *      `person_count` 快照 87 + 不变量（people 总数 − 排除集：姑父 I000238 / 妹夫 I000240 —— 外姓男性姻亲，纯血缘口径剔除）；
+ *      `person_count` 快照 61 + 不变量（people 总数 − 排除集：**2026-09-19 清理后 ji 排除集为空** ——
+ *      姑父 I000238 / 妹夫 I000240 等 28 个非成员真节点已从真源删除，故不变量右项即真源 people 总数本身）；
  *   M7 真源体检：config/tree-meta.json + migrate-output/{trees,collections} 逐字节未变。
  *
  * 数据安全：`COMPAT_OUT_DIR` / `COMPAT_META_FILE` 一律指向 /tmp 副本（真源只读复制）；真源 md5 文末断言未变。
@@ -196,10 +197,12 @@ const JI_MIRROR_GIDS = ['I000209', 'I000253', 'I000291', 'I000365'];
 /** 真源 gu 被新口径（纯血缘图）排除的 handle 点名：婚入男镜像 I000292 + 其子 child 镜像 I000293 / I000294 */
 const GU_EXCLUDED_GIDS = ['I000292', 'I000293', 'I000294'];
 /**
- * 真源 ji 被新口径（纯血缘图）排除的 handle 点名：姑父 I000238 / 妹夫 I000240（外来姻亲根）。
- * people 总数 89 − 2 = 87；若日后真源再增删姻亲，必须在此重新点名并同步不变量右项。
+ * 真源 ji 被新口径（纯血缘图）排除的 handle 点名：**当前为空**。
+ * 2026-09-19 真源清理：原需剔除的姑父 I000238 / 妹夫 I000240 等 28 个非成员真节点已删除，
+ * ji 现存 61 人全为血缘图成员、无姻亲/镜像需剔除 → people 总数 61 = person_count 61。
+ * 若日后真源再增删姻亲，必须在此重新点名并同步不变量右项与 M6 快照值。
  */
-const JI_EXCLUDED_GIDS = ['I000238', 'I000240'];
+const JI_EXCLUDED_GIDS = [];
 
 // ================= M1. 真源 gu 树：mirror_count 动态推导 + person_count 快照 =================
 
@@ -317,7 +320,7 @@ test('M5 权限档位（guest / 已登录非成员 / 树成员）下 mirror_coun
 
 // ================= M6. 真源 ji 树 =================
 
-test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 87 + 不变量', async () => {
+test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 61 + 不变量', async () => {
   const mirrors = realMirrors('ji_23395_01');
   const { status, body } = await rankOf('ji_23395_01');
   assert.equal(status, 200);
@@ -327,15 +330,20 @@ test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 87
   for (const gid of JI_MIRROR_GIDS) {
     assert.ok(gids.includes(gid), `点名镜像 ${gid} 必须命中（I000209 founder / I000253 marriage / I000291 marriage / I000365 marriage）`);
   }
-  assert.equal(body.person_count, 87, 'person_count 真源数据快照（89 − 姑父 I000238 − 妹夫 I000240），随真源增长需同步');
+  assert.equal(
+    body.person_count,
+    61,
+    'person_count 真源数据快照（2026-09-19 清理 28 个非成员真节点后 ji = 61，排除集为空），随真源增长需同步',
+  );
   // 不变量：person_count === people 总数 − 被排除 handle 数（排除集合用例显式点名）
-  // ji 当前排除集为空（I000237 满满 已于 2026-09-19 删除）→ 右项即真源 people 总数本身；
-  // 因 snapshot(89) 与 realPeopleCount(89) 来自两处独立读源，本断言仍是对「真源人数口径」的交叉核对，非同源恒真。
+  // ji 当前排除集为空（2026-09-19 清理后：姑父 I000238 / 妹夫 I000240 等非成员真节点已删）
+  // → 右项即真源 people 总数本身；因快照(61) 与 realPeopleCount(61) 来自两处独立读源，
+  // 本断言仍是对「真源人数口径」的交叉核对，非同源恒真。
   assertGidsInRealTree('ji_23395_01', JI_EXCLUDED_GIDS);
   assert.equal(
     body.person_count,
     realPeopleCount('ji_23395_01') - JI_EXCLUDED_GIDS.length,
-    'people 总数 − 点名的被排除 handle 数（ji：排除集现为空 —— I000237 已于 2026-09-19 删除）',
+    'people 总数 − 点名的被排除 handle 数（ji：排除集现为空 —— 2026-09-19 清理后无姻亲/镜像需剔除）',
   );
 });
 

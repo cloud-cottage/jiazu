@@ -48,9 +48,9 @@
         </t-grid>
       </view>
 
-      <!-- 统计 -->
-      <view class="stats" v-if="stats">
-        <text class="stat">收录人物：{{ stats.person_count }} 人</text>
+      <!-- 统计：与首页卡片同口径（/tree/rank 的 person_count，纯血缘图） -->
+      <view class="stats" v-if="personCount !== null">
+        <text class="stat">收录人物：{{ personCount }} 人</text>
       </view>
 
       <view v-if="loadError" class="error">{{ loadError }}</view>
@@ -62,16 +62,26 @@
 import { ref, computed, onMounted } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
-import { fetchMyAnchor, fetchTreeMetaRemote, fetchTreeStats, fetchTreeRank, openTreeHome } from '@/business';
+import { fetchMyAnchor, fetchTreeMetaRemote, fetchTreeRank, openTreeHome } from '@/business';
 import type { TreeEntry } from '@/business/types';
 import type { TreeRankInfo } from '@/business/api';
 
 const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
 const hallInfo = ref<TreeEntry | null>(null);
 const anchorPersonName = ref('');
-const stats = ref<any>(null);
 const rank = ref<TreeRankInfo | null>(null);
 const loadError = ref('');
+
+/**
+ * 收录人物数：与首页卡片 / 家族页统计栏同口径 —— 取 `/tree/rank` 的 `person_count`
+ * （后端 lib/family-population.js 纯血缘图口径，不涉读权限裁剪）。
+ * 旧口径 fetchTreeStats 走 `/people/` 的 raw.length，会被读权限裁剪，游客看到的是残缺值，故弃用。
+ * 缺失或非数值 → 返回 null（模板整行不渲染），绝不出现 NaN / undefined。
+ */
+const personCount = computed(() => {
+  const n = rank.value?.person_count;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+});
 
 const boundTreeId = computed(() => anchor.value?.tree_id || '');
 
@@ -127,12 +137,7 @@ async function loadMyTree() {
   } catch {
     /* 节点名读不到则显示 handle */
   }
-  // 统计 + 等级
-  try {
-    stats.value = await fetchTreeStats(tid);
-  } catch {
-    stats.value = null;
-  }
+  // 等级（顺带给出与卡片同口径的「收录人物」数）
   try {
     rank.value = await fetchTreeRank(tid).catch(() => null);
   } catch {
