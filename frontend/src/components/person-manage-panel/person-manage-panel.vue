@@ -118,10 +118,10 @@
         <view class="ms-box" :class="{ 'ms-box-on': addMaternalSuccession }">
           <text v-if="addMaternalSuccession" class="ms-tick">✓</text>
         </view>
-        <text class="ms-label">承母嗣（挂在未婚女性名下）</text>
+        <text class="ms-label">承母嗣（本族已婚女性后代）</text>
       </view>
       <view v-if="showMaternalSuccession" class="ms-hint">
-        <text class="sh-text">本族女性一旦婚配，其后代默认不入本树；勾选「承母嗣」才会挂在本树女性名下（已婚配女性添子女未勾选会被服务端拒绝）。</text>
+        <text class="sh-text">本族女性一旦婚配，其后代默认不入本树；勾选「承母嗣」才会挂在本树女性名下（已婚配女性添子女未勾选会被服务端拒绝）。未婚配女性添子女无需勾选。</text>
       </view>
 
       <template v-if="addPickMode === 'new'">
