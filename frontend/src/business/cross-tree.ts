@@ -5,6 +5,8 @@
  */
 
 import type { TreeMeta } from './types';
+import { personIdDisplay } from './format';
+import { fetchTreeMetaRemote } from './api';
 
 /** 中华世本（总谱）tree_id */
 export const MASTER_TREE_ID = 'zhonghua';
@@ -152,4 +154,102 @@ export function validateExternalRefs(
   }
 
   return warnings;
+}
+
+// ============================================================================
+// 口径 A：镜像节点点击 = 打开真身档案（用户拍板；判据、文案、树名缓存都集中在本文件）
+// ============================================================================
+
+/**
+ * 判定镜像所需的 external_* 指针字段。
+ * 人物摘要（PersonSummary）、人物详情（PersonDetail）、树图节点（TreePersonNode）都结构兼容。
+ *
+ * ⚠️ 真身自身也会带 external_*（配偶登记 / 认祖指针），所以**绝不能**用「有 external_*」当镜像判据。
+ */
+export interface MirrorFields {
+  external_mirror?: string;
+  external_person_handle?: string;
+  external_tree?: string;
+  external_link_type?: string;
+}
+
+/**
+ * 镜像节点的真身目标（口径 A 第 2 条）：
+ * `treeId` = 真身所在树（external_tree），`handle` = 真身 handle（external_person_handle）。
+ */
+export interface MirrorTarget {
+  treeId: string;
+  handle: string;
+  /** external_link_type：marriage / child / founder / chain / 其它 */
+  linkType: string;
+}
+
+/**
+ * 镜像可解析判据（口径 A 第 1 条，**三者齐备**才算镜像）：
+ * `external_mirror === 'true'` 且 `external_person_handle` 非空 且 `external_tree` 非空。
+ *
+ * @returns 真身目标；非镜像 / 指针不全 → null（调用方按普通节点打开）
+ */
+export function mirrorTargetOf(personOrNode: MirrorFields | null | undefined): MirrorTarget | null {
+  if (!personOrNode) return null;
+  if (String(personOrNode.external_mirror ?? '').trim() !== 'true') return null;
+  const treeId = String(personOrNode.external_tree ?? '').trim();
+  const handle = String(personOrNode.external_person_handle ?? '').trim();
+  if (!treeId || !handle) return null;
+  return { treeId, handle, linkType: String(personOrNode.external_link_type ?? '').trim() };
+}
+
+/**
+ * 镜像档位文案（口径 A 第 6/7 条）：树图卡片角标与统计栏共用，唯一真源。
+ * marriage→外树配偶 / child→外树子女 / founder→外树始祖 / chain→外树上层链 / 其它→外树登记。
+ */
+export function mirrorLabelOf(linkType?: string | null): string {
+  switch (String(linkType ?? '').trim()) {
+    case 'marriage':
+      return '外树配偶';
+    case 'child':
+      return '外树子女';
+    case 'founder':
+      return '外树始祖';
+    case 'chain':
+      return '外树上层链';
+    default:
+      return '外树登记';
+  }
+}
+
+/** 真身内容不可见（口径 A 第 5 条兜底提示，文案逐字） */
+export const MIRROR_UNAVAILABLE_NOTE = '真身内容不可见';
+
+/**
+ * 镜像标注文案（口径 A 第 3 条，文案逐字）：
+ * `本节点为 (真身树 display_title) (真身全局编号) 的镜像 · 内容取自真身`
+ */
+export function mirrorNoteText(realTreeTitle: string, realGrampsId: string): string {
+  return `本节点为 ${realTreeTitle} ${personIdDisplay(realGrampsId)} 的镜像 · 内容取自真身`;
+}
+
+/**
+ * 模块级 tree-meta 缓存：树名（display_title）只取一次复用，**不要每次点击都请求**（口径 A 第 3 条）。
+ * 失败也缓存（null）——标注回退显示 tree_id，不反复重试。
+ */
+let metaPromise: Promise<TreeMeta | null> | null = null;
+function cachedTreeMeta(): Promise<TreeMeta | null> {
+  if (!metaPromise) {
+    metaPromise = fetchTreeMetaRemote()
+      .then((m) => m)
+      .catch(() => null);
+  }
+  return metaPromise;
+}
+
+/**
+ * 树的 display_title（取 tree-meta；**取不到时回退显示 tree_id**，口径 A 第 3 条）。
+ */
+export async function treeDisplayTitleOf(treeId: string): Promise<string> {
+  const id = String(treeId || '').trim();
+  if (!id) return '';
+  const meta = await cachedTreeMeta();
+  const entry = Object.values(meta?.trees || {}).find((t) => t.tree_id === id);
+  return entry?.display_title || id;
 }

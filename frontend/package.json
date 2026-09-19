@@ -4,7 +4,7 @@
   "description": "家族历史数字馆 — 多姓氏家谱数字化展示平台",
   "scripts": {
     "dev:h5": "uni",
-    "dev:h5:legacy": "API_PROXY=http://localhost:3000 uni",
+    "dev:h5:legacy": "API_PROXY=http://127.0.0.1:5197 uni",
     "dev:mp-weixin": "uni -p mp-weixin",
     "build:h5": "uni build",
     "build:mp-weixin": "uni build -p mp-weixin",

@@ -3,6 +3,10 @@
     <!-- 档案视图（非编辑态）：完整档案 + 编辑/出嫁入口 + 图谱管理操作区 -->
     <view v-if="!showEdit" class="archive-view">
       <view v-if="person" class="person-detail">
+      <!-- 口径 A 第 3/5 条：由镜像节点进入真身档案时的顶部标注（普通打开为空 → 零影响） -->
+      <view v-if="mirrorNote" class="mirror-note">
+        <text class="mirror-note-text">{{ mirrorNote }}</text>
+      </view>
       <view class="name-row">
         <image
           v-if="genderIcon"
@@ -399,25 +403,22 @@
     </view>
 
     <!-- 嫁出/娶入弹窗：选目标家族树的配偶节点 + 选填成婚日期 → 提交申请，对方家族审批后生效 -->
-    <view v-if="showMarry" class="modal-mask" @click.self="showMarry = false">
-      <view class="modal">
+    <view v-if="showMarry" class="modal-mask" @click="showMarry = false">
+      <view class="modal" @click.stop>
         <text class="modal-title">{{ marryTitle }}</text>
         <text class="modal-sub">
           在对方家族树中选择配偶节点（本人节点保留在本树）。提交后需「对方家族审批」通过才生效；两人各自树内都会建立配偶关系。
         </text>
 
         <text class="field-label">选择目标家族树</text>
-        <view class="tree-options">
-          <view
-            v-for="t in marryTrees"
-            :key="t.tree_id"
-            class="tree-opt"
-            :class="{ selected: marryTreeId === t.tree_id }"
-            @click="selectMarryTree(t.tree_id)"
-          >
-            <text class="tree-opt-name">{{ treeDisplayLabel(t.display_title, t.surname_char) }}</text>
-          </view>
-        </view>
+        <!-- 候选集合不变（!is_master && !== 本树）；渲染改由共享树选择器承载：折叠态恒一行，展开态独立选择层 -->
+        <TreePicker
+          :items="marryTreeItems"
+          :model-value="marryTreeId"
+          title="选择目标家族树"
+          placeholder="请选择目标家族树"
+          @update:model-value="(v: any) => selectMarryTree(v)"
+        />
 
         <template v-if="marryTreeId">
           <text class="field-label">搜索目标家族树中的{{ marryDirection === 'out' ? '男性' : '女性' }}节点</text>
@@ -445,8 +446,22 @@
               <text class="result-gender">{{ r.gender === 'M' ? '男' : '女' }}</text>
             </view>
           </view>
-          <view v-else-if="marrySearched" class="join-tip">未找到{{ marryDirection === 'out' ? '男性' : '女性' }}节点</view>
+          <!-- 空态**必须区分三态**（此前只有一句「未找到…节点」= 本缺陷的可见性黑洞）：
+               ① 未登录 / 登录过期（401）→「登录已过期，请重新登录」
+               ② 通道错误 → 显示后端错误文案
+               ③ 确实无匹配 →「未找到符合条件的女性/男性节点」（文案由 doSearchMarry 赋值） -->
+          <view v-else-if="marrySearched" class="join-tip">{{ marrySearchNote }}</view>
         </template>
+
+        <!-- 兜底入口：按全局编号指定（编号自带所属树 → 填了编号可不必先选树；
+             提交时**编号优先**，后端 resolveNode 全局解析，失败文案沿用后端现有文案） -->
+        <text class="field-label">按全局编号指定（兜底，如 000052 / I000052）</text>
+        <t-input
+          :value="marryRefInput"
+          placeholder="填了编号将优先按编号提交"
+          class="search-input"
+          @update:value="(v: any) => marryRefInput = v"
+        />
 
         <text class="field-label">成婚年份/日期（选填，如 1957 或 1957-12-04）</text>
         <t-input
@@ -456,9 +471,13 @@
           @update:value="(v: any) => marryDate = v"
         />
 
-        <view v-if="selectedMarry" class="identity-confirm">
-          <text class="identity-text">
-            将「{{ person?.name }}」{{ marryVerb }}至 {{ marryTreeName }} 的「{{ selectedMarry.name }}」（{{ marryOrdinalHint }}）。
+        <view v-if="selectedMarry || marryRefInput.trim()" class="identity-confirm">
+          <text v-if="marryRefInput.trim()" class="identity-text">
+            将「{{ person?.name }}」{{ marryVerb }}至全局编号「{{ marryRefInput.trim() }}」指定的人物（{{ marryOrdinalHint }}）。
+            提交后由对方家族审批。
+          </text>
+          <text v-else class="identity-text">
+            将「{{ person?.name }}」{{ marryVerb }}至 {{ marryTreeName }} 的「{{ selectedMarry?.name }}」（{{ marryOrdinalHint }}）。
             提交后由对方家族审批。
           </text>
         </view>
@@ -469,7 +488,7 @@
             theme="primary"
             block
             :loading="marrying"
-            :disabled="!selectedMarry"
+            :disabled="!selectedMarry && !marryRefInput.trim()"
             @click="doMarry"
           >提交申请</t-button>
           <t-button variant="text" block @click="showMarry = false">取消</t-button>
@@ -478,8 +497,8 @@
     </view>
 
     <!-- 删除节点弹窗：选模式 → 先跑 dry_run 拿统计 → 强确认（带 confirm_count）→ 正式提交 -->
-    <view v-if="showDelete" class="modal-mask" @click.self="showDelete = false">
-      <view class="modal">
+    <view v-if="showDelete" class="modal-mask" @click="showDelete = false">
+      <view class="modal" @click.stop>
         <text class="modal-title">🗑 删除节点</text>
         <text class="modal-sub">
           将删除「{{ person?.name }}」（{{ personIdDisplay(person?.gramps_id || '') }}）及其相关记录。
@@ -522,8 +541,8 @@
 
     <!-- 汇宗弹窗（docs/branch-clan-ops.spec.md §6-2 / §9-1 / §9-2；仅总编）：
          输入目标节点全局编号/handle → 现算迁移范围与灵气折损 → 二次强确认（H1）→ 带 confirm_people 提交 -->
-    <view v-if="showConverge" class="modal-mask" @click.self="closeConverge">
-      <view class="modal">
+    <view v-if="showConverge" class="modal-mask" @click="closeConverge">
+      <view class="modal" @click.stop>
         <text class="modal-title">⛩ 汇宗（并入他树）</text>
         <text class="modal-sub">把本家族树整体并入另一棵普通家族树中的普通节点之下：源树的家族树登记与树数据将被删除。</text>
         <text class="del-warn">注意：此操作不可恢复</text>
@@ -565,24 +584,21 @@
     </view>
 
     <!-- 认祖选择器（方式 A）：先选目标上层树（祖谱 / 中华世本），再在该树内搜索真身节点 -->
-    <view v-if="showFounderPicker" class="modal-mask" @click.self="showFounderPicker = false">
-      <view class="modal">
+    <view v-if="showFounderPicker" class="modal-mask" @click="showFounderPicker = false">
+      <view class="modal" @click.stop>
         <text class="modal-title">⛩ 认祖（挂到{{ founderTargetKindLabel }}）</text>
         <text class="modal-sub">{{ founderPickerHint }}</text>
 
         <text class="field-label">选择认祖目标</text>
         <view v-if="founderTargetsLoading" class="join-tip">加载可选祖谱...</view>
-        <view v-else class="tree-options">
-          <view
-            v-for="t in founderTargets"
-            :key="t.tree_id"
-            class="tree-opt"
-            :class="{ selected: founderTargetId === t.tree_id }"
-            @click="selectFounderTarget(t)"
-          >
-            <text class="tree-opt-name">{{ t.label }}</text>
-          </view>
-        </view>
+        <TreePicker
+          v-else
+          :items="founderPickerItems"
+          :model-value="founderTargetId"
+          title="选择认祖目标"
+          placeholder="请选择认祖目标"
+          @select="selectFounderTarget"
+        />
 
         <template v-if="founderTargetId">
           <text class="field-label">搜索目标树中的真身节点</text>
@@ -636,8 +652,8 @@
     </view>
 
     <!-- 直接挂载选择器（方式 B，仅总编辑）：在真身节点上从祖谱清单里选择要挂载的下层树 -->
-    <view v-if="showAttachPicker" class="modal-mask" @click.self="showAttachPicker = false">
-      <view class="modal">
+    <view v-if="showAttachPicker" class="modal-mask" @click="showAttachPicker = false">
+      <view class="modal" @click.stop>
         <text class="modal-title">⛩ 挂载祖谱</text>
         <text class="modal-sub">
           在真身节点「{{ person?.name }}」上选择要挂载的祖谱（无需申请，立即生效；该祖谱顶端随即出现世本镜像段）。
@@ -648,20 +664,14 @@
         <view v-else-if="!attachCandidates.length" class="join-tip">
           暂无祖谱可挂载：请由本姓现有家族树先申请建立祖谱。
         </view>
-        <view v-else class="tree-options">
-          <view
-            v-for="c in attachCandidates"
-            :key="c.tree_id"
-            class="tree-opt"
-            :class="{ selected: attachTargetId === c.tree_id }"
-            @click="attachTargetId = c.tree_id"
-          >
-            <text class="tree-opt-name">{{ treeDisplayLabel(c.tree_title, c.surname) }}</text>
-            <text class="tree-opt-sub">
-              {{ c.tree_id }} · 自有 {{ c.own_count }} 人{{ c.attached_to_master ? ' · 已认祖世本' : ' · 未认祖世本' }}
-            </text>
-          </view>
-        </view>
+        <TreePicker
+          v-else
+          :items="attachPickerItems"
+          :model-value="attachTargetId"
+          title="选择要挂载的祖谱"
+          placeholder="请选择要挂载的祖谱"
+          @update:model-value="(v: any) => (attachTargetId = v)"
+        />
 
         <view v-if="attachError" class="edit-error">{{ attachError }}</view>
         <view class="modal-actions">
@@ -678,8 +688,8 @@
     </view>
 
     <!-- 绝婚 / 合离弹窗：绝婚=男方主动（单方生效）/ 合离=双方自愿（需对方审批）；日期均选填 -->
-    <view v-if="showEndMarriage" class="modal-mask" @click.self="showEndMarriage = false">
-      <view class="modal">
+    <view v-if="showEndMarriage" class="modal-mask" @click="showEndMarriage = false">
+      <view class="modal" @click.stop>
         <text class="modal-title">{{ endKind === '绝婚' ? '⚔️ 绝婚（男方主动解除）' : '🤝 合离（双方自愿解除）' }}</text>
         <text class="modal-sub">
           {{ endKind === '绝婚'
@@ -712,9 +722,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan } from '@/business';
+import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, searchMarriageCandidates, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan, mirrorNoteText, treeDisplayTitleOf } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { PersonDetail, PersonSummary } from '@/business/types';
+import type { MirrorFields, MirrorTarget, MarriageCandidate } from '@/business';
 import type { ClanSummary, FeeInfo, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
 import {
   personIdDisplay,
@@ -727,6 +738,7 @@ import {
 } from '@/business/format';
 import { genderIconSrc } from '@/business/icons';
 import PersonManagePanel from '@/components/person-manage-panel/person-manage-panel.vue';
+import TreePicker from '@/components/tree-picker/tree-picker.vue';
 
 /**
  * 人物档案面板（共享组件）
@@ -741,16 +753,31 @@ const props = withDefaults(defineProps<{
   mode?: 'page' | 'modal';
   /** 是否为树图宿主（启用底部「谱系管理」操作区：加父/加子/拆分等） */
   treeManage?: boolean;
+  /**
+   * 口径 A 第 3 条：本次打开由「镜像节点」进入（值为该镜像指向的真身目标）。
+   * 非空时档案顶部显示「本节点为 (真身树 display_title) (真身全局编号) 的镜像 · 内容取自真身」；
+   * 缺省 null = 普通打开，行为与既有一致（普通树与真身节点零影响）。
+   */
+  mirrorOf?: MirrorTarget | null;
+  /**
+   * 口径 A 第 5 条兜底：真身内容不可见（404 / 权限不可见 / 网络错）时回退打开镜像本树副本，
+   * 由宿主传入提示文案（「真身内容不可见」）；非空时覆盖第 3 条标注。
+   */
+  mirrorFallbackNote?: string;
 }>(), {
   mode: 'page',
   treeManage: false,
+  mirrorOf: null,
+  mirrorFallbackNote: '',
 });
 
 const emit = defineEmits<{
-  (e: 'open-person', payload: { treeId: string; handle: string }): void;
+  (e: 'open-person', payload: { treeId: string; handle: string; mirrorOf?: MirrorFields | null }): void;
   (e: 'open-tree', payload: string): void;
   /** 树结构被管理操作修改（加父/加子/拆分等），宿主需刷新树图 */
   (e: 'tree-changed'): void;
+  /** 档案加载失败（404 / 权限不可见 / 网络错）——宿主按口径 A 第 5 条决定是否回退到镜像本树副本 */
+  (e: 'load-failed'): void;
 }>();
 
 // 别名（沿用原页面代码，props 变更时按 :key 整体重挂载，无需 watch）
@@ -769,6 +796,31 @@ const isMasterTree = computed(() => props.treeId === 'zhonghua');
 
 const person = ref<PersonDetail | null>(null);
 const loadError = ref('');
+
+/**
+ * 口径 A 第 3/5 条顶部标注文案（空 = 不显示；普通打开与真身节点完全零影响）：
+ * - 回退态（`mirrorFallbackNote` 非空，宿主回退到镜像本树副本时传入）→ 直接显示该提示；
+ * - 由镜像进入（`mirrorOf` 非空）→ 树名取 tree-meta 的 display_title（cross-tree 模块级缓存一次复用，
+ *   不每次点击都请求；取不到回退 tree_id），编号取**当前已加载的真身** gramps_id
+ *   —— 故 watcher 必须等档案加载完成（person 就位）后再定最终文案。
+ */
+const mirrorNote = ref('');
+watch(
+  [() => props.mirrorOf, () => props.mirrorFallbackNote, () => person.value?.gramps_id],
+  async ([target, fallbackNote, gid]) => {
+    if (fallbackNote) {
+      mirrorNote.value = fallbackNote;
+      return;
+    }
+    if (!target || !gid) {
+      mirrorNote.value = '';
+      return;
+    }
+    const title = await treeDisplayTitleOf(target.treeId);
+    mirrorNote.value = mirrorNoteText(title, gid);
+  },
+  { immediate: true },
+);
 
 // ---- 扣费闸门文案（docs/economy-fee.spec.md §7 / §8；单价真源在后端 FEE 常量） ----
 
@@ -868,10 +920,16 @@ const founderPickerHint = computed(() =>
     : '普通家族树须先认祖到本姓祖谱（不得直挂世本）：选择祖谱 → 搜索祖谱中的始祖节点 → 提交，待该祖谱总编审批。',
 );
 
-interface FounderTargetOption { tree_id: string; label: string }
+interface FounderTargetOption { tree_id: string; label: string; kind?: string }
 
 const showFounderPicker = ref(false);
 const founderTargets = ref<FounderTargetOption[]>([]);
+/** 认祖目标 tree-picker items：group 取 kind（clan=祖谱 / master=中华世本 / 缺省兜底家族树）；tree_id 已由列表项右侧直显，不再冗余进 sub */
+const founderPickerItems = computed(() => founderTargets.value.map((t) => ({
+  tree_id: t.tree_id,
+  label: t.label,
+  group: treeKindLabel(t.kind),
+})));
 const founderTargetsLoading = ref(false);
 const founderTargetId = ref('');
 const founderTargetName = ref('');
@@ -896,7 +954,7 @@ async function openFounderAttach() {
   founderTargetsLoading.value = true;
   try {
     if (treeKind.value === 'clan') {
-      founderTargets.value = [{ tree_id: 'zhonghua', label: '中华世本 · 全球华人家谱总谱' }];
+      founderTargets.value = [{ tree_id: 'zhonghua', label: '中华世本 · 全球华人家谱总谱', kind: 'master' }];
       founderTargetId.value = 'zhonghua';
       founderTargetName.value = '中华世本（总谱）';
     } else {
@@ -905,6 +963,8 @@ async function openFounderAttach() {
       founderTargets.value = clans.map((c) => ({
         tree_id: c.tree_id,
         label: `${treeDisplayLabel(c.tree_title, c.surname || surname)}${c.attached_to_master ? '' : '（未认祖世本）'}`,
+        // kind 用于 tree-picker 分组；ClanSummary 未声明该字段 → 运行时按存在读取，缺省由兜底分组处理
+        kind: (c as ClanSummary & { kind?: string }).kind,
       }));
       if (!clans.length) {
         founderPickerError.value = surname
@@ -985,6 +1045,13 @@ async function doFounderRequest() {
 // ---- 直接挂载选择器（方式 B，仅总编辑；真身侧）----
 const showAttachPicker = ref(false);
 const attachCandidates = ref<ClanSummary[]>([]);
+/** 挂载祖谱 tree-picker items：sub = 自有 N 人 · 已认祖世本/未认祖世本（tree_id 已由右侧直显，不重复）；候选全是祖谱 → 恒分「祖谱」组 */
+const attachPickerItems = computed(() => attachCandidates.value.map((c) => ({
+  tree_id: c.tree_id,
+  label: treeDisplayLabel(c.tree_title, c.surname),
+  sub: `自有 ${c.own_count} 人${c.attached_to_master ? ' · 已认祖世本' : ' · 未认祖世本'}`,
+  group: '祖谱',
+})));
 const attachLoading = ref(false);
 const attachTargetId = ref('');
 const attachSubmitting = ref(false);
@@ -1503,16 +1570,31 @@ function personEditDirty(cur: any, base: any): boolean {
 
 // 出嫁状态（跨树联姻软链接）
 const showMarry = ref(false);
-const marryTrees = ref<Array<{ tree_id: string; display_title: string; surname_char: string }>>([]);
+const marryTrees = ref<Array<{ tree_id: string; display_title: string; surname_char: string; kind?: string }>>([]);
+/** tree-picker items：label = 树展示名，group 按 kind（clan → 祖谱，其余 → 家族树）；tree_id 已由列表项右侧直显，不再冗余进 sub */
+const marryTreeItems = computed(() => marryTrees.value.map((t) => ({
+  tree_id: t.tree_id,
+  label: treeDisplayLabel(t.display_title, t.surname_char),
+  group: treeKindLabel(t.kind),
+})));
 const marryTreeId = ref('');
 const marryTreeName = ref('');
 const marryQuery = ref('');
-const marryResults = ref<PersonSummary[]>([]);
+const marryResults = ref<MarriageCandidate[]>([]);
 const marrySearching = ref(false);
 const marrySearched = ref(false);
-const selectedMarry = ref<PersonSummary | null>(null);
+const selectedMarry = ref<MarriageCandidate | null>(null);
 const marrying = ref(false);
 const marryError = ref('');
+/**
+ * 搜索无结果提示（**必须区分三态**；此前只有一句「未找到…节点」= 本缺陷的可见性黑洞）：
+ * ① 401（未登录 / 登录过期）→「登录已过期，请重新登录」
+ * ② 通道错误（非 401）→ 后端错误文案原文
+ * ③ 确实无匹配（200 空）→「未找到符合条件的女性/男性节点」
+ */
+const marrySearchNote = ref('');
+/** 兜底入口：按全局编号指定（填了编号 → 提交时**编号优先**，见 doMarry） */
+const marryRefInput = ref('');
 /** 成婚年份/日期（选填） */
 const marryDate = ref('');
 
@@ -1718,10 +1800,10 @@ const childSurnameDefault = computed(() => {
   return p.surname || '';
 });
 
-/** 跳转同树人物（由宿主决定：弹窗内换人 / 页面 push） */
-function goPerson(p: { handle: string } | null | undefined) {
+/** 跳转同树人物（由宿主决定：弹窗内换人 / 页面 push）；镜像节点按口径 A 交给宿主解析真身 */
+function goPerson(p: (MirrorFields & { handle: string }) | null | undefined) {
   if (!p?.handle) return;
-  emit('open-person', { treeId: treeId.value, handle: p.handle });
+  emit('open-person', { treeId: treeId.value, handle: p.handle, mirrorOf: p });
 }
 
 /** 跨树关联链接（external_* 属性聚合成一条，直达目标人物） */
@@ -1743,7 +1825,8 @@ const externalLinks = computed(() => {
 /** 跨树链接（有具体人物 → open-person 跨树；否则 → open-tree 打开对应家族树） */
 function goToExternal(link: { tree_id: string; person_handle: string }) {
   if (link.person_handle) {
-    emit('open-person', { treeId: link.tree_id, handle: link.person_handle });
+    // 本节点自身是镜像时，这条「关联信息」指向的就是它的真身 → 交宿主按口径 A 打开并标注
+    emit('open-person', { treeId: link.tree_id, handle: link.person_handle, mirrorOf: person.value });
   } else {
     emit('open-tree', link.tree_id);
   }
@@ -1760,6 +1843,8 @@ async function load() {
       ? '该人物不存在或您无权查看'
       : (e?.message || '加载失败');
     loadError.value = msg;
+    // 口径 A 第 5 条：宿主（PersonDetailModal）据此判断是否回退到镜像本树副本
+    emit('load-failed');
   }
 }
 
@@ -2035,6 +2120,8 @@ async function openMarry() {
   marryQuery.value = '';
   marryResults.value = [];
   marrySearched.value = false;
+  marrySearchNote.value = '';
+  marryRefInput.value = '';
   selectedMarry.value = null;
   marryTreeId.value = '';
   marryDate.value = '';
@@ -2042,7 +2129,7 @@ async function openMarry() {
     const meta = await fetchTreeMetaRemote();
     marryTrees.value = Object.values(meta.trees)
       .filter((t) => !t.is_master && t.tree_id !== treeId.value)
-      .map((t) => ({ tree_id: t.tree_id, display_title: t.display_title, surname_char: t.surname_char || '' }));
+      .map((t) => ({ tree_id: t.tree_id, display_title: t.display_title, surname_char: t.surname_char || '', kind: t.kind as string | undefined }));
     if (!marryTrees.value.length) {
       marryError.value = '暂无可联姻的家族树';
       return;
@@ -2060,10 +2147,11 @@ function selectMarryTree(tid: string) {
   marryTreeName.value = t ? treeDisplayLabel(t.display_title, t.surname_char) : tid;
   marryResults.value = [];
   marrySearched.value = false;
+  marrySearchNote.value = '';
   selectedMarry.value = null;
 }
 
-/** 搜索目标树男性节点 */
+/** 搜索目标树候选（走跨树嫁娶候选通道：需登录、不套节点级读裁剪、五键白名单） */
 async function doSearchMarry() {
   const q = marryQuery.value.trim();
   if (!q) {
@@ -2074,30 +2162,45 @@ async function doSearchMarry() {
     marryError.value = '请先选择目标家族树';
     return;
   }
+  // 嫁出 → 目标为男性（M）；娶入 → 目标为女性（F）；性别未知（U / 0）后端一律不列入
+  const want = marryDirection.value === 'out' ? 'M' : 'F';
   marrySearching.value = true;
   marrySearched.value = true;
   marryError.value = '';
+  marrySearchNote.value = '';
   selectedMarry.value = null;
   try {
-    const res = await searchPeople({ query: q, tree_id: marryTreeId.value });
-    // 嫁出 → 目标为男性；娶入 → 目标为女性
-    const want = marryDirection.value === 'out' ? 'M' : 'F';
-    marryResults.value = res.people.filter((p) => p.gender === want);
+    const res = await searchMarriageCandidates(marryTreeId.value, { query: q, gender: want });
+    // 保留既有强制性别过滤（后端已按 gender 过滤；此处双保险，且兼容老后端）
+    marryResults.value = res.candidates.filter((p) => p.gender === want);
+    // ③ 确实无匹配（200 空）：明确说是「没找到符合条件的女性/男性节点」，而不是笼统「未找到」
+    marrySearchNote.value = marryResults.value.length
+      ? ''
+      : `未找到符合条件的${want === 'M' ? '男' : '女'}性节点`;
   } catch (e: any) {
-    marryError.value = e.message || '搜索失败';
     marryResults.value = [];
+    const status = Number(e?.status) || 0;
+    // ① 401：未登录 / 登录过期 —— 必须让用户知道要重新登录（此前被静默降级成 guest 档，用户看不出原因）
+    // ② 其它错误：显示后端错误文案原文（不吞成「未找到」）
+    marrySearchNote.value = status === 401 ? '登录已过期，请重新登录' : e?.message || '搜索失败';
   } finally {
     marrySearching.value = false;
   }
 }
 
-function selectMarry(p: PersonSummary) {
+function selectMarry(p: MarriageCandidate) {
   selectedMarry.value = p;
 }
 
-/** 确认出嫁：写跨树链接属性（external_tree / external_person_handle ...） */
+/**
+ * 确认嫁娶：提交联姻申请（对方家族审批后生效）。
+ * 兜底口径（派单 §9-8 第 5 条）：填了「按全局编号指定」→ **编号优先**（传 spouse_ref；
+ * 不传 spouse_tree_id —— 全局编号自带所属树，由后端 resolveNode 全站定位）；
+ * 否则按选中的候选（spouse_handle + spouse_tree_id）提交。两种写法后端都认（兼容）。
+ */
 async function doMarry() {
-  if (!selectedMarry.value) return;
+  const refInput = marryRefInput.value.trim();
+  if (!refInput && !selectedMarry.value) return;
   const token = getAuthToken();
   if (!token) {
     marryError.value = '登录已过期，请重新登录';
@@ -2110,8 +2213,9 @@ async function doMarry() {
       action: 'marry',
       direction: marryDirection.value,
       person_handle: handle.value,
-      spouse_tree_id: marryTreeId.value,
-      spouse_handle: selectedMarry.value.handle,
+      ...(refInput
+        ? { spouse_ref: refInput }
+        : { spouse_tree_id: marryTreeId.value, spouse_handle: selectedMarry.value!.handle }),
       marriage_date: marryDate.value.trim(),
     }, token);
     uni.showToast({
@@ -2205,6 +2309,12 @@ async function doEndMarriage() {
 .del-warn { font-size: 12px; color: #D93025; font-weight: bold; display: block; text-align: center; margin: -8px 0 10px; }
 .founder-lock { margin: 6px 0 2px; }
 .founder-hint { font-size: 12px; color: #A1887F; display: block; margin: 4px 2px 8px; }
+/* 口径 A 第 3/5 条：镜像 → 真身档案的顶部标注 */
+.mirror-note {
+  margin: 0 2px 12px; padding: 8px 10px;
+  background: #FFF7E6; border: 1px solid #E8C9A0; border-radius: 8px;
+}
+.mirror-note-text { font-size: 12px; color: #8B4513; line-height: 1.5; display: block; }
 .living-locked { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; }
 .container { padding: 20px; }
 .container.modal { padding: 2px 4px 8px; }
@@ -2234,16 +2344,19 @@ async function doEndMarriage() {
 .loading .error-text { display: block; margin-bottom: 14px; color: #C62828; font-size: 14px; line-height: 1.6; }
 .archive-error { padding: 40px; }
 
-/* 编辑模态框 */
+/* 编辑模态框：内容高于视口时只在弹窗内部滚动（不再顶出屏幕 / 外溢） */
 .modal-mask {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   background: rgba(0,0,0,0.55); z-index: 999;
   display: flex; align-items: center; justify-content: center;
+  overflow-y: auto; padding: 5vh 0; box-sizing: border-box;
 }
 .modal {
   width: 88%; max-width: 420px; max-height: 85vh;
   background: #fff; border-radius: 14px; padding: 20px;
   display: flex; flex-direction: column;
+  /* overflow 兜底：任何内容高度都收在弹窗内部滚动；margin:auto 保证不超高时仍居中 */
+  overflow-y: auto; margin: auto;
 }
 .modal-title { font-size: 18px; font-weight: bold; color: #3E2723; text-align: center; margin-bottom: 12px; }
 .modal-body { flex: 1; max-height: 55vh; }
@@ -2270,14 +2383,7 @@ async function doEndMarriage() {
 .edit-inline-close:active { background: #F5F0EA; }
 .edit-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
 
-/* 出嫁弹窗 */
-.tree-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-.tree-opt {
-  padding: 10px 12px; border: 1px solid #F0E8DE; border-radius: 8px;
-}
-.tree-opt.selected { border-color: #8B4513; background: #FBF6EF; }
-.tree-opt-name { font-size: 13px; color: #3E2723; }
-.tree-opt-sub { font-size: 11px; color: #A1887F; display: block; margin-top: 4px; }
+/* 出嫁/认祖/挂载弹窗（平铺树列表已收进共享 tree-picker：折叠态恒一行 + 展开态限高滚动列表） */
 .search-row { display: flex; gap: 8px; align-items: center; }
 .search-input { flex: 1; }
 .join-tip { text-align: center; color: #999; font-size: 13px; padding: 16px 0; }

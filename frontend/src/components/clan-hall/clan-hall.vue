@@ -142,7 +142,7 @@
     </template>
 
     <!-- 编辑祖谱信息弹窗（字段与普通家族树首页一致；PUT /tree-meta） -->
-    <view v-if="showEdit" class="modal-mask" @click.self="showEdit = false">
+    <view v-if="showEdit" class="modal-mask" @click="showEdit = false">
       <view class="modal" @click.stop>
         <text class="modal-title">编辑祖谱信息</text>
         <view class="form-item">
@@ -192,7 +192,7 @@
  * 统计口径：祖谱人数不计入世本；普通树人数不计入祖谱。
  */
 import { computed, onMounted, ref, watch } from 'vue';
-import { fetchClanInfo, openTreeHome, updateTreeMeta, fetchTreeMetaRemote, fetchMyAnchor } from '@/business';
+import { fetchClanInfo, openTreeHome, updateTreeMeta, fetchTreeMetaRemote, fetchMyAnchor, fetchPerson } from '@/business';
 import type { ClanInfo, ClanMirrorNode } from '@/business/api';
 import type { TreeEntry } from '@/business/types';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
@@ -309,20 +309,39 @@ async function load() {
   }
 }
 
-/** 镜像节点 → 打开真身档案（真身在中华世本；本层只读，修改须到真身所在层） */
+/**
+ * 镜像节点 → 打开真身档案（真身在中华世本；本层只读，修改须到真身所在层）。
+ * 口径 A：镜像指针齐备（external_mirror='true' + upper_handle + upper_tree_id）→ 传镜像指针给弹窗，
+ * 由弹窗统一按 external_tree / external_person_handle 口径解析真身并加顶部标注（第 3/5 条）。
+ */
 function openUpperPerson(m: ClanMirrorNode) {
   if (!m.upper_handle) {
     uni.showToast({ title: '该镜像节点未记录真身 handle', icon: 'none' });
     return;
   }
-  archiveModal.value?.open(m.upper_tree_id || 'zhonghua', m.upper_handle);
+  const upperTree = m.upper_tree_id || 'zhonghua';
+  archiveModal.value?.open(upperTree, m.upper_handle, {
+    external_mirror: 'true',
+    external_person_handle: m.upper_handle,
+    external_tree: upperTree,
+    external_link_type: m.link_type,
+  });
 }
 
-/** 本宗自有支系入口节点（普通树认祖的落点） */
-function openOwnFounder() {
+/**
+ * 本宗自有支系入口节点（普通树认祖的落点）。
+ * 口径 A：该节点自身也可能是镜像（认祖/跨树子女产物）→ 先取节点判定，是镜像则打开真身档案；
+ * 拉取失败（404/权限/网络）时维持原行为 —— 直接打开本树副本（弹窗内不再二次解析）。
+ */
+async function openOwnFounder() {
   const h = info.value?.founder_handle;
   if (!h) return;
-  archiveModal.value?.open(props.treeId, h);
+  try {
+    const p = await fetchPerson(props.treeId, h);
+    archiveModal.value?.open(props.treeId, h, p);
+  } catch {
+    archiveModal.value?.open(props.treeId, h);
+  }
 }
 
 /** 支系入口：进入该普通家族树首页 */

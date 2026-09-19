@@ -73,8 +73,8 @@
     </view>
 
     <!-- 解绑申请弹窗 -->
-    <view v-if="showLeaveModal" class="modal-mask" @click.self="showLeaveModal = false">
-      <view class="modal">
+    <view v-if="showLeaveModal" class="modal-mask" @click="showLeaveModal = false">
+      <view class="modal" @click.stop>
         <text class="modal-title">申请解绑</text>
         <text class="modal-sub">解绑后需主理人审批通过，才能加入其他家族树</text>
         <t-input

@@ -499,10 +499,16 @@ function rankLabel(treeId: string): string {
   return rankMap.value[treeId]?.rank_label || '';
 }
 
-/** 人数标签文案（数据全部来自已加载的 rankMap，不新增请求；缺失 / NaN → 「— 人」） */
+/**
+ * 人数标签文案（数据全部来自已加载的 rankMap，不新增请求；缺失 / NaN → 「— 人」）。
+ * 新口径（用户 2026-09-19 拍板）：只给一个数字 —— `person_count`（后端家族人数新口径），
+ * 不再输出「（含外树 M）」说明；`mirror_count` 降级为保留字段，前端不再使用。
+ */
 function peopleText(treeId: string): string {
-  const n = rankMap.value[treeId]?.person_count;
-  return typeof n === 'number' && !Number.isNaN(n) ? `${n} 人` : '— 人';
+  const r = rankMap.value[treeId];
+  const n = r?.person_count;
+  if (typeof n !== 'number' || Number.isNaN(n)) return '— 人';
+  return `${n} 人`;
 }
 
 function rankTheme(treeId: string): string {

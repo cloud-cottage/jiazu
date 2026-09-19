@@ -113,7 +113,7 @@
 
       <!-- 视图内容 -->
       <view v-if="view === 'pedigree'" class="view-body">
-        <TreePedigree :tree-id="treeId" />
+        <TreePedigree :tree-id="treeId" :people-total="peopleTotal" />
       </view>
 
       <!-- 家族消息（审批入口） -->
@@ -149,7 +149,7 @@
       </view>
 
     <!-- 申请加入弹窗（申请-审批制；docs/permission-tier.spec.md §9） -->
-    <view v-if="showJoin" class="modal-mask" @click.self="showJoin = false">
+    <view v-if="showJoin" class="modal-mask" @click="showJoin = false">
       <view class="modal" @click.stop>
         <text class="modal-title">申请加入 {{ hallInfo?.display_title || treeId }}</text>
         <text class="modal-sub">在公开谱系中选择一个代表您支系的节点（认领线索，审核人将据此核对您的族亲关系）</text>
@@ -219,7 +219,7 @@
     </view>
 
     <!-- 建谱申请弹窗：选中华世本始祖节点 → 提交（总编审批后建祖谱树，URL 形如 /z/<tree_id>） -->
-    <view v-if="showClanRequest" class="modal-mask" @click.self="showClanRequest = false">
+    <view v-if="showClanRequest" class="modal-mask" @click="showClanRequest = false">
       <view class="modal" @click.stop>
         <text class="modal-title">申请建立祖谱</text>
         <text class="modal-sub">
@@ -355,6 +355,8 @@ const spiritInfo = ref<SpiritInfo | null>(null);
 const hallInfo = ref<TreeEntry | null>(null);
 // 节点级可见分层（rank 返回 access 元信息；full=全可见无提示）
 const accessInfo = ref<TreeAccessInfo | null>(null);
+// 家族人数（/tree/rank person_count 新口径）：传给树图统计栏，与首页卡片同口径；0 = 未取到/不适用
+const peopleTotal = ref(0);
 
 // 人物完整档案弹窗（树内搜索 / 查看成员 → 弹窗内看档案）
 const archiveModal = ref<InstanceType<typeof PersonDetailModal> | null>(null);
@@ -649,7 +651,8 @@ function clearSearch() {
 }
 
 function goSearchResult(p: PersonSummary) {
-  archiveModal.value?.open(treeId.value, p.handle);
+  // 口径 A：搜索结果里的镜像节点（external_mirror='true' + 真身指针齐备）→ 打开真身档案
+  archiveModal.value?.open(treeId.value, p.handle, p);
 }
 
 /** 打开文献地址（线上网盘） */
@@ -719,6 +722,7 @@ onMounted(async () => {
     try {
       const rank = await fetchTreeRank(treeId.value);
       accessInfo.value = rank.access || null;
+      peopleTotal.value = typeof rank.person_count === 'number' && !Number.isNaN(rank.person_count) ? rank.person_count : 0;
     } catch (e) {
       console.error('加载谱系可见范围失败:', e);
     }

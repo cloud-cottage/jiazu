@@ -1,9 +1,9 @@
 <template>
   <view class="tree-pedigree">
     <view class="stats" v-if="visibleForest.length">
-      <text class="stat">共 {{ totalPeople }} 人</text>
+      <text class="stat">共 {{ props.peopleTotal > 0 ? props.peopleTotal : totalPeople }} 人</text>
       <text class="stat">{{ founderLabel }}</text>
-      <text v-if="mirrorCount > 0" class="stat stat-hint">含外树配偶 {{ mirrorCount }}</text>
+      <text v-if="mirrorTierText" class="stat stat-hint">{{ mirrorTierText }}</text>
       <text v-if="keyMarkerCount > 0" class="stat stat-hint">关键节点 {{ keyMarkerCount }}</text>
       <text v-if="hiddenMarkerCount > 0" class="stat stat-hint">（已隐 {{ hiddenMarkerCount }} 个外树登记）</text>
     </view>
@@ -98,7 +98,7 @@ import { fetchPersonList, fetchFamilyList, fetchTreeMetaRemote } from '@/busines
 import type { FamilySummary } from '@/business/api';
 import { buildPedigreeForest } from '@/business/pedigree';
 import { personIdDisplay, nameWithTitles } from '@/business/format';
-import { openTreeHome } from '@/business';
+import { openTreeHome, mirrorLabelOf, mirrorTargetOf } from '@/business';
 import type { TreePersonNode } from '@/business/pedigree';
 import * as echarts from 'echarts';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
@@ -124,6 +124,12 @@ const props = withDefaults(
      * 宿主想在自己那层知道谱系改动（刷新人数/统计）时监听 `@tree-changed`。
      */
     treeManage?: boolean;
+    /**
+     * 统计栏「共 N 人」的权威人数（可选；> 0 时优先于本组件自行拉取的 people 条数）。
+     * 宿主传入后端 /tree/rank 的 person_count（家族人数新口径）→ 家族页统计栏与首页卡片同口径。
+     * 缺省 0 = 沿用既有 totalPeople（其它宿主行为完全不变）。
+     */
+    peopleTotal?: number;
   }>(),
   {
     defaultLayout: 'vertical',
@@ -132,6 +138,7 @@ const props = withDefaults(
     genMap: () => ({}),
     keyMarkers: () => ({}),
     treeManage: true,
+    peopleTotal: 0,
   },
 );
 
@@ -219,17 +226,32 @@ function pruneMarkers(nodes: TreePersonNode[]): TreePersonNode[] {
     .map((n) => (n.children?.length ? { ...n, children: pruneMarkers(n.children) } : n));
 }
 
-/** 外树镜像节点数（嫁娶生成的「对方在本树的代表」；人数统计单列，docs/marriage.spec.md §9-4） */
-const mirrorCount = computed(() => {
-  let n = 0;
+/**
+ * 镜像档位顺序（marriage → child → founder → chain → 其它档）：文案统一经 mirrorLabelOf 取，
+ * 不在树图里写第二套「外树配偶/外树子女/…」映射（口径 A 第 6/7 条）。
+ */
+const MIRROR_TIER_LINK_TYPES = ['marriage', 'child', 'founder', 'chain', ''];
+
+/**
+ * 统计栏的镜像分档文案（口径 A 第 7 条）：
+ * 按档分列、**只显示大于 0 的档**，形如「外树配偶 1 · 外树子女 2 · 外树始祖 1」；
+ * 无镜像节点 → 空串（该项不渲染）。
+ */
+const mirrorTierText = computed(() => {
+  const counts = new Map<string, number>();
   const walk = (nodes: TreePersonNode[]) => {
     for (const x of nodes) {
-      if (isMirrorNode(x)) n += 1;
+      const label = mirrorTierOf(x);
+      if (label) counts.set(label, (counts.get(label) || 0) + 1);
       if (x.children?.length) walk(x.children);
     }
   };
   walk(forest.value);
-  return n;
+  return MIRROR_TIER_LINK_TYPES.map((lt) => mirrorLabelOf(lt))
+    .map((label) => ({ label, count: counts.get(label) || 0 }))
+    .filter((g) => g.count > 0)
+    .map((g) => `${g.label} ${g.count}`)
+    .join(' · ');
 });
 
 /** 登记标记总数（用于开关文案与显隐） */
@@ -262,7 +284,8 @@ function goRootPerson(node: TreePersonNode) {
     return;
   }
   if (!node.handle) return;
-  archiveModal.value?.open(props.treeId, node.handle);
+  // 口径 A：镜像节点（external_mirror='true' + 真身指针齐备）→ 弹窗解析为真身档案
+  archiveModal.value?.open(props.treeId, node.handle, node);
 }
 
 let chart: echarts.ECharts | null = null;
@@ -415,9 +438,18 @@ function cardLines(node: TreePersonNode, artifact = false): number {
   return n;
 }
 
-/** 外树镜像节点（嫁娶生成：对方在本树中的代表） */
+/**
+ * 外树镜像节点（嫁娶 / 跨树子女 / 认祖 / 上层链生成的「对方在本树的代表」）。
+ * 判据集中在 `mirrorTargetOf`（口径 A 第 1 条：external_mirror='true' + 真身 handle + 真身树 三者齐备）。
+ */
 function isMirrorNode(node: TreePersonNode): boolean {
-  return String((node as any).external_mirror || '') === 'true';
+  return mirrorTargetOf(node) !== null;
+}
+
+/** 镜像档位文案（口径 A 第 6/7 条：卡片角标与统计栏同源）；非镜像 → null */
+function mirrorTierOf(node: TreePersonNode): string | null {
+  const t = mirrorTargetOf(node);
+  return t ? mirrorLabelOf(t.linkType) : null;
 }
 
 /**
@@ -496,8 +528,8 @@ function decorateTree(node: TreePersonNode, isVirtualRoot = false): TreePersonNo
   // 总谱：卡片内显示世数（源流链 external_chain_gen，由宿主传入 genMap）；世数 0 = 原始节点
   const gen = props.genMap?.[node.handle];
   if (gen !== undefined && !artifact) lines.push(gen === 0 ? '原始' : `第${gen}世`);
-  // 外树镜像节点（嫁娶生成）加角标行，与真人区分
-  if (isMirrorNode(node) && !artifact) lines.push('外树配偶');
+  // 外树镜像节点按 external_link_type 分档加角标行（口径 A 第 6 条），与真人区分
+  if (isMirrorNode(node) && !artifact) lines.push(mirrorLabelOf(node.external_link_type));
   for (const s of node.spouseNames || []) if (s) lines.push(`配${s}`);
   const rawW =
     Math.max(...lines.map((l) => estimateTextWidth(l, CARD_FONT))) + CARD_PAD_X * 2;
@@ -633,8 +665,9 @@ function renderChart() {
         return;
       }
       // 普通人物节点：直接打开唯一档案弹窗（内联编辑 + 谱系管理，不再经过摘要弹窗）
+      // 口径 A：镜像节点（external_mirror='true' + 真身树/真身 handle 齐备）→ 打开真身档案
       if (!d.handle) return;
-      archiveModal.value?.open(props.treeId, d.handle);
+      archiveModal.value?.open(props.treeId, d.handle, d);
     });
   }
 
@@ -656,9 +689,17 @@ function renderChart() {
 
   // 方案B：把业务节点树克隆为「圆角矩形名卡」树（卡宽自适应姓名宽度）
   const chartRoot = decorateTree(rawRoot, roots.length !== 1);
-  // 首屏展开层数：initialDepth>0 时按指定层数（总谱 49 层用 12，逐层点开），否则整树全展开
+  // 首屏展开层数（ECharts 口径，见 TreeSeries.js）：
+  // - props.initialDepth <= 0（缺省值 / 普通家族树）→ 走「整树全展开」分支：initialTreeDepth 传 -1。
+  //   依据 TreeSeries.js:90 `expandTreeDepth = expandAndCollapse && option.initialTreeDepth >= 0
+  //   ? option.initialTreeDepth : treeDepth;` —— initialTreeDepth < 0 时 expandTreeDepth = 真实树深，
+  //   第 94 行 `node.isExpand = node.depth <= expandTreeDepth` 对全部节点成立。
+  //   不能传正数 treeDepth：TreeSeries.js:66-70 ECharts 会在 series.data 外再包一层虚拟根
+  //   （root = {name: option.name, children: option.data}），你传的真实根深度为 1 → 少展开一层，
+  //   最深一层的节点（如镜像节点）不建图形元素 → getItemGraphicEl() 为 null，不可见也不可点。
+  // - props.initialDepth > 0（总谱 48+ 层等）→ 保持既有逐层展开语义（点开下一层）。
   const treeDepth = treeMaxDepth(chartRoot);
-  const expandDepth = props.initialDepth > 0 ? Math.min(props.initialDepth, treeDepth) : treeDepth;
+  const expandDepth = props.initialDepth > 0 ? Math.min(props.initialDepth, treeDepth) : -1;
 
   const labelFmt = (params: any) => {
     const d = params.data as TreePersonNode;
@@ -727,11 +768,19 @@ function renderChart() {
         // 纵向/横向 = 正交布局
         layout: 'orthogonal',
         orient,
-        // 整树展开：按卡高铺开世代行距（否则 ECharts 会把 48 层压进容器 → 卡片叠死）
-        ...layerBox(stretchAxis(), expandDepth),
+        // 整树展开：按卡高铺开世代行距（否则 ECharts 会把 48 层压进容器 → 卡片叠死）。
+        // 盒子尺寸必须用真实树深 treeDepth（不能用 expandDepth：整树全展开时它是 -1，会算错高度）
+        ...layerBox(stretchAxis(), treeDepth),
         symbol: 'rect',
+        // -1 = 整树全展开（props.initialDepth<=0）；正数 = 首屏展开到第 N 层（逐层点开）
         initialTreeDepth: expandDepth,
-        expandAndCollapse: true,
+        // 整树全展开模式（props.initialDepth<=0）下禁用点击折叠：ECharts TreeView.js:169 只在
+        // expandAndCollapse === true 时给卡片绑 treeExpandAndCollapse 点击 → 否则「点卡片」会同时
+        // 开档案 + 折叠该节点子树（后代静默消失）。关掉后 TreeSeries.js:90 的
+        // `expandTreeDepth = expandAndCollapse && initialTreeDepth >= 0 ? … : treeDepth`
+        // 取内部真实树深 → 整树依然全展开，只是不再绑点击折叠。
+        // 逐层展开模式（props.initialDepth>0）保持 true，保留点开/折叠能力。
+        expandAndCollapse: props.initialDepth > 0,
         // roam:'move' = 只允许平移（缩放锁死，走 ＋/－ 按钮；滚轮改为平移视野）
         roam: 'move',
         zoom: zoomLevel.value,

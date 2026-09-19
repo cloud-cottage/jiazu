@@ -178,8 +178,8 @@
     </text>
 
     <!-- 买入确认弹窗：标价 / 手续费 / 卖方实收 -->
-    <view v-if="buyTarget" class="modal-mask" @click.self="closeBuyConfirm">
-      <view class="modal">
+    <view v-if="buyTarget" class="modal-mask" @click="closeBuyConfirm">
+      <view class="modal" @click.stop>
         <text class="modal-title">确认买入</text>
         <text class="modal-sub">整单全量成交，不支持部分购买与议价</text>
         <view class="modal-row">

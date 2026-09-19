@@ -2,11 +2,11 @@
  * Gramps-Web REST API 客户端
  *
  * 认证架构（v2 — auth-server 代理模式）:
- * - 所有 /api/* 请求经 auth-server (端口 3000) 代理到 Gramps-Web
+ * - 所有 /api/* 请求经 auth-server (端口 5197) 代理到 Gramps-Web
  * - auth-server 持有 Gramps 访客凭据并自动注入，前端不接触
  * - 手机号验证码登录走 /api/auth/*（auth-server 处理）
  *
- * dev 模式: Vite 代理 /api → localhost:3000 (auth-server) → localhost:8000 (Gramps)
+ * dev 模式: Vite 代理 /api → 127.0.0.1:5197 (auth-server) → 127.0.0.1:5198 (Gramps)
  */
 
 import { getAuthToken } from './auth';
@@ -571,7 +571,19 @@ export interface TreeRankInfo {
   over_limit: boolean;
   max_depth: number;
   root_count: number;
+  /**
+   * 家族人数（**新口径**，用户 2026-09-19 拍板，后端 lib/family-population.js）：
+   * 本姓节点无论男女一律计入 + 外姓嫁入女性计入（含 marriage 镜像）+「本姓女性嫁出后所生的子女」不计入
+   * （结构判据 + `external_mirror:'true'` 且 `external_link_type:'child'` 的外树子女镜像）。
+   * 首页卡片只展示这一个数字（不再有「（含外树 M）」说明），三档排序归一化同样用它。
+   */
   person_count: number;
+  /**
+   * 本树「外树镜像」节点数（口径 `String(external_mirror) === 'true'`）。**保留字段**：
+   * 新口径下前端不再用于展示（首页卡片只显示 person_count），**不参与任何排序归一化**。
+   * 可选：旧响应不带该字段时不影响渲染。
+   */
+  mirror_count?: number;
   explicit: boolean;
   /**
    * 家族活跃度（可选：后端可能未下发；前端一律按 0 兜底处理，不得据此报错或显示 NaN）。
@@ -1126,6 +1138,12 @@ export async function marriageRequest(
     person_handle: string;
     spouse_tree_id?: string;
     spouse_handle?: string;
+    /**
+     * 配偶引用（兜底通道）：全局编号（`000052` / `I000052`）/ handle / 树内旧号，
+     * 后端 `resolveNode` **全站**解析（编号自带所属树，无需 spouse_tree_id）。
+     * 与 `spouse_handle` 二者皆认、编号优先（前端填了编号时只传本字段）。
+     */
+    spouse_ref?: string;
     marriage_date?: string;
     end_date?: string;
     note?: string;
@@ -1695,6 +1713,57 @@ export async function searchPeople(
     people: raw.map((r) => toPersonSummary((r.object || r) as RawPerson)),
     total: raw.length,
   };
+}
+
+/**
+ * 跨树嫁娶候选（GET /search/marriage-candidates；需登录）。
+ *
+ * 为什么不用树内 `/search`：读路径的节点级分层按「发起人对目标树的关系」裁剪
+ * （非成员只剩最古老 1 世）→ 对方树里适婚世代整段消失，**娶入时搜不到目标树中的女性节点**；
+ * 本通道是白名单字段下的定点例外，只服务「跨树选配偶」这一场景。
+ * 出参**恰五项**（handle / gramps_id / name / gender / is_living）—— 不含生卒、详情、`external_*`。
+ */
+export interface MarriageCandidate {
+  handle: string;
+  gramps_id: string;
+  name: string;
+  /** 'F' = 女 / 'M' = 男（性别未知的节点后端一律不列入） */
+  gender: 'F' | 'M' | 'U' | string;
+  is_living: boolean;
+}
+
+/**
+ * 跨树嫁娶配偶候选（`GET /search/marriage-candidates`）。
+ * - `tree_id` 走**查询参数**（通道注册在树编辑闸门之前，不依赖 X-Tree-Id header）；
+ * - 必带登录 token：未登录 / 登录过期 → `ApiStatusError(status=401)`（**绝不静默降级 guest 档**）；
+ * - `gender`：娶入传 'F'、嫁出传 'M'（性别未知的节点后端不列入）；
+ * - 其它非 2xx → `ApiStatusError`（`message` = 后端错误文案，`status` = HTTP 码）。
+ */
+export async function searchMarriageCandidates(
+  treeId: string,
+  params: { query: string; gender?: 'F' | 'M'; limit?: number },
+): Promise<{ tree_id: string; candidates: MarriageCandidate[]; total: number }> {
+  const parts = [
+    `query=${encodeURIComponent(params.query)}`,
+    `tree_id=${encodeURIComponent(treeId)}`,
+  ];
+  if (params.gender) parts.push(`gender=${encodeURIComponent(params.gender)}`);
+  if (params.limit) parts.push(`limit=${encodeURIComponent(String(params.limit))}`);
+  const headers: Record<string, string> = {};
+  const token = getAuthToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/search/marriage-candidates?${parts.join('&')}`, { headers });
+  const raw = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiStatusError(
+      raw?.error?.message || raw?.error || `搜索失败 (${res.status})`,
+      res.status,
+      raw,
+    );
+  }
+  // 出参兼容：{ candidates } / 裸数组
+  const list = Array.isArray(raw) ? raw : raw?.candidates || [];
+  return { tree_id: raw?.tree_id || treeId, candidates: list as MarriageCandidate[], total: raw?.total ?? list.length };
 }
 
 /** 全站搜索命中的人物条目（GET /search/global；跨全部家族树） */
