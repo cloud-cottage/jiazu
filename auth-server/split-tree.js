@@ -27,7 +27,7 @@ const grampsTokenCache = new Map();
 async function grampsLogin(username, password) {
   const cached = grampsTokenCache.get(username);
   if (cached && cached.exp > Date.now() + 60_000) return cached.token;
-  const base = process.env.GRAMPS_BASE_URL || 'http://localhost:8000';
+  const base = process.env.GRAMPS_BASE_URL || 'http://127.0.0.1:5198';
   let res = await fetch(`${base}/api/token/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -429,7 +429,7 @@ function saveOwnerCredential(treeId, username, password) {
 
 /** GET 原始文件（导出结果） */
 async function grampsFetchRaw(token, urlPath) {
-  const res = await fetch(`${process.env.GRAMPS_BASE_URL || 'http://localhost:8000'}${urlPath}`, {
+  const res = await fetch(`${process.env.GRAMPS_BASE_URL || 'http://127.0.0.1:5198'}${urlPath}`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new Error(`下载导出文件失败: ${res.status}`);

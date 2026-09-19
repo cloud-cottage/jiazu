@@ -29,10 +29,10 @@ import { computeTreeDepth, rankFromDepth, MAX_DEPTH, RANKS } from './rank.js';
 
 // ---- 配置 ----
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 5197);
 const JWT_SECRET = process.env.AUTH_JWT_SECRET || 'dev-only-secret-change-me';
 const CODE_TTL = Number(process.env.CODE_TTL_SECONDS || 300);
-const GRAMPS_BASE = process.env.GRAMPS_BASE_URL || 'http://localhost:8000';
+const GRAMPS_BASE = process.env.GRAMPS_BASE_URL || 'http://127.0.0.1:5198';
 const GRAMPS_GUEST = {
   username: process.env.GRAMPS_GUEST_USERNAME || 'guest',
   password: process.env.GRAMPS_GUEST_PASSWORD || 'GuestPass123!',
