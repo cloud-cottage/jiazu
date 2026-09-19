@@ -22,7 +22,7 @@
  *   M5 权限档位变化（guest / 已登录非成员 / 树成员）`mirror_count` 与 `person_count` 恒定不变 —— 且用 computeAccess
  *      直证这些镜像节点在 guest 档确实被裁掉（证明计数与权限裁剪解耦）；真源 gu 的镜像数同样动态推导；
  *   M6 真源 ji_23395_01 → `mirror_count` 动态一致（包含式点名 I000209 / I000253 / I000291 / I000365）、
- *      `person_count` 快照 89 + 不变量（people 总数 − 点名的 I000237）；
+ *      `person_count` 快照 89 + 不变量（people 总数 − 排除集；ji 排除集现为空，I000237 已于 2026-09-19 删除）；
  *   M7 真源体检：config/tree-meta.json + migrate-output/{trees,collections} 逐字节未变。
  *
  * 数据安全：`COMPAT_OUT_DIR` / `COMPAT_META_FILE` 一律指向 /tmp 副本（真源只读复制）；真源 md5 文末断言未变。
@@ -195,8 +195,13 @@ const GU_MIRROR_GIDS = ['I000143', 'I000292', 'I000293', 'I000294', 'I000367'];
 const JI_MIRROR_GIDS = ['I000209', 'I000253', 'I000291', 'I000365'];
 /** 真源 gu 被新口径排除的 handle 点名（外姓「季」child 镜像）—— 显式点名，不由实现函数反推 */
 const GU_EXCLUDED_GIDS = ['I000293', 'I000294'];
-/** 真源 ji 被新口径排除的 handle 点名 */
-const JI_EXCLUDED_GIDS = ['I000237'];
+/**
+ * 真源 ji 被新口径排除的 handle 点名 —— 现为空集：
+ * 原点名项 I000237（满满）已于 2026-09-19 经产品接口（promote 模式）从 ji_23395_01 删除，
+ * 真源 ji 当前排除集为空，故 person_count === 真源 people 总数（89）；
+ * 若日后 ji 再出现规则 3 排除项（外姓 child 镜像），必须在此重新点名并同步不变量右项。
+ */
+const JI_EXCLUDED_GIDS = [];
 
 // ================= M1. 真源 gu 树：mirror_count 动态推导 + person_count 快照 =================
 
@@ -326,11 +331,13 @@ test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 89
   }
   assert.equal(body.person_count, 89, 'person_count 真源数据快照，随真源增长需同步');
   // 不变量：person_count === people 总数 − 被排除 handle 数（排除集合用例显式点名）
+  // ji 当前排除集为空（I000237 满满 已于 2026-09-19 删除）→ 右项即真源 people 总数本身；
+  // 因 snapshot(89) 与 realPeopleCount(89) 来自两处独立读源，本断言仍是对「真源人数口径」的交叉核对，非同源恒真。
   assertGidsInRealTree('ji_23395_01', JI_EXCLUDED_GIDS);
   assert.equal(
     body.person_count,
     realPeopleCount('ji_23395_01') - JI_EXCLUDED_GIDS.length,
-    'people 总数 − 点名的被排除 handle 数（ji：I000237）',
+    'people 总数 − 点名的被排除 handle 数（ji：排除集现为空 —— I000237 已于 2026-09-19 删除）',
   );
 });
 
