@@ -112,6 +112,18 @@
         >{{ isMasterChain || addMode === 'spouse' ? '挂接已有节点' : '从树中选择' }}</view>
       </view>
 
+      <!-- 「承母嗣」特例：只在「加子女 + 本人为女性（以母亲为家长）」形态显示；
+           世本 / 祖谱不显示（后端守卫也不套用这两层）。勾选后请求带 maternal_succession: true -->
+      <view v-if="showMaternalSuccession" class="ms-row" @click="addMaternalSuccession = !addMaternalSuccession">
+        <view class="ms-box" :class="{ 'ms-box-on': addMaternalSuccession }">
+          <text v-if="addMaternalSuccession" class="ms-tick">✓</text>
+        </view>
+        <text class="ms-label">承母嗣（挂在未婚女性名下）</text>
+      </view>
+      <view v-if="showMaternalSuccession" class="ms-hint">
+        <text class="sh-text">本族女性一旦婚配，其后代默认不入本树；勾选「承母嗣」才会挂在本树女性名下（已婚配女性添子女未勾选会被服务端拒绝）。</text>
+      </view>
+
       <template v-if="addPickMode === 'new'">
         <!-- 姓 + 名：姓默认随父姓（锁定），「改姓」才解锁为特例 -->
         <view class="name-row">
@@ -394,6 +406,8 @@ const addSurname = ref('');
 /** 姓默认随（父/子）姓锁定；点「改姓」解锁为特例姓氏 */
 const surnameLocked = ref(true);
 const addGender = ref<'M' | 'F' | 'U'>('M');
+/** 「承母嗣」勾选：本族已婚女性的后代要挂在本树女性名下时手动声明（请求带 maternal_succession: true） */
+const addMaternalSuccession = ref(false);
 const addHao = ref('');
 const addFeng = ref('');
 const addShi = ref('');
@@ -465,6 +479,14 @@ const surnameHintText = computed(() =>
 /** 是否显示「改姓/恢复随父姓」开关（配偶模式不需要） */
 const showSurnameToggle = computed(() => addMode.value !== 'spouse');
 
+/**
+ * 「承母嗣」勾选框可见性：**只在「加子女 + 本人为女性（以母亲为家长）」形态显示**。
+ * 世本（`isMasterChain`）/ 祖谱（`isClanTree`）不显示 —— 后端守卫也不套用这两层。
+ */
+const showMaternalSuccession = computed(
+  () => addMode.value === 'child' && props.personGender === 'F' && !isMasterChain.value && !isClanTree.value,
+);
+
 /** 称号等档案属性（仅新建时，非空才提交） */
 function titleAttributes(): Array<{ key: string; value: string }> {
   return [
@@ -491,6 +513,8 @@ function openAddNode(mode: 'parent' | 'child' | 'spouse', pickMode: 'new' | 'pic
   addResults.value = [];
   addSearched.value = false;
   addSelected.value = null;
+  // 「承母嗣」每次打开都复位（不给上一次的勾选留痕）
+  addMaternalSuccession.value = false;
   // 批量档：每次打开都清空粘贴文本与解析结果（不复用上次输入）
   batchText.value = '';
   batchAdding.value = false;
@@ -597,7 +621,15 @@ async function doAddNode() {
     if (addMode.value === 'parent') {
       await addParentNode(props.treeId, props.handle, input, token);
     } else {
-      const res = await addChildNode(props.treeId, props.handle, input, token);
+      // 「承母嗣」：勾选才随请求提交（未勾选不带该字段 → 已婚配本族女性会被服务端 400 拒绝）
+      const childInput =
+        addPickMode.value === 'pick'
+          ? { handle: addSelected.value?.handle, gender: addSelected.value?.gender || 'U' }
+          : { name: addName.value.trim(), surname, gender: addGender.value, attributes: titleAttributes() };
+      const childPayload = addMaternalSuccession.value
+        ? { ...childInput, maternal_succession: true }
+        : childInput;
+      const res = await addChildNode(props.treeId, props.handle, childPayload, token);
       // 跨树婚姻家庭（父/母为外树镜像）：子女真身落到对方树，本地只留镜像子女（marriage.spec §7-4）
       if (res.cross_tree) {
         toastTitle = res.message || `子节点已建到「${res.landed_tree_id}」，本树留镜像`;
@@ -903,6 +935,22 @@ async function confirmEstablishBranch() {
 .sh-link { font-size: 12px; color: #8B4513; text-decoration: underline; }
 .title-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .gender-row { margin-top: 8px; }
+/* 「承母嗣」勾选框（本族已婚女性的后代挂在本树女性名下；见后端 lib/family-write-guard.js） */
+.ms-row { display: flex; align-items: center; margin-top: 10px; }
+.ms-box {
+  width: 18px;
+  height: 18px;
+  border: 1px solid #d0d0d0;
+  border-radius: 4px;
+  margin-right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ms-box-on { background: #0052d9; border-color: #0052d9; }
+.ms-tick { color: #fff; font-size: 12px; line-height: 14px; }
+.ms-label { font-size: 13px; color: #333; }
+.ms-hint { margin-top: 4px; display: flex; }
 .join-tip { text-align: center; color: #999; font-size: 13px; padding: 12px 0; }
 
 /* 批量添加子孙：提示 / 文本域 / 解析预览（沿用原生 textarea，与 hall 页 .textarea 同风格，不引新依赖） */

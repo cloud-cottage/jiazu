@@ -1105,6 +1105,8 @@ async function handleRequest(event) {
           surname: body.surname || '',
           gender: body.gender || 'U',
           extraAttributes: body.attributes || [],
+          // 「承母嗣」特例（本族已婚女性的后代）：勾选后挂在本人名下，详情文档记 maternal_succession='true'
+          maternalSuccession: body.maternal_succession === true,
         });
         return send(200, result);
       } catch (e) {

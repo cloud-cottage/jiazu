@@ -974,6 +974,11 @@ export async function addChildNode(
     surname?: string;
     gender?: 'M' | 'F' | 'U';
     attributes?: Array<{ key: string; value: string }>;
+    /**
+     * 「承母嗣」特例：本族女性一旦婚配，其后代默认不进本树；勾选后随请求提交
+     * `maternal_succession: true`，服务端校验放行并在详情文档写 `maternal_succession='true'`。
+     */
+    maternal_succession?: boolean;
   },
   token: string,
 ): Promise<{
@@ -994,6 +999,7 @@ export async function addChildNode(
     surname: child.surname || '',
     gender: child.gender || 'U',
     attributes: (child.attributes || []).filter((a) => a.key && a.value),
+    maternal_succession: !!child.maternal_succession,
   });
 }
 

@@ -13,6 +13,7 @@ import { getTree, updateTrees, saveDetail, getDetail, deleteDetail, nextPersonId
 import { treeKindOf, metaEntryOf } from './founder-attach.js';
 import { nextGrampsId, inheritedSurname, parentSlot } from './tree-write.js';
 import { findMarriageSide } from './marriage.js';
+import { assertChildWriteAllowed, withMaternalSuccessionAttribute } from './family-write-guard.js';
 
 /** 镜像子女的跨树链接类型（区别于配偶镜像的 'marriage'） */
 export const MIRROR_CHILD_LINK_TYPE = 'child';
@@ -131,6 +132,7 @@ export async function addChildNode({
   maxDepth = 0,
   depthOf = null,
   masterTreeId = '',
+  maternalSuccession = false,
 }) {
   const tree0 = await getTree(treeId);
   if (!tree0) throw new Error(`树不存在: ${treeId}`);
@@ -149,8 +151,22 @@ export async function addChildNode({
   const given = String(name || '').trim();
   const surnameClean = String(surname || '').trim();
   const childGender = normalizeGender(gender);
-  const attributes = cleanAttributes(extraAttributes);
+  // 规则 4：勾选「承母嗣」→ 详情文档属性（key 固定 `maternal_succession`，值 'true'），
+  // 与称号等档案属性同一通道（下面的 saveDetail 落库）
+  const attributes = withMaternalSuccessionAttribute(cleanAttributes(extraAttributes), maternalSuccession);
   if (!mirror && !attach && !given) throw new Error('请填写子节点姓名');
+
+  // 家族树写路径守卫（口径 2026-09-19；三条规则实现见 lib/family-write-guard.js）：
+  //   规则 1 只对 kind==='family' 生效；规则 2 父非本族（且非镜像）拒；规则 3 本族已婚女性需「承母嗣」。
+  // 跨树场景（父为镜像）不套用：既有逻辑已把子女路由到父真身树，本树只留镜像子女。
+  if (!mirror) {
+    assertChildWriteAllowed({
+      tree: tree0,
+      kind: treeKindOf(await metaEntryOf(treeId)),
+      personHandle,
+      maternalSuccession,
+    });
+  }
 
   // 跨树：先把「真身树 / 真身节点 / 真身家族」解析出来（校验失败不写任何一棵树）
   let remoteTreeId = '';
