@@ -99,6 +99,12 @@
             title="生"
             :note="birthText"
           />
+          <!-- 出生地：结构化码由后端反查出的展示串 + 备注（无数据不显示；旧数据只有备注也显示） -->
+          <t-cell
+            v-if="birthPlaceText"
+            title="出生地"
+            :note="birthPlaceText"
+          />
           <!-- 卒：仅已故显示；有日期写日期，卒年不详显示「不详」 -->
           <t-cell
             v-if="!isLivingPerson"
@@ -116,6 +122,19 @@
           <t-cell v-if="titleMap['封号']" title="封号" :note="titleMap['封号']" />
           <t-cell v-if="titleMap['谥号']" title="谥号" :note="titleMap['谥号']" />
           <t-cell v-if="titleMap['号']" title="号" :note="titleMap['号']" />
+        </t-cell-group>
+      </view>
+
+      <view v-if="residenceTexts.length" class="section">
+        <text class="section-title">居住地</text>
+        <t-cell-group :bordered="false">
+          <!-- 顺序即录入顺序；展示串 = 码反查展示串 + 备注（备注为空不带分隔符） -->
+          <t-cell
+            v-for="(t, i) in residenceTexts"
+            :key="i"
+            :title="residenceTexts.length > 1 ? `居住地 ${i + 1}` : '居住地'"
+            :note="t"
+          />
         </t-cell-group>
       </view>
 
@@ -359,6 +378,18 @@
           @update:value="(v: any) => editForm.birth_date = v"
           />
 
+          <!-- 出生地（契约 v2）：结构化三级行政区划真源（只提交 origin_code）+ 备注；
+               展示串由后端按码反查生成，前端只在选择器内做即时预览 -->
+          <text class="field-label">出生地（省 / 市 / 县，选填）</text>
+          <GeoCascader
+            :model-value="editForm.birth_place.origin_code"
+            @update:model-value="(v: any) => editForm.birth_place.origin_code = v"
+          />
+          <text class="field-label">备注（选填）</text>
+          <t-input :value="editForm.birth_place.note" placeholder="如：费县白露村老宅" class="field"
+          @update:value="(v: any) => editForm.birth_place.note = v"
+          />
+
           <text class="field-label">是否健在</text>
           <!-- 总谱（中华世本）与祖谱节点一律已故：字段锁死，仅展示不可改（普通家族树仍可编辑） -->
           <view v-if="livingLocked" class="living-locked">
@@ -377,6 +408,24 @@
             @update:value="(v: any) => editForm.death_date = v"
             />
           </view>
+
+          <!-- 居住地（契约 v2）：多条，**最多 9 条**，顺序即展示顺序；空条目（无码也无备注）保存时丢弃 -->
+          <text class="field-label">居住地（最多 {{ MAX_RESIDENCE_PLACES }} 条，可增删）</text>
+          <text v-if="!editForm.residence_places.length" class="field-hint">暂无居住地，点下方「＋ 添加居住地」新增。</text>
+          <view v-for="(rp, i) in editForm.residence_places" :key="i" class="place-edit-row">
+            <text class="field-label">居住地 {{ i + 1 }}（省 / 市 / 县，选填）</text>
+            <GeoCascader
+              :model-value="rp.origin_code"
+              @update:model-value="(v: any) => rp.origin_code = v"
+            />
+            <text class="field-label">备注（选填）</text>
+            <t-input :value="rp.note" placeholder="如：费县城关镇" class="field"
+            @update:value="(v: any) => rp.note = v"
+            />
+            <t-button size="small" variant="outline" theme="danger" @click="removeResidence(i)">删除</t-button>
+          </view>
+          <t-button size="small" variant="outline" :disabled="residenceFull" @click="addResidence">＋ 添加居住地</t-button>
+          <text class="field-hint">{{ residenceHint }}</text>
 
           <!-- 生平事件 -->
           <text class="field-label">生平事件</text>
@@ -722,10 +771,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, searchMarriageCandidates, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan, mirrorNoteText, treeDisplayTitleOf } from '@/business';
+import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, searchMarriageCandidates, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan, mirrorNoteText, treeDisplayTitleOf, MAX_RESIDENCE_PLACES, emptyPlaceInput, normalizePlace, prunePlaces, placesDirty, placeDisplayOf } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { PersonDetail, PersonSummary } from '@/business/types';
-import type { MirrorFields, MirrorTarget, MarriageCandidate } from '@/business';
+import type { MirrorFields, MirrorTarget, MarriageCandidate, PersonPlaceInput } from '@/business';
 import type { ClanSummary, FeeInfo, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
 import {
   personIdDisplay,
@@ -739,6 +788,7 @@ import {
 import { genderIconSrc } from '@/business/icons';
 import PersonManagePanel from '@/components/person-manage-panel/person-manage-panel.vue';
 import TreePicker from '@/components/tree-picker/tree-picker.vue';
+import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
 
 /**
  * 人物档案面板（共享组件）
@@ -1530,8 +1580,12 @@ const editForm = ref({
   surname: '',
   gender: 'U',
   birth_date: '',
+  /** 出生地（契约 v2：结构化码真源 + 备注；展示串由后端按码派生） */
+  birth_place: emptyPlaceInput(),
   is_living: true, // 默认健在
   death_date: '',
+  /** 居住地（多条，最多 MAX_RESIDENCE_PLACES 条；顺序即展示顺序；空条目保存时丢弃） */
+  residence_places: [] as PersonPlaceInput[],
   hao: '',
   feng: '',
   shi: '',
@@ -1547,9 +1601,9 @@ function editNorm(v: any): string {
   return v === undefined || v === null ? '' : String(v).trim();
 }
 /**
- * 编辑表单是否与载入时的原始值不同。只比人物内容字段（姓名 / 性别 / 生卒 / 健在 / 称号三字段），
- * 与后端 `personValueDiff` 同一口径；**父节点编号不在本函数内**（改父走 reparent，另有变更判定）——
- * 因此「只改父编号」时本函数返回 false、但保存流程仍必须继续执行 reparent，绝不吞掉改父。
+ * 编辑表单是否与载入时的原始值不同。只比人物内容字段（姓名 / 性别 / 生卒 / 健在 / 称号三字段 /
+ * 出生地 / 居住地），与后端 `personValueDiff` 同一口径；**父节点编号不在本函数内**（改父走 reparent，
+ * 另有变更判定）——因此「只改父编号」时本函数返回 false、但保存流程仍必须继续执行 reparent，绝不吞掉改父。
  */
 function personEditDirty(cur: any, base: any): boolean {
   if (!base) return true; // 无基线（异常路径）→ 按「有改动」处理，绝不吞掉一次保存
@@ -1564,8 +1618,33 @@ function personEditDirty(cur: any, base: any): boolean {
   if (editNorm(cur?.birth_date) !== editNorm(base?.birth_date)) return true;
   if (deathOf(cur) !== deathOf(base)) return true;
   if (liveOf(cur) !== liveOf(base)) return true;
+  // 出生地 / 居住地（契约 v2）：逐项 + 条数比对；空条目两侧先丢弃，故「只加了一行空行」不算改动
+  if (placesDirty([cur?.birth_place], [base?.birth_place])) return true;
+  if (placesDirty(cur?.residence_places, base?.residence_places)) return true;
   return false;
 }
+/**
+ * 深拷贝编辑表单（脏比对基线专用）。
+ *
+ * **必须深拷贝**：表单里的 `birth_place` / `residence_places` / `events` 都是对象/数组，
+ * 而表单写入一律是**原地赋值**（`editForm.birth_place.origin_code = v`、
+ * `editForm.residence_places[i].note = v`、`addResidence()` 的 `push`）。
+ * 若基线用浅拷贝 `{ ...editForm.value }` ⇒ 基线与表单共享同一批子对象引用，
+ * 被同步原地改写 ⇒ `placesDirty` 恒判「无改动」⇒ 单独改出生地/居住地被「未做修改」吞掉。
+ *
+ * 只处理纯数据（对象 / 数组 / 原始值），递归复制；**保留值为 `undefined` 的键**
+ * （不像 JSON 往返那样丢键或把 `undefined` 变 `null` 而制造新的假脏），
+ * 且不依赖 `structuredClone`（小程序端无此 API）。
+ */
+function cloneFormDeep<T>(v: T): T {
+  if (v === null || typeof v !== 'object') return v;
+  if (Array.isArray(v)) return v.map((x) => cloneFormDeep(x)) as unknown as T;
+  const src = v as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(src)) out[k] = cloneFormDeep(src[k]);
+  return out as unknown as T;
+}
+
 // <<< DIRTY-DIFF
 
 // 出嫁状态（跨树联姻软链接）
@@ -1658,6 +1737,15 @@ const genderIcon = computed(() => (person.value ? genderIconSrc(person.value.gen
  * - 卒：仅已故显示；有卒期 → 日期，卒年不详 → 「不详」
  */
 const birthText = computed(() => dateDisplay(person.value?.birth_date));
+/**
+ * 出生地展示串（契约 v2 读形状）：码反查展示串 + 备注。
+ * 备注为空不带分隔符；无码的旧数据（后端已把历史字符串归一到备注）只显示备注；无数据 → `''`。
+ */
+const birthPlaceText = computed(() => placeDisplayOf(person.value?.birth_place));
+/** 居住地展示串列表（顺序即录入顺序；旧数据只有备注也显示） */
+const residenceTexts = computed(() =>
+  (person.value?.residence_places || []).map((p) => placeDisplayOf(p)).filter(Boolean),
+);
 const deathText = computed(() => {
   if (!person.value || isLivingPerson.value) return '';
   return dateDisplay(person.value.death_date) || '不详';
@@ -1906,8 +1994,11 @@ async function openEdit() {
       surname,
       gender: genderStr,
       birth_date: birth,
+      // 出生地 / 居住地（契约 v2）：读响应派生形状（place_code / place_note）→ 表单形状
+      birth_place: normalizePlace(prof?.birth),
       is_living: livingLocked.value ? false : living,
       death_date: death,
+      residence_places: prunePlaces(raw.residence_places),
       hao: attrByKey['号'] || '',
       feng: attrByKey['封号'] || '',
       shi: attrByKey['谥号'] || '',
@@ -1915,7 +2006,9 @@ async function openEdit() {
       events,
     };
     // 脏比对基线：打开表单这一刻的字段值（doSave 前先比一次，完全相同就不发 PUT）
-    editBaseline.value = { ...editForm.value };
+    // **必须深拷贝**：表单写入是原地赋值，浅拷贝会让基线与表单共享 birth_place / residence_places
+    // 子对象引用 ⇒ placesDirty 恒判「无改动」。见上方 cloneFormDeep 注释。
+    editBaseline.value = cloneFormDeep(editForm.value);
     showEdit.value = true;
   } catch (e: any) {
     uni.showToast({ title: e.message || '加载编辑数据失败', icon: 'none' });
@@ -1928,6 +2021,35 @@ function addEvent() {
 
 function removeEvent(i: number) {
   editForm.value.events.splice(i, 1);
+}
+
+// ===== 居住地（契约 v2：多条、最多 MAX_RESIDENCE_PLACES 条、顺序即展示顺序）=====
+
+/**
+ * 已达上限：添加按钮禁用（后端对第 10 条返回 400，故必须先在 UI 层拦住）。
+ * 条数 **先丢弃空条目再计**（与提交/落库口径 `prunePlaces` 完全一致）：
+ * 按原始行数算会让「9 行里有空行」的用户被误拦——他实际只填了 8 条有效条目。
+ */
+const residenceFull = computed(
+  () => prunePlaces(editForm.value.residence_places).length >= MAX_RESIDENCE_PLACES,
+);
+
+/** 添加按钮旁的口径说明（满 9 条时说明为何禁用） */
+const residenceHint = computed(() => (residenceFull.value
+  ? `已达上限 ${MAX_RESIDENCE_PLACES} 条，如需新增请先删除一条。`
+  : `最多 ${MAX_RESIDENCE_PLACES} 条；无码也无备注的空条目不会保存。`));
+
+/** 新增一条居住地（按钮满 9 条即禁用，此处再兜一层，绝不越过上限） */
+function addResidence() {
+  if (residenceFull.value) {
+    uni.showToast({ title: `居住地最多 ${MAX_RESIDENCE_PLACES} 条`, icon: 'none' });
+    return;
+  }
+  editForm.value.residence_places.push(emptyPlaceInput());
+}
+
+function removeResidence(i: number) {
+  editForm.value.residence_places.splice(i, 1);
 }
 
 /** 取消编辑：退出内嵌编辑面板，恢复档案视图 */
@@ -1974,6 +2096,12 @@ async function doSave() {
     // 本树父编号去重（跨树编号不可能出现在本树父母里 → 命中即跨树迁移）
     const parentDirty = !!newParentId && !curParents.includes(normRef(newParentId));
     const formDirty = personEditDirty(editForm.value, editBaseline.value);
+    // 居住地上限（契约 v2）：后端对第 10 条返回 400 → 前端先行拦截，不发请求、不扣费
+    const residenceRows = prunePlaces(editForm.value.residence_places);
+    if (residenceRows.length > MAX_RESIDENCE_PLACES) {
+      editError.value = `居住地最多 ${MAX_RESIDENCE_PLACES} 条，请先删除多余的条目`;
+      return;
+    }
     if (!formDirty && !parentDirty) {
       // 未做修改：不发 PUT、不关编辑态（用户还能继续改），零费用
       uni.showToast({ title: '未做修改', icon: 'none' });
@@ -2000,6 +2128,10 @@ async function doSave() {
       raw.is_living = livingLocked.value ? false : editForm.value.is_living;
       // 健在 ⇒ 无离世时间；已故 ⇒ 可留空（卒年不详）
       raw.death_date = editForm.value.is_living ? '' : (editForm.value.death_date || '').trim();
+      // 出生地 / 居住地（契约 v2）：只提交**原始码 + 备注**，绝不提交后端派生的 `place`；
+      // 两个字段都不得省略（空出生地 → 空对象形状；无居住地 → 空数组）。空条目已在上方丢弃。
+      raw.birth_place = normalizePlace(editForm.value.birth_place);
+      raw.residence_places = residenceRows;
       // 称号三字段（号/封号/谥号）：合并进 attribute_list —— 保留其它属性，清空即删除该项
       const titleKeys = ['号', '封号', '谥号'];
       const titleValues: Record<string, string> = {
@@ -2365,6 +2497,7 @@ async function doEndMarriage() {
 .field { margin-bottom: 8px; }
 .living-block { margin-top: 2px; }
 .event-edit-row { background: #FBF8F4; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+.place-edit-row { background: #FBF8F4; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
 .edit-error { text-align: center; color: #C62828; font-size: 13px; margin: 8px 0; }
 .modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
 .modal-sub { font-size: 12px; color: #999; display: block; text-align: center; margin: 6px 0 14px; }

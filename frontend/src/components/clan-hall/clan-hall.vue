@@ -163,8 +163,8 @@
         </view>
         <view class="form-item">
           <text class="label">发源地</text>
-          <!-- 结构化三级行政区划（省 / 市 / 县）；legacy 旧文本仅在无码时兜底展示 -->
-          <GeoCascader v-model="editForm.origin_code" :legacy="editForm.origin" />
+          <!-- 契约 v2 C8′：发源地 = 由本树始祖三代内**某节点的出生地**人工指定（不再直接选行政区划） -->
+          <OriginPicker :tree-id="treeId" @updated="onOriginUpdated" />
         </view>
         <view class="form-item">
           <text class="label">简介</text>
@@ -195,13 +195,13 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { fetchClanInfo, openTreeHome, updateTreeMeta, fetchTreeMetaRemote, fetchMyAnchor, fetchPerson } from '@/business';
 import type { ClanInfo, ClanMirrorNode } from '@/business/api';
-import type { TreeEntry } from '@/business/types';
+import type { TreeEntry, SetTreeOriginResult } from '@/business/types';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
 import { personIdDisplay } from '@/business/format';
 import TreePedigree from '@/components/tree-pedigree/tree-pedigree.vue';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
 import FamilyMessages from '@/components/family-messages/family-messages.vue';
-import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
+import OriginPicker from '@/components/origin-picker/origin-picker.vue';
 
 const props = defineProps<{ treeId: string }>();
 
@@ -223,7 +223,36 @@ const clanEntry = ref<TreeEntry | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
-const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', origin_code: '', description: '' });
+const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', description: '' });
+
+/**
+ * 打开编辑弹窗（字段：祖谱名称/谱名/文献地址/祠堂名/简介；**发源地不在本表单内** —— 由弹窗内的
+ * `OriginPicker` 走 `POST /admin/set-tree-origin` 单独指定，契约 v2 C8′）。
+ * `origin` 仅作 legacy 软冗余原样回传（`PUT /tree-meta` 兼容分支），界面不再让用户直接编辑。
+ */
+function openEdit() {
+  const e: any = clanEntry.value || {};
+  editForm.value = {
+    display_title: e.display_title || info.value?.title || '',
+    genealogy_name: e.genealogy_name || info.value?.genealogy_name || '',
+    archive_url: e.archive_url || '',
+    hall_name: e.hall_name || '',
+    origin: e.origin || '',
+    description: e.description || '',
+  };
+  editError.value = '';
+  showEdit.value = true;
+}
+
+/**
+ * 发源地指定成功（`OriginPicker` 内部已重拉候选）→ 就地刷新本地祖谱元条目
+ * （弹窗回显与后续 `updateTreeMeta` 提交取的都是新值）。本页 hero 原不展示发源地，故无展示改动。
+ */
+function onOriginUpdated(r: SetTreeOriginResult) {
+  if (clanEntry.value) {
+    clanEntry.value = { ...clanEntry.value, origin: r.origin, origin_code: r.origin_code };
+  }
+}
 
 /** 管理权限判定（口径与普通家族树首页一致：chief_editor 全局 / 本树 tree_steward） */
 async function loadManageRights() {
@@ -241,22 +270,6 @@ async function loadManageRights() {
   } catch {
     canManageTree.value = false;
   }
-}
-
-/** 打开编辑弹窗（字段口径与普通家族树首页一致：名称/谱名/文献地址/祠堂名/发源地/简介） */
-function openEdit() {
-  const e: any = clanEntry.value || {};
-  editForm.value = {
-    display_title: e.display_title || info.value?.title || '',
-    genealogy_name: e.genealogy_name || info.value?.genealogy_name || '',
-    archive_url: e.archive_url || '',
-    hall_name: e.hall_name || '',
-    origin: e.origin || '',
-    origin_code: e.origin_code || '',
-    description: e.description || '',
-  };
-  editError.value = '';
-  showEdit.value = true;
 }
 
 /** 保存祖谱信息（复用现有 updateTreeMeta；成功后就地刷新祖谱信息） */

@@ -2450,3 +2450,619 @@ cd frontend && npm run build:mp-weixin                                      # �
 **（5）本批唯一仍成立的硬阻塞（不变）**：`cloudfunctions/deploy/compat-api/index.js` **未重打包** —— `998,338 B` / `mtime 2026-09-19 12:50` / `grep -c 'origin_code'` = **0** ⇒ **§24-1 的硬阻塞不变**（属部署动作，本节**只登记、不代做**）。
 
 > **边界**：本轮回写**只对 §24 追加**（§24-3 / §24-3-1R 共 5 处**行尾标注** + 本节**新增小节**）；**§1–§23 未改一行**；**`AGENTS.md` 未修改**（未获授权，见规格 §13-9）；**未改代码、未写真源、未重跑验证、未执行部署**。
+
+
+---
+
+## 25. 本批：人物地点属性（出生地 / 居住地）与家族树来源地镜像（**代码批次 + 纯数据批次**）
+
+> **权威规格** = **`docs/person-places.spec.md`**（**2026-09-20 成文 · 口径唯一真源**；契约冻结于 Zang **v2 · C1–C10**，逐条见该册 §0-2）。
+> 口径来源 = **Kevin 五问五答（2026-09-20 拍板）** + Zang 契约 v2（含 **`birth_place` 由字符串改对象**这一 **Kevin 明示的高风险项**）。
+> **本批性质** = **代码批次（云函数 + 前端）** **＋ 纯数据批次（`migrate-output/trees/*.json` 形状迁移 + tree-meta 镜像对齐）** —— 两类动作的云端步骤**不能互相替代**（同 §13 A / B 的分野）。
+> **相关册**：行政区划码表 / 展示串口径 = `docs/geo-origin.spec.md`（本批**复用**其 `origin_code` 体系）；tree-meta 字段口径 = `docs/data-model.md` §5.5 / §3。
+> **成文时点 = 2026-09-20（Jing）**；**本节只登记待办与判据，不代做任何部署 / 迁移动作**。
+
+### 25-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包 + 部署**（判据见 §25-1） | ⚠️ **本批代码面全部未落盘**（实测：`residence_places` 在源码 `index.js` / `lib/**` / 部署产物**三处均为 0 次**）⇒ 先由 Kong 落地，本批才具备可部署物 |
+| 2 | CloudBase 集合 | **无**（不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **有变更**：**①** 树 JSON 形状迁移（`birth_place` 字符串 → 对象；新增 `residence_places`）；**② ~~tree-meta 镜像对齐~~** → 🚫 **已作废（C8 作废 ⇒ 不存在自动同步 ⇒ 无「镜像对齐」这一步）**；tree-meta 的 `origin_code` / `origin` 语义**继续有效**（本批**只增不删**），其内容来源改为 **C8′ 人工指定** | 需 CB_ENV / CB_KEY；形状迁移**受 §25-3 第 0 条前置约束**（→ ⚠️ **状态更新**：**Kevin 已逐树点选完毕**，**仍待 Zang 下令 `--apply`**；并有一条 `li_26446_01` 冲突待澄清，见 §25-10(3)） |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**：人物档案新增**出生地（级联 + 备注）**与**居住地（多条 ≤ 9）**的展示与编辑 | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 25-1 云函数 `compat-api`（**必须重打包 + 部署**）
+
+**为什么需要**：C1–C10 全部落在云函数内 —— 读侧容错（C3）、读响应派生（C7）、计费字段面（C5）、始祖放行（C6）、镜像写时同步（C8）、第 10 条 400（C10）。**不重打包 ⇒ 云端仍把 `birth_place` 当字符串**：
+- 读侧：**对象会被当字符串透传**（`index.js:189` 现为 `place: person.birth_place || ''`）⇒ 前端拿到对象，**展示错乱**；
+- 写侧：新字段 `residence_places` 与地点编辑**静默丢弃或误判扣费**。
+
+**本批代码改动面（规格 §4 / §5 / §6 / §7 / §9；行号为 2026-09-20 只读实测）**：
+
+| # | 文件 | 实测锚点 | 改动 | 状态 |
+|---|---|---|---|---|
+| W1 | `index.js` | **`:189`**（`raw.profile.birth = { date, place }`） | 改为 **`{ date, place, place_code, place_note }`**（C7）；**归一函数**（C3） | ⚠️ 待 Kong |
+| W2 | `index.js` | `:2478` 起 `PUT /people/<handle>`；预检段 **`:2483-2486`** | 新增 **`residence_places` > 9 → 400**（C10，**扣费前**）；文案字面待回填（规格 §4-4） | ⚠️ 待 Kong |
+| W3 | `lib/economy-fee.js` | **`:129`** `hasPersonChanges` / **`:147`** `PERSON_VALUE_FIELDS` / **`:279`** 值级比对 / **`:325`** `isPersonUnchanged` | 纳入 **对象 `birth_place`** 与 **`residence_places`**（**数组逐项 + 长度**，C5） | ⚠️ 待 Kong |
+| W4 | `lib/founder-attach.js` | **`:194`** `founderLockMessage` / **`:203`** `assertFounderEditable` | **仅对 `birth_place` / `residence_places` 放行**；混合请求仍 403（C6） | ⚠️ 待 Kong |
+| W5 | `lib/tree-write.js` | **`updatePerson` `:155-221`** | **补写 `birth_place` / `residence_places` 落库**（现状该函数**只落姓名 / 性别 / 生卒 / external_* / 详情 attributes**，**无地点落点**——规格 §4-5 第一号落地项） | ⚠️ 待 Kong |
+| W6 | `lib/tree-write.js` + `lib/child-write.js` + 续编 | `tree-write.js:967`（`createTree`）/ `child-write.js:50` / `:346` / `tree-write.js:450`（`newChainPerson`） | 初始值改**对象 + `[]`**（C4 点名的 3 组）；⚠️ **实测 `birth_place: ''` 全量落点共 11 处**（清单规格 §4-2），**其余 8 处是否同批待 Zang / Kong 定** | ⚠️ 待 Kong |
+| W7 | **~~镜像回写（C8）~~** → **取代者 = C8′（人工指定）** | 落点**未定**（新增两条路由） | 🚫 **原 C8 已作废（2026-09-20，取代者 C8′）**；**不存在任何自动同步逻辑**。取代后的改动面 = **`POST /admin/set-tree-origin`**（`{tree_id, person_handle}`，权限同 `PUT /tree-meta`，返回 `{ ok, origin_code, origin, source }`）+ **`GET /tree/origin-candidates`**（始祖识别失败 → `founder:null, candidates:[]`） | 🚫 **作废** / ⚠️ **C8′ 待 Kong（未落盘）** |
+| W8 | 🆕 **C11（建树一致性）** | `POST /admin/create-tree` 落库处 | 建树时填写的发源地 ⇒ **同时写 tree-meta 与始祖节点 `birth_place.origin_code`（`note:''`）** | ⚠️ 待 Kong |
+| W9 | 🆕 **始祖认定（C8′ ④）** | 落点未定 | `founder_handle` **优先**；缺失 → **唯一非镜像根节点**（`String(external_mirror) !== 'true'` 且 `parent_family` 为空）；**0 个或多个 → 400**（⚠️ 实测 `qin_31206` / `liu_21016` 的 `founder_handle` 为**空串**，判据须「非空」） | ⚠️ 待 Kong |
+
+> **不需改（已核实）**：`docs/data-model.md` 的两处字段口径已由规格册登记（§3 person 字段 / §5.5 tree-meta 镜像行），**属文档面**，非云函数。
+> **不得另建第二套码表**（`AGENTS.md` §2.3）：展示串一律走既有 `resolveOrigin`（`lib/geo.js:98`）。
+
+```bash
+# ① 重打包（仓库根；产物 cloudfunctions/deploy/compat-api/index.js）
+#    命令与 §23 / §24 同一条（以仓库既有打包脚本为准，本册不新造）
+# ② 重打包判据（**候选串 · 待 Kong 落地后回填最终值**）
+grep -c 'residence_places' cloudfunctions/compat-api/index.js             # 源码侧；**当前实测 = 0**
+grep -c 'residence_places' cloudfunctions/deploy/compat-api/index.js      # 产物侧；**当前实测 = 0**，重打后期望 ≥ 1
+grep -c 'place_note'       cloudfunctions/deploy/compat-api/index.js      # 产物侧；**当前实测 = 0**，重打后期望 ≥ 1（C7 字段）
+#    ⚠️ 是否采用上述两条字面串为最终判据 ⇒ **判据待 Kong 落地后回填**（若实现取名不同，以 Kong 实现的实际字面为准）
+# ③ 旧产物必须被取代（沿用 §24 的判据风格）：若产物仍为 §24 登记的那一份，则本批与 §23 / §24 的口径同时落后
+ls -l cloudfunctions/deploy/compat-api/index.js    # §24 登记值 = 998,338 B / mtime 2026-09-19 12:50（grep -c 'origin_code' = 0）
+```
+
+- **判据当前实测（2026-09-20 · 只读）**：源码 `index.js` `grep -c 'residence_places'` = **0**；`lib/**` 合计 = **0**；产物 `cloudfunctions/deploy/compat-api/index.js` = **0**（且 `origin_code` 亦为 **0** ⇒ **§24 的未重打包阻塞仍未被解除**）。
+- ⇒ **本批的唯一硬阻塞 = 「Kong 落地面 + 重打包 + 部署」两道**（§25-7）。
+
+### 25-2 CloudBase 集合：**无**
+
+- 不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（保持 §11-2 的 **12 项**）。
+- 本批只改 **树 JSON 的两个既有 / 新增字段**（`birth_place` 形状、`residence_places` 新增）与 **tree-meta 两个既有字段的取值**（镜像），**不落任何新集合**。
+
+### 25-3 云端数据：**有变更**（**纯数据批次：树 JSON 形状迁移 + tree-meta 镜像对齐**）
+
+**0. 前置约束（硬 · 先于一切写入）**
+
+- **始祖清单待 Kevin 逐树点选**：契约 C9 明确「**未经 Kevin 点选不得写入**」；已认定仅 **4 棵**（`ji_23395_01` / `gu_39038_01` / `ji_23395` / `gu_39038`，逐棵核对见规格 §7-3），**待点选 13 棵**。
+- **不得自动认定**（禁 `--include-auto` 类自动落库行为；纪律同规格 §13-12-3 第 2 条）。
+- ⇒ **在 Kevin 回报清单前，本批的树 JSON 写入步骤不得执行**（读侧容错 C3 落地后可先部署云函数，**写入延后**）。
+
+**1. 为什么需要**
+
+- `birth_place` **字段形状变更**：存量 **17 处非空字符串**（实测；`ji_23395_01` 12 / `liu_21016_01` 2 / `shen_27784_01` 2 / `gu_39038_01` 1）在新口径下是**历史形态**，读侧必须容错（C3）；**若不做形状迁移**，这些文本**永远停在 legacy 档**，且**用户下次编辑时会被写对象覆盖 / 或读不到**（数据不可逆）。
+- **`residence_places` 是新字段**：现存出现次数 = **0**（源码 / lib / 产物全为 0）⇒ 无历史数据可搬，**只需保证新写入形态为 `[]`**（C2）。
+
+**2. 备份（**写前必做**）**
+
+```bash
+# 树 JSON 真源（本批新增备份对象）
+mkdir -p ~/jiazu-backups/2026-09-20-person-places/trees
+cp migrate-output/trees/*.json ~/jiazu-backups/2026-09-20-person-places/trees/
+# tree-meta（沿用既有惯例）
+cp config/tree-meta.json ~/jiazu-backups/2026-09-20-person-places/tree-meta.json
+# 打印写前 md5（逐棵 + tree-meta）
+for f in migrate-output/trees/*.json; do echo "$(md5 -q $f) $(wc -c < $f | tr -d ' ') $f"; done
+md5 -q config/tree-meta.json; wc -c config/tree-meta.json
+```
+
+- **写前基线已登记**：**17 棵全表 md5 + 字节** = `docs/person-places.spec.md` §10-3；`config/tree-meta.json` = **`5817e4bb7f9fd461c11803e0df78a48a`**（9,572 B / mtime 2026-09-20 10:59:23）。
+- ⚠️ **`migrate-output/**` 被 `.gitignore` 忽略**（`AGENTS.md` §7 已登记）⇒ **备份目录是唯一恢复途径**，`git` 帮不上。
+
+**3. 写入（脚本：**默认 dry-run → 副本演练 → `--apply`**，惯例如 `scripts/migrate-tree-origin.mjs`）**
+
+```bash
+# ① 副本演练（先跑，再写真源）
+COMPAT_OUT_DIR=/tmp/jiazu-copy node scripts/<本批迁移脚本>.mjs                 # dry-run
+COMPAT_OUT_DIR=/tmp/jiazu-copy node scripts/<本批迁移脚本>.mjs --apply         # 真写副本
+COMPAT_OUT_DIR=/tmp/jiazu-copy node scripts/<本批迁移脚本>.mjs --apply         # 复跑：必须无第二次变化（幂等判据）
+# ② 真源迁移（写前自动备份 + 打印前后 md5）
+node scripts/<本批迁移脚本>.mjs --apply
+# ③ 镜像对齐（可重跑同步脚本；Kevin 第 4 条要求）
+node scripts/<镜像同步脚本>.mjs            # dry-run
+node scripts/<镜像同步脚本>.mjs --apply    # ⚠️ 只写 tree-meta（镜像）；真源写入必须显式开关且默认关闭
+```
+
+> **脚本名 / 路径 = 未定**（由 Kong 落地时登记；**本册不预设文件名**，与 §24-4R「不预设路径」的既有做法一致）。**规格 §6-4 已登记脚本形态要求**（dry-run / 备份 / md5 / 幂等 / 副本钩子）。
+
+**4. 上传顺序（**硬 · 不可颠倒**）**
+
+| 序 | 动作 | 理由 |
+|---|---|---|
+| **①** | **云函数重打包 + 部署**（§25-1） | **必须先于数据上传**：旧的云端读侧把对象当字符串透传（`index.js:189`）⇒ **若先上传对象形态的树 JSON，线上读响应会立刻错乱**（无容错、无降级） |
+| **②** | 部署后**冒烟第 1 条**（§25-5 第 1 条：读一棵**未迁移**树，确认字符串形态不崩 / 不丢） | 确认 C3 容错在**云端**生效（而不是只在本地测试里生效） |
+| **③** | **上传树 JSON**（17 棵逐棵覆盖云存储 `trees/<tree_id>.json`） | 顺序在云函数之后、tree-meta 之前；**同一棵树不要分两次上传** |
+| **④** | 上传 **tree-meta**（含 `storage_files` 回写） | tree-meta 的 `storage_files` fileID 由上传脚本回写（`scripts/upload-migrated-to-cloudbase.mjs:101-104`）⇒ **tree-meta 必须最后上传**，否则 fileID 与实际文件不同步 |
+| **⑤** | 上传后**冒烟第 2–5 条**（§25-5） | 读响应 / 编辑 / 镜像 / 上限逐条验 |
+
+```bash
+# ③④ 一条命令覆盖（脚本按 report 逐树上传到 trees/<tree_id>.json，并回写 tree-meta + storage_files）
+CB_ENV=liwu-d8gek6jjdab1d087c CB_KEY=<云开发 API Key> \
+  node scripts/upload-migrated-to-cloudbase.mjs
+```
+
+- **密钥由用户提供，不代取、不打印**（沿用 §3 / §12-1 既定口径）。
+
+**5. 本地侧判据**
+
+```bash
+# 树 JSON 形状覆盖率（期望 = 所有应迁移节点均为对象）
+python3 -c "
+import json,glob
+ok=bad=0
+for p in glob.glob('migrate-output/trees/*.json'):
+    d=json.load(open(p))['people']
+    for h,v in d.items():
+        b=v.get('birth_place')
+        if isinstance(b,dict): ok+=1
+        elif b is None: pass
+        else: bad+=1
+print('object=',ok,'string/legacy=',bad)"
+# 幂等复跑判据：同副本再 --apply 一次，md5 不变
+md5 -q config/tree-meta.json        # 与 §25-3 第 2 节的写前值比对（本册不预填「写入后」值）
+node scripts/gen-geo-divisions.mjs --check   # 期望 exit 0（确认未误伤 geo 产物链路）
+```
+
+### 25-4 前端产物（**必须重打包：H5 + 小程序**）
+
+**为什么需要**：C7 新增 `place_code` / `place_note` 与顶层 `residence_places`，而**前端现无任何消费者**（实测：`frontend/src` 内 `profile.birth.place` **零消费点**；`person-archive.vue:1870` 只读 `birth.date`）⇒ 不重打包 ⇒ **用户看不到出生地 / 居住地，也填不了**。
+
+| 区域 | 文件（规格 §8-1 实测锚点） | 改动 |
+|---|---|---|
+| 人物档案 · **出生地展示** | `frontend/src/components/person-archive/person-archive.vue`（**新增**；现状无落点） | 显示 `place`（行政区划展示串）+ `place_note`（**文案「备注」**）两段 |
+| 人物档案 · **出生地编辑** | 同上；`editForm`（`:1532` 起）/ 保存 `:1999` | 新增**级联选择（复用 `GeoCascader`，只提交码）** + **备注输入**；提交字段名 = `birth_place`（**对象**） |
+| 人物档案 · **居住地（多条 ≤ 9）** | 同上（**新增**） | 展示按数组顺序；编辑支持增删（**前端须在上限处禁用第 10 条按钮**，但**最终拦截在后端 400**，C10） |
+| **展示（不改）** | `pages/index/index.vue:96`、`pages/hall/index.vue:12`、`pages/family/index.vue:24` | **继续读 `origin`（镜像）**；「待完善」兜底字面**逐字保留**（C8 连续性要求） |
+| 类型 | `business/api.ts:185` / `:192`（`birth?: { date?, place? }`）、`types.ts:68` | 新增 `place_code` / `place_note` + 顶层 `residence_places` 类型；**既有 `place` 保留** |
+| 脱敏 | `business/privacy.ts:21-22` / `:58` | **C7：裁剪口径不变**；`residence_places` 是否纳入脱敏 = **未决**（规格 §11 第 6 条） |
+
+```bash
+cd frontend && VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5   # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+
+cd frontend && npm run build:mp-weixin                                      # 小程序产物（同批上传）
+```
+
+### 25-5 部署后冒烟验证（按序做）
+
+| # | 验证 | 期望 | 依据 |
+|---|---|---|---|
+| 1 | 读一棵**未迁移**树（`birth_place` 仍为字符串，如 `ji_23395_01` 的 11 个非空节点） | 读响应正常，`place_code = ''`、**`place_note = 原文本`** | C3 / C7（**不崩不丢**） |
+| 2 | 读一棵**已迁移**树的始祖节点 | `profile.birth.place` = 码反查展示串；`place_code` = 码；`place_note` = `''` | C7 / C9 |
+| 3 | 改始祖**出生地**（仅地点） | 200 扣 1 片；**同一响应周期内** tree-meta 该树 `origin_code` / `origin` 已变；家族页 hero 立即显示新发源地 | C6 / C8 |
+| 4 | **混合请求**（同请求改姓名 + 出生地） | **403**，且**不扣费** | C6 |
+| 5 | `residence_places` 提交 **10 条** | **400 拒绝**（非前端拦截）、**不扣费** | C10 |
+| 6 | 原样回传（打开弹窗直接保存） | `200 + unchanged:true + fee.pieces:0` | C5（对照 §24-5 既有冒烟口径） |
+| 7 | 镜像一致性抽样 | tree-meta `origin_code` == 始祖 `birth_place.origin_code`（逐树） | C8 / §6-4 脚本 |
+
+### 25-6 本批**不需要**上云的东西
+
+- 测试文件（`lib/*.test.js`）：**仅本地**（`npm test` 跑本地副本，与云端无关）。
+- 迁移 / 镜像脚本（`scripts/*.mjs`）：**仅本地执行**（不随云函数包发布）。
+- 行政区划码表：**不重生成**（本批不改 `config/geo-divisions.json`；`gen-geo-divisions.mjs --check` 只作**未误伤**核对）。
+- `config/**` / `migrate-output/**`：**真源，不上传**（云端数据由 §25-3 第 4 节的上传步骤单独更新）。
+
+### 25-7 阻塞点
+
+| # | 阻塞 | 现状（实测 2026-09-20） | 需要谁 |
+|---|---|---|---|
+| 1 | **Kong 代码面全部未落盘** | `residence_places` 源码 = **0** 次、`lib/**` = **0** 次、产物 = **0** 次；C1–C10 均无实现 | **Kong** |
+| 2 | **云函数未重打包** | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B / mtime 2026-09-19 12:50 / `grep -c 'origin_code'` = 0**（**§24 的阻塞延续未解**） | **部署动作（需授权）** |
+| 3 | **始祖清单待 Kevin 点选** | 已认定 **4** 棵 / 待点选 **13** 棵（规格 §7-3；含 `qin_31206` / `liu_21016` 的**空串陷阱**） | **Kevin** |
+| 4 | **C7 的 `if (person.birth_date)` 门控未定** | `index.js:189` 现状；契约未提 | **Zang**（规格 §11 第 5 条） |
+| 5 | **`updatePerson` 地点落库（W5）属契约必要推论** | 实测该函数无地点落点；契约未点名 | **Zang**（规格 §11 第 11 条） |
+| 6 | **写入后 md5 / 新测试基线未实测** | §25-3 第 5 节 / 规格 §9-1 均留「待填」 | **执行者回填** |
+
+### 25-8 跨册登记（**本节与规格册的对应**）
+
+| 本册位置 | 规格位置 |
+|---|---|
+| §25-1（代码面 + 判据） | `docs/person-places.spec.md` §4-1～§4-5 / §5 / §6-2 |
+| §25-3（纯数据批次 + 上传顺序） | 同上 §7（迁移）/ §6-4（镜像脚本）/ §10（备份 + md5 + 回滚） |
+| §25-4（前端） | 同上 §8-1（D1–D9） |
+| §25-5（冒烟） | 同上 §9（测试口径）+ §0-2（C1–C10） |
+| 码表 / 展示串 | `docs/geo-origin.spec.md` §13-13（跨册登记）+ §7-1 / §7-2 |
+| tree-meta 字段口径 | `docs/data-model.md` §5.5（镜像行）、§3（person 字段） |
+
+> **本批与 §24 的关系（硬）**：**§24 的云端动作（tree-meta `origin_code` 上传 / 前端重打 / 云函数重打）本批不替代** —— 若 §24 尚未部署，本批部署时**一并包含** §24 的代码面（同一份云函数产物）；**但不把 §24 的未完成项记为本批已完成**。
+
+### 25-9 边界
+
+> **本节只登记**：**未改任何代码**、**未写真源**（`config/**` / `migrate-output/**` 零写入）、**未改 `AGENTS.md`**（未获授权，口径同规格 §13-9）、**未执行任何部署 / 打包 / 迁移动作**、**未重跑验证**。
+> 本节的判据 / 值均为 **2026-09-20 只读实测**，**未实测值一律留「待填」或标注「待 Kong 落地后回填」**。
+> 本节的**唯一权威规格 = `docs/person-places.spec.md`**；两册若有冲突，**以规格册为准**。
+
+
+---
+
+### 25-10 追补：**C8 作废 → C8′/C11 口径变更 + Kong 并发落地实测**（2026-09-20 11:21 CST · **本批的动作面按本节更新**）
+
+> **性质**：本节为**只读实测追加** —— **未改代码、未写真源、未改 `AGENTS.md`、未执行部署 / 打包 / 迁移**。
+> §25-0～§25-9 的历史行**原文保留**；本节**取代**其中已过期的「动作面 / 阻塞 / 判据」读数。
+
+**（1）口径变更（Zang · 2026-09-20 即时生效 · 逐字）**
+
+1. 🚫 **原 C8（写时同步镜像）整体作废** —— **不存在任何「改始祖出生地就自动回写 tree-meta」的逻辑**。⇒ **§25-0 第 3 行「② tree-meta 镜像对齐」、§25-1 的 W7、§25-3 第 3 节「③ 镜像对齐（可重跑同步脚本）」、§25-5 冒烟第 3 条第后半段、§25-7「镜像」相关项 一并作废**（规格册 §6-1）。
+2. **取代者 C8′（人工指定）**：`POST /admin/set-tree-origin`（入参 `{tree_id, person_handle}`；权限 = 与 `PUT /tree-meta` **同档 chief_editor**；返回 `{ ok, origin_code, origin, source: {handle, gramps_id, name} }`）+ `GET /tree/origin-candidates`（返回 `{ tree_id, founder, current, candidates[] }`；**始祖识别失败 → `founder:null, candidates:[]`，不报 400**）；**可选范围 = 始祖 + 其下 1–2 代（共三代）**，**被指定节点 `birth_place.origin_code` 必须非空**；**始祖认定 = `founder_handle` 优先 → 否则唯一非镜像根节点**（**0 个或多个 → 400**）。
+3. 🆕 **C11**：`POST /admin/create-tree` 的发源地 ⇒ **同时写 tree-meta 与始祖 `birth_place.origin_code`（`note:''`）**（保证「树上发源地 = 某节点出生地」恒成立）。
+4. ⇒ **本批云函数改动面 = W1–W6 + W8（C11）+ W9（始祖认定）+ C8′ 两条路由；W7 作废**（§25-1 表已行内标注）。
+
+**（2）Kong 并发落地实测（2026-09-20 11:21 CST · 只读；**同一会话两次 `grep` 之间 `index.js` 已变化**）**
+
+| 项 | 实测 |
+|---|---|
+| 🆕 新增模块 | **`cloudfunctions/compat-api/lib/person-places.js`（118 行）**：`MAX_RESIDENCE_PLACES=9` / `RESIDENCE_LIMIT_MESSAGE='居住地最多 9 条'` / `PERSON_PLACE_FIELDS` / `normalizeBirthPlace` / `normalizeResidencePlaces` / `assertResidencePlacesLimit` / `hasPlaceContent` / `sameBirthPlace` / `sameResidencePlaces` / `placeViewOf` / `residenceViewOf` / `treeOriginPatchOf`（**原 C8 ⇒ 已作废**）/ `isPlaceFieldsOnly` |
+| ✅ W1 读响应 | `index.js:197-198` 顶层 `residence_places`；`:201-210` `profile.birth{date,place,place_code,place_note}`；**门控 `person.birth_date \|\| hasPlaceContent(...)`** |
+| ✅ W2 上限 400 | `index.js:2528-2532`（**扣费前**）；文案 = **`居住地最多 9 条`** |
+| ✅ W3 计费 | `economy-fee.js:144/145`（**键显式提供判**）/ `:157`（`PERSON_VALUE_FIELDS` 含两项）/ `:291` / `:293-294` |
+| ✅ W4 C6 | `founder-attach.js:218` `if (msg && !isPlaceFieldsOnly(body))`（调用点 `index.js:2534` 传第 5 参） |
+| ✅ W5 写路径 | `tree-write.js:179`（上限）/ `:198-199`（落库） |
+| ✅ W6 初始值 | `tree-write.js:261-262 / 462-463 / 980-981 / 1198-1199` + `child-write.js:50 / 347` = **6 / 11 处已改**；**仍为字符串 5 处**：`founder-attach.js:288` / `marriage.js:147` / `branch-clan-ops.js:169` / `clan.js:214` / `clan.js:641` |
+| 🚫 W7 | 已按**原 C8** 落盘：`index.js:274 mirrorFounderBirthPlace()` + `lib/person-places.js:102 treeOriginPatchOf()` ⇒ **按 C8′ 失去契约依据**（**处置未定**：删除 / 保留不用） |
+| ⚠️ W8 / W9 / C8′ 路由 | **未落盘**：`grep -rn 'set-tree-origin\|origin-candidates'` ⇒ **全仓 0 命中** |
+| ⚠️ 前端 | **已落**：新增 `frontend/src/business/place.ts`（104 行）+ `api.ts` / `types.ts` / `business/index.ts` / `person-archive.vue`（**+124 / −7**）；**发源地指定 UI（D10）未落**（依赖未落盘接口） |
+| ❌ **部署产物** | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B / mtime 2026-09-19 12:50**；`grep -c 'residence_places'` = **0**、`grep -c 'place_note'` = **0** ⇒ **未重打包** |
+| ❌ **测试** | `scripts.test` 仍 **26** 项，**无 `person-places` 测试文件** ⇒ **「未注册 = 假绿」（本批当前状态即假绿）** |
+
+**（3）C9 迁移清单（Kevin 已点选 · **仍待 Zang 下令 `--apply`**）**
+
+- **逐字清单 + `li_26446_01` 冲突（Kevin 归入「跳过」但实测 `origin_code = 230305` 非空）= `docs/person-places.spec.md` §7-2**（本册不复制该表）。 → 🚫（**已取代**：该冲突已由 Zang 裁定闭合，清单刷新为 **13 待写 / 4 跳过**；取代者 **§25-11(3)**）
+- **跳过档**：`qin_31206_01`（**空树，实测 `people=0`**）+ 4 棵（`liu_21016` / `rong_23481_01` / `li_26446_03` / **`li_26446_01`（⚠️ 冲突）**）。 → 🚫（**已取代**：跳过档 = `qin_31206_01`（空树）/ `liu_21016` / `rong_23481_01` / `li_26446_03`，**共 4 棵**；`li_26446_01` **移入待写**；取代者 **§25-11(3)**）
+- ⚠️ **`--apply` 前置**：① 澄清 `li_26446_01`；② 备份 + md5（§25-3 第 2 节）；③ **副本演练**；④ **人类一句明确同意**（规格册 §13-12-3 第 2 条纪律）。 → 🔄（**① 已闭合**（Zang 已裁定 `li_26446_01` **应迁移**）；②③④ 仍为前置，并补 **默认 dry-run / `--apply` 前备份 / 幂等**；取代者 **§25-11(3)**）
+
+**（4）本批动作面（**取代 §25-0 总览**）**
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **重打包 + 部署**（判据见 §25-1；**代码面待补 W8 / W9 / C8′ 路由 + W7 处置**） | **Kong 补落 + 部署授权** |
+| 2 | CloudBase 集合 | **无** | — |
+| 3 | 云端数据 | 树 JSON 形状迁移（**待 Zang 下令**）；tree-meta **无「镜像对齐」动作**（C8 作废） | Kevin 已点选 ⇒ **等 Zang 一句** |
+| 4 | 前端 H5 / 小程序 | **重打 + hosting**：人物档案出生地 / 居住地（已落地前端代码）；**发源地指定 UI 待接口落盘后另批** | hosting 目标 + 云函数域名 |
+
+**（5）判据串更新（**候选 · 待 Kong 落地后回填最终值**）** → 🔄（**实测双栏已回填 = §25-11(2)**；**最终字面仍待 Kong 回填**）
+
+```bash
+# 源码侧（当前实测）
+grep -c 'residence_places' cloudfunctions/compat-api/index.js   # = 2（已接线）
+grep -c 'place_note'       cloudfunctions/compat-api/index.js   # = 3（已接线）
+# 产物侧（**当前实测 = 0 / 0 ⇒ 未重打包**）
+grep -c 'residence_places' cloudfunctions/deploy/compat-api/index.js   # 期望 ≥ 1
+grep -c 'place_note'       cloudfunctions/deploy/compat-api/index.js   # 期望 ≥ 1
+# C8′ / C11 落盘判据（Kong 落地后才有意义；当前 = 0）
+grep -c 'set-tree-origin'  cloudfunctions/compat-api/index.js   # 期望 ≥ 1
+grep -c 'origin-candidates' cloudfunctions/compat-api/index.js  # 期望 ≥ 1
+# 已作废的 C8 残留（C8′ 下的期望 = 0，**处置待定**）
+grep -c 'mirrorFounderBirthPlace' cloudfunctions/compat-api/index.js
+```
+
+**（6）冒烟表的变更（取代 §25-5 第 3 条第后半段）**
+
+| # | 验证 | 期望 | 依据 |
+|---|---|---|---|
+| 3′ | 改始祖**出生地**（仅地点） | 200 扣 1 片；**tree-meta 的 `origin_code` / `origin` 不变**（**不得有任何自动回写**） | **C8′ ①** |
+| 3″ | 调 `POST /admin/set-tree-origin`（指定某候选节点） | 200 返回 `{ ok, origin_code, origin, source }`；tree-meta 该树随之更新；家族页 hero / 首页卡片立即同步 | **C8′**（**属新增冒烟项**） |
+| 3‴ | 调 `GET /tree/origin-candidates`（始祖识别失败的树） | `founder:null, candidates:[]`，**HTTP 不是 400** | **C8′ ⑤** |
+| 3⁗ | 新建树（`POST /admin/create-tree` 带 `origin_code`） | tree-meta 写入 **且** 始祖节点 `birth_place.origin_code` = 同码、`note:''` | **C11** |
+
+**（7）跨册（本节新增登记）**
+
+| 项 | 位置 |
+|---|---|
+| C8′ / C11 逐字口径 + 落地实测 | `docs/person-places.spec.md` §0-2 / §6 / §12 |
+| geo 侧接口变更登记 | `docs/geo-origin.spec.md` **§13-13-6** |
+| tree-meta 字段口径（人工指定） | `docs/data-model.md` **§5.5**（「发源地 ＝ 人工指定」行） |
+
+> **本节边界**：只读追加 —— **未改代码、未写真源、未改 `AGENTS.md`、未执行任何部署 / 打包 / 迁移**；§25-0～§25-9 历史行原文保留（除已行内标注的 W7 / 第 3 行）。
+
+---
+
+### 25-11 追补二：**真源读数刷新（8 / 17）+ R1 / R2 裁定 + 逐字文案 + 13 / 4 迁移清单 + 四条追认 + 懒转换口径**（2026-09-20 · **本批动作面按本节更新**）
+
+> **性质**：只读实测 + 逐字照登 —— **未改代码、未写真源、未改 `AGENTS.md`、未执行部署 / 打包 / 迁移**。
+> §25-0～§25-10 历史行**原文保留**；被本节取代的行**已在行尾标注**（不删不改）。
+> **时点**：真源 mtime 仍为 **2026-09-20 10:59:23**（**Kevin 10:59 写入后未再变动**）；**本批仍未重打包、仍未部署、测试仍未注册**。
+
+**（1）真源读数刷新（新真值 = 本行）**
+
+| 项 | 复核实测 | 判定 |
+|---|---|---|
+| `config/tree-meta.json` | md5 **`5817e4bb7f9fd461c11803e0df78a48a`** / **9,572 B** / mtime **2026-09-20 10:59:23** | ✅ 与 §24-13 / §25-3 台账同值（**未变**） |
+| `origin_code` 非空 | **8 / 17**（新增 `li_26446_01` = **`230305`**，`origin` = `黑龙江省鸡西市梨树区`） | ✅ **取代 §24-13(2) 的「7 / 17」**；**写入主体 = Kevin 亲手写入** |
+| 17 棵树 JSON md5 | **与规格册 §10-3 全表 17/17 逐条一致** | 存量树 JSON **零写入**（基线仍有效） |
+| 部署产物 | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B** / mtime **2026-09-19 12:50** / md5 **`d61a8aebfb3f3095baae4e1e731fd675`** | ❌ **未重打包**（§24 / §25 的硬阻塞延续） **（§26-1 末次复核：同值 · 仍未重打包；产物侧 8 判据串全 0）** |
+
+**（2）重打包判据串（**实测双栏** · 加粗 = 实测值；⚠️ 最终字面**仍待 Kong 回填**）**
+
+```bash
+cd /Users/kevin/bistro/jiazu
+# 源码侧（**实测**）
+grep -c 'residence_places'  cloudfunctions/compat-api/index.js   # = 3
+grep -c 'place_note'        cloudfunctions/compat-api/index.js   # = 3
+grep -c 'set-tree-origin'   cloudfunctions/compat-api/index.js   # = 1（C8′ 路由已落盘）
+grep -c 'origin-candidates' cloudfunctions/compat-api/index.js   # = 2（C8′ 路由已落盘）
+# 产物侧（**期望 ≥ 1；实测当前 = 0 / 0 / 0 / 0 ⇒ 未重打包**）
+grep -c 'residence_places'  cloudfunctions/deploy/compat-api/index.js
+grep -c 'place_note'        cloudfunctions/deploy/compat-api/index.js
+grep -c 'set-tree-origin'   cloudfunctions/deploy/compat-api/index.js
+grep -c 'origin-candidates' cloudfunctions/deploy/compat-api/index.js
+# 新增闸门（R1）落盘判据（源码侧实测 = 1 / 1；产物侧期望 ≥ 1）
+grep -c 'unknownOriginCodeMessage' cloudfunctions/compat-api/lib/person-places.js
+grep -c 'assertKnownOriginCodes'   cloudfunctions/compat-api/index.js
+```
+⚠️ **以上 4 串（源码 / 产物）为待回填候选**；**最终判据串以 Kong 实现的实际字面为准**（未回填前不视为定稿）。
+
+**（3）C9 迁移清单刷新：**13 待写 / 4 跳过**（按 10:59:23 真源重算 · **Zang 已核准** · 取代 §25-10(3) 与规格册 §7-2）
+
+- **待写 13（`tree_id` → 始祖）**：`gu_39038_01`→顾清学 · `ji_23395_01`→季花 · 祖谱 `ji_23395`→季花 · 祖谱 `gu_39038`→顾清学（**四棵用已登 `founder_handle`**）；`liu_21016_01`→刘芳池 I000258 · `shen_27784_01`→沈克强 I000277 · `heng_24658_01`→恒未知 I000363 · `ji_32426_01`→纪未知 I000377 · `long_40857_01`→龙未知 I000362 · `li_26446_02`→李未知 I000373 · **`li_26446_01`→李宝华**（Kevin 10:59 新填 `230305` 后，按「**唯一非镜像根节点**」判据认定；实测 `nonMirrorRoots` = 1） · 祖谱 `qin_31206`→姬搢 I000289 · 世本 `zhonghua`→**风华胥 I0104**。
+- **跳过 4**：`qin_31206_01`（**空树 0 人** ⇒ 无节点可写，与 tree-meta 是否有码无关）、`liu_21016`、`rong_23481_01`、`li_26446_03`（**`origin` 为空**）。
+- **写入规则**：有码 → `{origin_code: 码, note: ''}`；**无码且 `origin` 非空** → `{origin_code: '', note: <`origin` 原文本>}`；**两者均空 → 不动**。
+- **执行纪律**：**默认 dry-run**；**`--apply` 前先备份**；**幂等**。
+- **始祖认定依据**：`founder_handle` **优先**（非空判定，注意空串陷阱）→ 否则**唯一非镜像根节点**（`external_mirror !== 'true'` 且 `parent_family` 为空）；**0 个或多个 → 400**。
+- ⚠️ **`--apply` 前置**：① ✅ 已闭合（`li_26446_01` 裁定完毕）；② 备份 + md5（§25-3 第 2 节）；③ **副本演练**；④ **人类一句明确同意**（规格册 §13-12-3 第 2 条）。
+- **逐字全表 + 复核命令 = `docs/person-places.spec.md` §14-2**（本册不复制整表）。
+
+**（4）R1 / R2（Zang 新裁定 · 落地状态实测）**
+
+| 裁定 | 逐字口径 | 落地状态（实测） |
+|---|---|---|
+| **R1** | 人物写路径与 `set-tree-origin` 对**非空 `origin_code` 必须校验已知码**；未知码 → **400**，文案逐字 `出生地行政区划代码无效：<码>`；**`residence_places` 每条同判** | ✅ **已落盘**：`lib/person-places.js:113-115`（文案）/ `:126-144`（`assertKnownOriginCodes`）；人物写路径 `index.js:2558-2562`（**先于 C6 放行与扣费**）；`set-tree-origin` ④′ `index.js:526-528`。⚠️ **测试覆盖 = 0** |
+| **R2** | 候选接口**全列**（含无码节点，`birth_place.place == ''` 且 `place_code == ''`），由**前端置灰**；事后 400 由 `set-tree-origin` 负责 | ✅ **接口已落盘**：`index.js:2631-2658`（**不做 `place_code` 过滤**，仅按节点可见性过滤；始祖识别失败 → `founder:null` / `candidates:[]`，**不是 400**）；每项带 `birth_place` + `is_current`。⚠️ **前端置灰 UI 当时未落**（0 命中）→ **同日 11:29 后复核已落盘并闭合**：`origin-picker.vue`（9,118 B / mtime 2026-09-20 11:29:19）判据 = `birth_place.place_code`（`:40 / :50 / :53 / :149-151`）；见 **§25-11(10)** |
+
+**（5）逐字文案（部署后冒烟断言用 · 逐字照登）**
+
+| 场景 | HTTP | 逐字文案 | 锚点 |
+|---|---|---|---|
+| 居住地上限 | 400 | `居住地最多 9 条` | `lib/person-places.js:23` |
+| 无效请求（**文案已扩**） | 400 | `请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号 / 出生地 / 居住地）` | `index.js:2566` |
+| R1 未知码 | 400 | `出生地行政区划代码无效：<码>` | `lib/person-places.js:113-115` |
+| `set-tree-origin` 无此树 | 404 | `未找到 tree: <tree_id>` | `index.js:512` |
+| `set-tree-origin` 树 JSON 缺失 | 404 | `树不存在: <tree_id>` | `index.js:514` |
+| `set-tree-origin` 节点不属于本树 | 400 | `该节点不属于本树` | `index.js:516` |
+| 始祖无法认定（0 根） | 400 | `本树无法认定始祖：未登记始祖，且树内没有非镜像根节点` | `lib/founder-attach.js:191` |
+| 始祖无法认定（多根） | 400 | `本树无法认定始祖：未登记始祖，且非镜像根节点有 N 个` | `lib/founder-attach.js:192` |
+| 节点不在始祖三代内 | 400 | `该节点不在本树始祖三代范围内（仅始祖及其下两代可作为发源地）` | `index.js:520` |
+| 节点出生地无码 | 400 | `该节点未填写出生地行政区划代码` | `index.js:522` |
+| 未登录 / 过期 | 401 | `未登录或登录已过期` | `index.js:504` |
+| 权限不足 | 403 | `需要总编辑权限` | `index.js:506` |
+
+- ⚠️ **两串并存（有意为之 · 不得统一）**：`PUT /tree-meta` / `lib/tree-write.js:964` / `lib/clan.js:599` 用**「发源地」**串（`发源地行政区划代码无效：<码>`）；**R1 与 `set-tree-origin` 用「出生地」串**。
+
+**（6）Zang 追认四条口径（定稿）+ `birth_place` 懒转换口径**
+
+1. `residence_places` **缺失 / 非数组** ⇒ 读侧按 **`[]`** 兜底（C3 的延伸；`lib/person-places.js:44-47`）。
+2. C6 的 place-only 放行**同时作用于路由层与写路径内层镜像锁**（**同一判据**，避免「路由放行、写路径 403」的洞）：两处同用 `isPlaceFieldsOnly(body)`（`lib/founder-attach.js:275` 路由层 / `lib/tree-write.js:178` 内层镜像锁；判据本体 `lib/person-places.js:150` **只一份**）。
+3. `profile.birth` 输出条件由「有生年」**放宽为「有生年 或 有出生地内容」**（`index.js:201-210`；否则只填出生地、生年不详的节点**存了读不回来**，前端保存时会把出生地写空）。
+4. 前端**空条目（无码也无备注）一律丢弃且不计入 9 条上限**；**服务端裁剪口径不变**；**前端不额外做在世脱敏**。（提交装配 `person-archive.vue:2070` 用 `prunePlaces`；⚠️ **添加按钮门控按原始行数计**（`person-archive.vue:2005`，未先 prune）⇒ 口径 4 的 UI 门控字面**尚未完全对齐**，**不影响落库结果**，本册只登记。）
+5. **历史 `birth_place` 字符串 = 不做强制形状迁移**：两段口径 = **读侧归一**（字符串 → `{origin_code:'', note:<原串>}`）+ **保存时懒转成对象**；迁移脚本提供**默认关闭**的 `--normalize-birthplace-shape` 开关。**实测存量 = 17 处非空字符串**（`ji_23395_01` 12 / `liu_21016_01` 2 / `shen_27784_01` 2 / `gu_39038_01` 1；去重后 6 个不同串）。⚠️ **该开关未落盘**（全仓 `0` 命中）。
+
+**（7）本批动作面（取代 §25-10(4)）** ⇒ ✅ **（2026-09-20 §26 末次追补：动作面新增必登项 —— 「12 棵树 JSON 重传」+ 前端重打；以 §26-0 为准）**
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **重打包 + 部署**（判据见 §25-11(2)） | **Kong 回填判据串 + 补测试注册 + 部署授权** |
+| 2 | CloudBase 集合 | **无** | — |
+| 3 | 云端数据 | 树 JSON `birth_place` 迁移（**13 待写 / 4 跳过**，**待 Zang 下令 `--apply`**）；tree-meta **无「镜像对齐」动作**（C8 作废） | 备份 / 演练 / 一句同意（① 已闭合） ⇒ ✅ **（§26-2 追补：必登项 = 重跑 `node scripts/upload-migrated-to-cloudbase.mjs` 重传 **12 棵树 JSON**；12 棵 `tree_id` 点名见 §26-2）** |
+| 4 | 前端 H5 / 小程序 | **重打 + hosting**：人物档案出生地 / 居住地已落地；**发源地指定 UI（含 R2 置灰）已于同日 11:29 落盘**（§25-11(10)）⇒ **本批前端面已闭合，可同批重打** | hosting 目标 + 云函数域名 |
+
+**（8）冒烟表追补（追加于 §25-10(6)）**
+
+| # | 验证 | 期望 | 依据 |
+|---|---|---|---|
+| 5 | `PUT /people/<h>` 带**未知** `birth_place.origin_code` | **400** + `出生地行政区划代码无效：<码>`，**不扣费** | **R1** |
+| 6 | `PUT /people/<h>` 带未知码的**某一条** `residence_places` | **400** 同上（**逐条同判**） | **R1** |
+| 7 | `PUT /people/<h>` 空码（未结构化） | **放行**（空码 = 合法「未结构化」） | **R1** |
+| 8 | `GET /tree/origin-candidates` 于**含无码节点**的树 | **全列**（无码节点也在列，`birth_place.place_code == ''`），前端置灰；**接口不报 400** | **R2** |
+| 9 | `POST /admin/set-tree-origin` 指定**无码节点** | **400** `该节点未填写出生地行政区划代码` | C8′ ④ |
+| 10 | 只填出生地、**生年不详**的节点存后重读 | `profile.birth` **存在**（`place` / `place_code` / `place_note` 齐全） | 追认 3 |
+
+**（9）跨册登记**
+
+| 项 | 位置 |
+|---|---|
+| §14 全节（真源复核 / 13-4 清单 / 逐字文案 / R1 R2 / 四条追认 / 懒转换 / 落地复核） | `docs/person-places.spec.md` **§14**（§14-1 ～ §14-7） |
+| `origin_code` 非空 = 8 / 17 的权威行 | `docs/geo-origin.spec.md` **§13-13-2 / §13-13-3** |
+| 本册历史 | §25-3 / §25-10（行尾已标注取代者） |
+
+**（10）同日稍后复核：C8′ 前端 UI 落盘（R2 前端侧闭合）**
+
+> §25-11(4) R2 行的「前端置灰 UI 未落（0 命中）」为该轮**较早时点**读数；复核时该文件**已在两轮 `git status` 之间落盘**。
+
+| 项 | 实测 |
+|---|---|
+| 新组件 | **`frontend/src/components/origin-picker/origin-picker.vue`** —— **9,118 B** / mtime **2026-09-20 11:29:19** |
+| 接口接线 | `business/api.ts:1931`（`GET /tree/origin-candidates`）/ `:1954`（`POST /admin/set-tree-origin`）；类型 `business/types.ts:280-314` |
+| 入口挂载 | `frontend/src/pages/hall/index.vue`（`git diff --stat` = **+19 / −5**） |
+| **R2「由前端置灰」** | **已实现**：判据 = `birth_place.place_code` 非空 —— `origin-picker.vue:40`（`op-row-off`）/ `:50`（`op-place-off`）/ `:53`（无码行提示）/ `:127`（空形状兜底）/ **`:149-151`（点选拦截）**，与后端 400 同判据 |
+| 部署产物 | **仍未重打包**（998,338 B / mtime 2026-09-19 12:50 / md5 `d61a8aebfb3f3095baae4e1e731fd675`；4 判据串仍 0） |
+| 测试注册 | 仍 **26** 项（**未新增**）⇒ 新组件与 R1 仍无测试覆盖 |
+
+```bash
+cd /Users/kevin/bistro/jiazu
+grep -rn 'origin-candidates\|set-tree-origin' frontend/src
+ls -l frontend/src/components/origin-picker/
+git diff --stat frontend/src/pages/hall/index.vue
+```
+⇒ **（8）冒烟第 8 条（候选全列 + 前端置灰）前后端两侧均已就绪**，可同批重打前端验证。
+
+> **本节边界**：只读追加 —— **未改代码、未写真源**（`config/tree-meta.json` 前后 md5 均 `5817e4bb7f9fd461c11803e0df78a48a`）、**未改 `AGENTS.md`**（前后 md5 均 `e4c089818fbf7a3a7218e567e7b409ee`）、**未执行任何部署 / 打包 / 迁移**；§25-0～§25-10 历史行原文保留。
+
+
+---
+
+## 26. 末次部署登记：**人物地点属性（出生地 / 居住地）+ 家族树发源地人工指定**（纯数据批次 + 代码批次 · **必登三项：12 棵树 JSON 重传 / 云函数重打包 / 前端重打**）（Jing 制度员 · 2026-09-20 12:32:33 CST · **只追加**）
+
+> **性质**：本节为**部署台账登记**（**只追加**）—— **未改代码、未写真源、未改 `AGENTS.md`、未执行任何部署 / 打包 / 重传 / 迁移**。
+> §25-0～§25-11 历史行**原文保留**；被本节取代者**只在原行行尾追加标注**（不删不改）。**编号接 §25**（本节为最大节 ⇒ 后续追补接 §27）。
+> **时点**：`date` = **2026-09-20 12:32:33 CST**；本节所有读数**本次实测**（复现命令见 §26-9）。
+> **跨册口径真源**：规格册 = `docs/person-places.spec.md` **§15 / §16**；质检终稿 = `docs/person-places.qa.md`（551 行 · 84 判据 = PASS 81 / FAIL 1 待裁定）。
+
+### 26-0 总览（本批动作面 = 4 项 · 动作面**取代** §25-10(4) / §25-11(7) 的相应行）
+
+| # | 目标 | 动作 | 阻塞 | 备注（本节实测） |
+|---|---|---|---|---|
+| 1 | 云函数 **`compat-api`** | **重打包 + 部署** | **无**（代码已全部落盘；仅需打包 + 授权部署） | ⚠️ 不重包则 **F5 的 `null` 闸门**与 **F3 的前端配套后端行为**都到不了线上 |
+| 2 | **云端数据（树 JSON）** | **重传 12 棵树 JSON**（纯数据批次：**先重传、后手工删旧详情键**，按仓内惯例） | 备份已就位（11:36）；**需部署授权** | 本批**新增**必登项（§25-11(7) 第 3 行只记了 tree-meta「无镜像对齐动作」） |
+| 3 | 云端 **`tree-meta`** | **本次迁移未修改它 ⇒ 不因本批上传** | — | ⚠️ 但 **Kevin 09:31 / 10:59 / 11:31 的三次手工改动仍未上云**，需**一并考虑**（见 §26-4） |
+| 4 | 前端 **H5 + 小程序** | **重打 + hosting** | hosting 目标 + 云函数域名 | 前端面已闭合（人物档案地点字段 + 发源地指定 UI 含 R2 置灰） |
+| — | CloudBase 集合 | **无** | — | 无 schema / 无索引变更 |
+
+### 26-1 必登 ①：云函数 `compat-api` **必须重打包**（**当前实测未重打包**）
+
+| 项 | 实测（本节） |
+|---|---|
+| 产物 | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B** / mtime **2026-09-19 12:50:59** / md5 **`d61a8aebfb3f3095baae4e1e731fd675`** |
+| 判定 | ❌ **未重打包**（与 §24 / §25-3 / §25-10 / §25-11(1) 及质检册 §P2 **同值**） |
+| 重打包判据（**产物侧 8 串实测全 0 ⇒ 铁证未重包**） | `residence_places` **0** · `place_note` **0** · `set-tree-origin` **0** · `origin-candidates` **0** · `居住地格式无效` **0** · `居住地最多 9 条` **0** · `assertPlaceFieldShapes` **0** · `personEditLockMessage` **0** |
+| 源码侧对照 | `index.js`：`residence_places` **4** · `set-tree-origin` **1** · `personEditLockMessage` **1** ⇒ 产物侧期望 **≥1** |
+| 打包命令 | 以**仓库既有打包脚本 / 惯例**为准（同 §23 / §24 / §25-1 的同一命令，本册**不新造**）；产物路径 = `cloudfunctions/deploy/compat-api/index.js` |
+| 部署前必读 | **F3 / F5 的修复均在未提交的工作区** ⇒ 打包前须确认工作区代码为本批终态（否则会把半成品打进去） |
+
+```bash
+cd /Users/kevin/bistro/jiazu
+wc -c < cloudfunctions/deploy/compat-api/index.js; md5 -q cloudfunctions/deploy/compat-api/index.js
+for s in residence_places place_note set-tree-origin origin-candidates '居住地格式无效' '居住地最多 9 条' assertPlaceFieldShapes personEditLockMessage; do printf '%s: ' "$s"; grep -c "$s" cloudfunctions/deploy/compat-api/index.js; done
+```
+
+### 26-2 必登 ②：**12 棵树 JSON 必须重传**（★ 本批新增必登项 · 纯数据批次）
+
+> **为什么必须单列**：本批迁移**修改了 12 棵树 JSON**（`migrate-output/trees/*.json`）—— 这**不是**「只改 tree-meta」的旧口径；**不重传 = 线上节点出生地永远缺失**，与后端新口径（读侧归一 / 懒转）配合后仍会表现为「出生地空白」。
+
+| 项 | 实测（本节重算） |
+|---|---|
+| 已变树 JSON | **12 棵**（`migrate-output/trees/*.json`，= 12 / 17） |
+| **12 棵 `tree_id` 逐条（重传点名）** | `gu_39038` · `gu_39038_01` · `heng_24658_01` · `ji_23395` · `ji_23395_01` · `ji_32426_01` · `li_26446_01` · `li_26446_02` · `liu_21016_01` · `long_40857_01` · `qin_31206` · `zhonghua` |
+| 未变的 5 棵 | `qin_31206_01`（空树）· `liu_21016` · `rong_23481_01` · `li_26446_03`（4 棵跳过）+ `shen_27784_01`（幂等跳过，迁移前已就位） |
+| 重传命令 | **`node scripts/upload-migrated-to-cloudbase.mjs`**（仓内既有脚本；按 §25-3 第 ④ 条口径：按 report 逐树上传到 `trees/<tree_id>.json`，并回写 tree-meta + `storage_files`） |
+| 仓内惯例（**纯数据批次**） | **先重传、后手工删旧详情键**（旧详情键不会被上传覆盖） |
+| 上传后判据 | 云端逐树 `md5` 与本地 `migrate-output/trees/<tree_id>.json` 一致（12 / 12）；未列出的 5 棵 **零变更** |
+| ⚠️ 未决项不得照传 | `shen_27784_01` 的 `origin_code = 230305` 与 `origin` 文本「山东省临沂市」**互斥 · 待 Kevin 裁定**（规格册 §16-5）⇒ 该树**不在本次 12 棵名点内**（幂等跳过），裁定前**不得**按任一解释回写 |
+
+```bash
+cd /Users/kevin/bistro/jiazu
+python3 - <<'PY'
+import hashlib,os
+b=os.path.expanduser('~/jiazu-backups/2026-09-20-founder-birthplace/md5-before.txt')
+before={l.split()[-1]:l.split()[0] for l in open(b) if len(l.split())>=2}
+chg=[f for f,h in before.items() if os.path.exists(os.path.join('migrate-output',f))
+     and hashlib.md5(open(os.path.join('migrate-output',f),'rb').read()).hexdigest()!=h]
+print('changed',len(chg)); print('\n'.join(sorted(x[:-5].replace('trees/','') for x in chg)))
+PY
+```
+
+### 26-3 必登 ③：前端 **H5 + 小程序重打**
+
+| 项 | 实测（本节） |
+|---|---|
+| 小程序主包 | **1,998,964 B / 204 文件**（自算，按 `dist/build/mp-weixin/app.json` 的 `subPackages = ["pages/special"]`） |
+| 分包 / 合计 | 分包 6,582 B / 12 文件；合计 **2,005,546 B** |
+| 限值 / 余量 | 限 **2,097,152 B（2 MiB）** ⇒ **余量 98,188 B，未超** |
+| 构建产物 mtime | `frontend/dist/build/mp-weixin/app.json` = **2026-09-20 12:17:22**（= 本批既有产物，**须重打**以纳入 F3 / O4 修复） |
+| H5 | `cd frontend && npm run build:h5`（或仓内既有脚本）→ hosting：`tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c`（沿用 §25-4 命令） |
+| 打包含 | 人物档案【出生地】/【居住地】（`person-archive.vue` 2,537 行）· `business/place.ts` · 发源地指定 UI `origin-picker.vue`（含 R2 置灰）· `pages/hall/index.vue` 入口 |
+| type-check 前置 | `cd frontend && npm run type-check`（质检册 P3-b 实测 = 退出码 **0** / 零输出） |
+
+```bash
+cd /Users/kevin/bistro/jiazu/frontend && npm run type-check && npm run build:h5
+python3 - <<'PY'
+import json,os
+root='dist/build/mp-weixin'; app=json.load(open(os.path.join(root,'app.json')))
+subs=[p['root'] for p in app.get('subPackages',[])]; main=0
+for d,_,fs in os.walk(root):
+    for f in fs:
+        rel=os.path.relpath(os.path.join(d,f),root); sz=os.path.getsize(os.path.join(d,f))
+        if not any(rel==s or rel.startswith(s+'/') for s in subs): main+=sz
+print('主包',main,'限 2097152'); print('未超' if main<=2097152 else '超限')
+PY
+```
+
+### 26-4 必登 ④：`tree-meta` **不因本批迁移上传**，但**三次手工改动仍未上云**（必读）
+
+| 项 | 实测（本节） |
+|---|---|
+| 本批迁移是否写 `tree-meta` | **否** —— `config/tree-meta.json` md5 **`c9112e40760839bc8d2132d6300b838b`**（9,572 B / mtime **2026-09-20 11:31:21** / `origin_code` 非空 **8 / 17**）⇒ **迁移全程未变**（C8 作废：无任何镜像回写） |
+| 但 | **Kevin 于 09:31 / 10:59 / 11:31 的三次手工写入仍未上云** —— 云端 `tree-meta` 侧的 `origin_code` / `origin` 与本地**可能不一致** |
+| 处置（登记，不含裁定） | 本批**不应**以「迁移」为由上传 `tree-meta`；**是否随批上传 = 部署决策**（须一并考虑上述三次手工改动；尤其 `li_26446_01` 的 `230305` 写入） |
+| 铁律 | **E3-x 裁定**：发源地人工指定 = **一次性结果，来源节点后改不自动回落**；**不存在自动同步镜像** ⇒ 上传 `tree-meta` 只是「把本地现状搬上去」，**不产生任何派生写回** |
+
+### 26-5 部署后冒烟验证（**按序做**；1–4 沿用 §25-10(6) / 5–10 见 §25-11(8)，11–14 = 本批新增）
+
+| # | 验证 | 期望 | 依据 |
+|---|---|---|---|
+| 1 | 人物档案改名保存 | 200 · 扣 1 片 · 面板关闭 | §25-10(6) |
+| 2 | 只改出生地保存 | 200 · 扣 1 片 · 树上 `birth_place` 为**对象** | C11 / §25-10(6) |
+| 3 | 居住地第 10 条 | **400** `居住地最多 9 条` | C10 |
+| 4 | 无码旧数据读 / 保存 | 读侧归一为 `{origin_code:'', note:<原串>}`；保存后**懒转成对象** | §25-11(6) 第 5 条 |
+| 5 | 未知 `birth_place.origin_code` | **400** `出生地行政区划代码无效：<码>`，**不扣费** | **R1** |
+| 6 | 未知码出现在某一条 `residence_places` | **400** 同上（**逐条同判**） | **R1** |
+| 7 | 空码（未结构化） | **放行** | **R1** |
+| 8 | `GET /tree/origin-candidates`（含无码节点之树） | **全列**（无码行 `place_code == ''`），前端**置灰**；**接口不报 400** | **R2** |
+| 9 | `POST /admin/set-tree-origin` 指定无码节点 | **400** `该节点未填写出生地行政区划代码` | C8′ ④ |
+| 10 | 只填出生地、生年不详的节点存后重读 | `profile.birth` **存在**（`place` / `place_code` / `place_note` 齐全） | 追认 3 |
+| 11 | **只改【出生地】→ 保存**（F3 主用例） | **真发 PUT ≥1**、200、`birth_place` 键集**恰** `origin_code` / `note`（**无派生 `place`**） | **F3（质检册 P1-a）** |
+| 12 | **只新增 1 条【居住地】→ 保存** | **真发 PUT ≥1**、200、body `residence_places` 含新条目 | **F3（质检册 P1-b）** |
+| 13 | `{"birth_place": null}` 或 `{"residence_places": null}` **单独提交** | **400** `请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号 / 出生地 / 居住地）`，**原值不变、零扣费** | **F5（质检册 P1-e/f）** |
+| 14 | **同批带改名 + 地点字段显式 `null`** | **200 扣 1 片**，但地点字段**原值不变**（**不被 `null` 抹空**） | **F5（质检册 P1-g）** |
+| 15 | 发源地指定后清空来源节点出生地码 | `tree-meta` **不回落** / 候选**无 `is_current`** —— **这是设计如此（E3-x），不是缺陷** | **E3-x 裁定** |
+
+**冒烟用逐字文案（逐字冻结 · 部署后必须逐字匹配）**：400 = `居住地格式无效，应为数组` / `出生地格式无效，应为对象` / `出生地行政区划代码无效：<码>` / `居住地最多 9 条` / `请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号 / 出生地 / 居住地）`；403 = `始祖节点信息需在本姓祖谱中修改` / `始祖节点信息需在中华世本（总谱）中修改` / `该节点为上层（中华世本）镜像，需到总谱修改` / `空白占位始祖节点：请先「认祖」挂载到中华世本后再填写信息`（**四支逐字不同、不得合并**）；前端 = `居住地最多 9 条，请先删除多余的条目` / `已达上限 9 条，如需新增请先删除一条。`
+
+### 26-6 本批**不需要**上云的东西
+
+| 项 | 原因 |
+|---|---|
+| CloudBase 集合 / 索引 | **无 schema 变更**（§25-2 同口径） |
+| `config/geo-divisions.json` | 由 `lib/geo.js` **静态 JSON import 被 esbuild 内联** ⇒ 无需随云函数包发布 `config/`（§5-6R） |
+| 自动同步 / 镜像对齐任务 | **C8 已作废、代码已删**；**E3-x：人工指定为一次性结果，无自动回落** ⇒ **没有**需要部署的同步作业 |
+| `migrate-output/**` 的 `--normalize-birthplace-shape` 开关 | 该开关**未落盘**（全仓 0 命中）；形状迁移**不做**（懒转换口径） |
+| 后端历史字符串的强制形状迁移 | 不做（读侧归一 + 保存懒转） |
+
+### 26-7 阻塞点
+
+| # | 阻塞 | 影响 | 解除条件 |
+|---|---|---|---|
+| 1 | **云函数未重打包**（8 串产物侧全 0） | 线上仍是旧口径：F5 的 `null` 闸门、F3 的配套后端行为**都到不了生产** | 执行打包 + 部署授权 |
+| 2 | **12 棵树 JSON 未重传** | 线上节点「出生地」缺失 / 与本地台账不一致 | `node scripts/upload-migrated-to-cloudbase.mjs` + 部署授权 |
+| 3 | **前端未重打**（H5 / 小程序） | F3 / O4 修复、发源地指定 UI（含 R2 置灰）**都到不了线上** | 重打 + hosting |
+| 4 | **本批修复为工作区未提交改动** | 打包可能纳入半成品或被并发覆盖；**无回滚点** | commit / 明确冻结工作区 |
+| 5 | **`shen_27784_01` 未决（唯一 FAIL）** | 该树发源地码与文本互斥；**不得照传、不得对外引用** | **Kevin 裁定**（规格册 §16-5） |
+| 6 | **`config/tree-meta.json` 的云端侧状态不明** | Kevin 09:31 / 10:59 / 11:31 三次手工改动未上云 ⇒ 云端 / 本地可能不一致 | 部署决策（§26-4） |
+
+### 26-8 残留风险（**逐条与规格册 §16-7 同源 · 不得据本节推断为已验证**）
+
+1. **前端零单测覆盖（假绿面）**：`origin-picker` / `GeoCascader` / `business/place.ts` / `person-archive` 无单测；`npm test` **449 项全为后端**。
+2. **小程序真机端到端未验**：未在微信开发者工具 / 真机跑「编辑 → 保存 → 回显」。
+3. **`t-button` 禁用态未落根元素 `disabled`**：键盘 / 读屏可访问性存疑（功能拦截已验）。
+4. **生产 `cloud` 路径（并发扣费 / 冲正 / 事务）未验**：全部实测走 `/tmp` 副本 + `COMPAT_SOURCE=local`。
+5. **`shen_27784_01` 未决**（见 §26-7 第 5 行）。
+
+### 26-9 复现命令（本节全部读数 · **只读，不触发部署**）
+
+```bash
+cd /Users/kevin/bistro/jiazu
+# ① 云函数产物（未重打包铁证）
+wc -c < cloudfunctions/deploy/compat-api/index.js; md5 -q cloudfunctions/deploy/compat-api/index.js
+for s in residence_places place_note set-tree-origin origin-candidates '居住地格式无效' '居住地最多 9 条' assertPlaceFieldShapes personEditLockMessage; do printf '%s: ' "$s"; grep -c "$s" cloudfunctions/deploy/compat-api/index.js; done
+# ② 12 棵已变树 JSON（重传点名）
+python3 - <<'PY'
+import hashlib,os
+b=os.path.expanduser('~/jiazu-backups/2026-09-20-founder-birthplace/md5-before.txt')
+before={l.split()[-1]:l.split()[0] for l in open(b) if len(l.split())>=2}
+chg=[f for f,h in before.items() if os.path.exists(os.path.join('migrate-output',f))
+     and hashlib.md5(open(os.path.join('migrate-output',f),'rb').read()).hexdigest()!=h]
+print('changed',len(chg)); print(sorted(x) for x in chg)
+PY
+md5 -q config/tree-meta.json; wc -c < config/tree-meta.json; stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' config/tree-meta.json
+find migrate-output -type f | sort | xargs md5 -q | md5 -q          # 684ceb0bd03d31ef9c08104e3eb6ac41
+# ③ 前端主包字节
+python3 - <<'PY'
+import json,os
+root='frontend/dist/build/mp-weixin'; app=json.load(open(os.path.join(root,'app.json')))
+subs=[p['root'] for p in app.get('subPackages',[])]; main=0; n=0
+for d,_,fs in os.walk(root):
+    for f in fs:
+        rel=os.path.relpath(os.path.join(d,f),root)
+        if not any(rel==s or rel.startswith(s+'/') for s in subs): main+=os.path.getsize(os.path.join(d,f)); n+=1
+print('主包',main,'/',n,'文件; 限 2097152; 余量',2097152-main)
+PY
+# ④ 测试基线（打包前回归门槛）
+npm test | tail -8                                                   # 449 / 449 / 0
+# ⑤ 边界自查
+git status --short AGENTS.md; md5 -q AGENTS.md
+```
+
+> **本节边界**：只写文档 —— **未改代码、未写真源**（`config/tree-meta.json` 前后 md5 均 `c9112e40760839bc8d2132d6300b838b`；`migrate-output/**` 聚合前后均 `684ceb0bd03d31ef9c08104e3eb6ac41`）、**未改 `AGENTS.md`**（前后均 `M AGENTS.md` / md5 `e4c089818fbf7a3a7218e567e7b409ee`）、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**；§25-0～§25-11 历史行原文保留。
+> **跨册登记**：口径与证据全文见 `docs/person-places.spec.md` **§15 / §16**；判据终稿见 `docs/person-places.qa.md`（84 = 81 PASS / 1 待裁定）。

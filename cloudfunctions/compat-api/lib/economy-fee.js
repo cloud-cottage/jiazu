@@ -35,6 +35,9 @@ import {
 // CHAIN_ATTR_KEYS（源流链属性：external_chain_gen / aggregate / from）同属「可能只在详情文档里」
 // 的键，有效现值合并要一并覆盖（中华世本链节点就是这种形态）。
 import { EXTERNAL_KEYS, CHAIN_ATTR_KEYS } from './tree-write.js';
+// 出生地 / 居住地的归一与比对**唯一真源**（契约 v2 C1–C3 / C5）：本模块不另写一套形状判定，
+// 否则「只改出生地」会被误判为无改动（对象 vs 历史字符串）或判成无效请求。
+import { sameBirthPlace, sameResidencePlaces } from './person-places.js';
 
 // ---- ① 单价表（唯一真源；路由内禁止写魔法数字）----
 
@@ -123,17 +126,25 @@ export function feeOf(op, ctx = {}) {
 }
 
 /**
- * 请求体是否含可修改内容字段（姓名 / 性别 / 生卒 / 健在 / 称号三字段）。
+ * 请求体是否含可修改内容字段（姓名 / 性别 / 生卒 / 健在 / 称号三字段 / 出生地 / 居住地）。
  * 一次 PUT = 一个节点 = 1 片；**不含任何可修改字段 → 视为无效请求，不扣费**。
+ *
+ * 出生地 / 居住地（契约 v2 C1/C2）单独判定：**显式提供即算内容字段** ——
+ * `birth_place: ''` / `residence_places: []` 是「真实清空」，不得因为「空值」被判成无效请求
+ * （与详情属性 `attribute_list: []` = 真实清空同一口径）；是否真有差异交给 personValueDiff。
+ * **显式 `null` = 未提供**（F5 修复；与 `personValueDiff` / 写路径 `tree-write.updatePerson` 同一口径）——
+ * `null` 既不算内容字段、也不参与值级比对、更不会被写进树（否则会静默清空原值还照收 1 片）。
  */
 export function hasPersonChanges(body) {
   const b = body || {};
   const pn = b.primary_name;
   if (pn && (pn.first_name || (Array.isArray(pn.surname_list) && pn.surname_list.some((s) => s && s.surname)))) return true;
   if (b.gender !== undefined && b.gender !== null) return true;
-  for (const k of ['name', 'surname', 'given', 'birth_date', 'death_date', 'birth_place', 'death_place', 'is_living']) {
+  for (const k of ['name', 'surname', 'given', 'birth_date', 'death_date', 'death_place', 'is_living']) {
     if (b[k] !== undefined && b[k] !== null && b[k] !== '') return true;
   }
+  if (b.birth_place !== undefined && b.birth_place !== null) return true;
+  if (b.residence_places !== undefined && b.residence_places !== null) return true;
   if (Array.isArray(b.attribute_list) && b.attribute_list.length > 0) return true;
   return false;
 }
@@ -142,9 +153,10 @@ export function hasPersonChanges(body) {
 
 /**
  * 参与值级比对的树 JSON 结构字段（口径 = docs/economy-fee.spec.md §3-1 #1「节点内容修改」的
- * 姓名 / 性别 / 生卒 / 健在，称号三字段落在详情文档 attributes 里另行比对）。
+ * 姓名 / 性别 / 生卒 / 健在 + 契约 v2 的出生地 / 居住地，称号三字段落在详情文档 attributes 里另行比对）。
+ * 出生地 / 居住地按规范化后逐字段比对（数组逐项 + 长度），见 lib/person-places.js。
  */
-export const PERSON_VALUE_FIELDS = ['name', 'surname', 'given', 'gender', 'birth_date', 'death_date', 'birth_place', 'death_place', 'is_living'];
+export const PERSON_VALUE_FIELDS = ['name', 'surname', 'given', 'gender', 'birth_date', 'death_date', 'birth_place', 'residence_places', 'death_place', 'is_living'];
 
 /** 详情文档里的称号三字段（键名同 docs/data-model.md §4；存储层键 = 号 / 封号 / 谥号） */
 export const TITLE_ATTR_KEYS = ['封号', '谥号', '号'];
@@ -276,7 +288,15 @@ export function personValueDiff(body = {}, person = {}, detail = null) {
 
   // ③ 生卒地（顶层约定字段；写入侧只落 birth_date / death_date）
   if (b.birth_date !== undefined && emptyText(b.birth_date) !== emptyText(p.birth_date)) fields.push('birth_date');
-  if (b.birth_place !== undefined && emptyText(b.birth_place) !== emptyText(p.birth_place)) fields.push('birth_place');
+  // 出生地（契约 v2 C1）：**规范化后**逐字段比对 —— 历史字符串（树里）与对象（body）同一口径，
+  // 否则「只改出生地」会被判成无改动；未提供（`undefined` / 显式 `null`）一律不参与比对。
+  // 显式 `null` = 未提供（F5 修复）：写路径也不再落盘（见 tree-write.updatePerson）→ 两处同口径。
+  if (b.birth_place !== undefined && b.birth_place !== null && !sameBirthPlace(b.birth_place, p.birth_place)) fields.push('birth_place');
+  // 居住地（契约 v2 C2）：规范化后**逐项 + 长度**比对（顺序即展示顺序 → 顺序变 = 差异）；
+  // 未提供（`undefined` / 显式 `null`）同样不参与比对。
+  if (b.residence_places !== undefined && b.residence_places !== null && !sameResidencePlaces(b.residence_places, p.residence_places)) {
+    fields.push('residence_places');
+  }
   if (b.death_place !== undefined && emptyText(b.death_place) !== emptyText(p.death_place)) fields.push('death_place');
 
   // ④ 卒年：`is_living=true` 时写入侧会清空卒年 → 候选值取 ''

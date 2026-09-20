@@ -305,8 +305,8 @@
         </view>
         <view class="form-item">
           <text class="label">发源地</text>
-          <!-- 结构化三级行政区划（省 / 市 / 县）；legacy 旧文本仅在无码时兜底展示 -->
-          <GeoCascader v-model="editForm.origin_code" :legacy="editForm.origin" />
+          <!-- 契约 v2 C8′：发源地 = 由本树始祖三代内**某节点的出生地**人工指定（不再直接选行政区划） -->
+          <OriginPicker :tree-id="treeId" @updated="onOriginUpdated" />
         </view>
         <view class="form-item">
           <text class="label">简介</text>
@@ -342,7 +342,7 @@ import { fetchTreeMetaRemote, updateTreeMeta, fetchTreeRank, searchPeople, submi
 import { fetchSpirit, stateTextPrimary } from '@/business/api';
 import type { TreeAccessInfo, SpiritInfo } from '@/business/api';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
-import type { TreeEntry, PersonSummary } from '@/business/types';
+import type { TreeEntry, PersonSummary, SetTreeOriginResult } from '@/business/types';
 import { personIdDisplay, attrMapOf } from '@/business/format';
 import TreePedigree from '@/components/tree-pedigree/tree-pedigree.vue';
 import ClanHall from '@/components/clan-hall/clan-hall.vue';
@@ -350,7 +350,7 @@ import DocLayoutPanel from '@/components/doc-layout-panel/doc-layout-panel.vue';
 import FamilyMessages from '@/components/family-messages/family-messages.vue';
 import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
-import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
+import OriginPicker from '@/components/origin-picker/origin-picker.vue';
 
 const treeId = ref('');
 const spiritInfo = ref<SpiritInfo | null>(null);
@@ -366,7 +366,7 @@ const archiveModal = ref<InstanceType<typeof PersonDetailModal> | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
-const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', origin_code: '', description: '' });
+const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', description: '' });
 
 // 视图切换：血脉图示（默认） / 版式文档 / 家族消息（审批入口，仅管理权限）
 const view = ref<'pedigree' | 'doc' | 'msg'>('pedigree');
@@ -766,6 +766,11 @@ function goSpirit() {
   uni.navigateTo({ url: `/pages/spirit/index?tree_id=${treeId.value}` });
 }
 
+/**
+ * 打开编辑弹窗（字段：名称/谱名/文献地址/堂号/简介；**发源地不在本表单内** —— 由弹窗内的
+ * `OriginPicker` 走 `POST /admin/set-tree-origin` 单独指定，契约 v2 C8′）。
+ * `origin` 仅作 legacy 软冗余原样回传（`PUT /tree-meta` 兼容分支），界面不再让用户直接编辑。
+ */
 function openEdit() {
   if (!hallInfo.value) return;
   editForm.value = {
@@ -774,11 +779,20 @@ function openEdit() {
     archive_url: hallInfo.value.archive_url || '',
     hall_name: hallInfo.value.hall_name || '',
     origin: hallInfo.value.origin || '',
-    origin_code: hallInfo.value.origin_code || '',
     description: hallInfo.value.description || '',
   };
   editError.value = '';
   showEdit.value = true;
+}
+
+/**
+ * 发源地指定成功（`OriginPicker` 内部已重拉候选）→ 就地把 hero 的「发源地」换成后端返回的
+ * 展示串与码，不必整页重拉 tree-meta。
+ */
+function onOriginUpdated(r: SetTreeOriginResult) {
+  if (hallInfo.value) {
+    hallInfo.value = { ...hallInfo.value, origin: r.origin, origin_code: r.origin_code };
+  }
 }
 
 function closeEdit() {

@@ -20,6 +20,8 @@
  */
 import crypto from 'node:crypto';
 import { getMeta, getTree, getDetail, updateTrees, saveDetail, saveMeta, listTreeIds } from './store.js';
+// 始祖可编辑性例外（契约 v2 C6）：请求体只含出生地 / 居住地两项时放行
+import { isPlaceFieldsOnly } from './person-places.js';
 
 /** 始祖挂载的跨树链接类型（区别于 marriage / branch / child） */
 export const FOUNDER_LINK_TYPE = 'founder';
@@ -161,6 +163,63 @@ export function isFounderNode(tree, person, entry) {
   return !!fh && !!person && person.handle === fh;
 }
 
+// ---- 「发源地」人工指定的始祖认定（契约 v2 C8′ ④/⑤；Kevin 2026-09-20 认可）----
+
+/** 非镜像根节点：`external_mirror !== 'true'` 且 `parent_family` 为空（镜像节点不作始祖候选） */
+export function nonMirrorRoots(tree) {
+  return Object.values(tree?.people || {}).filter(
+    (p) => p && p.handle && !p.parent_family && String(p.external_mirror) !== 'true',
+  );
+}
+
+/**
+ * 「始祖」认定（C8′ ④）：`tree-meta.founder_handle` 优先（含 `founder_gramps_id` 兜底）；
+ * 缺失 → 取**唯一**的非镜像根节点。0 个 / 多个 → 无法认定（返回 null，**不做任何猜测**）。
+ * @returns {{handle: string, source: 'meta'|'root'}|null}
+ */
+export function resolveOriginFounder(tree, entry = null) {
+  const byMeta = resolveFounderHandle(tree, entry);
+  if (byMeta) return { handle: byMeta, source: 'meta' };
+  const roots = nonMirrorRoots(tree);
+  if (roots.length !== 1) return null;
+  return { handle: roots[0].handle, source: 'root' };
+}
+
+/** 始祖无法认定时的中文短句（路由 400 与只读接口的 `founder:null` 共用同一判据） */
+export function founderUndecidedMessage(tree) {
+  const roots = nonMirrorRoots(tree);
+  if (!roots.length) return '本树无法认定始祖：未登记始祖，且树内没有非镜像根节点';
+  if (roots.length > 1) return `本树无法认定始祖：未登记始祖，且非镜像根节点有 ${roots.length} 个`;
+  return '';
+}
+
+/**
+ * 始祖三代候选（C8′ ⑤）：第 1 代 = 始祖本人；第 2 代 = 以始祖为父/母的家族子女；
+ * 第 3 代 = 再下一层。顺序 = 逐代、按树内 `people` 键序（稳定）；同一节点只出现一次（防环）。
+ * @returns {{handle: string, generation: 1|2|3}[]} 始祖 handle 为空 → []
+ */
+export function founderThreeGenerations(tree, founderHandle) {
+  const out = [];
+  const seen = new Set();
+  let level = founderHandle && tree?.people?.[founderHandle] ? [founderHandle] : [];
+  for (let generation = 1; generation <= 3 && level.length; generation++) {
+    const next = [];
+    for (const h of level) {
+      if (seen.has(h)) continue;
+      seen.add(h);
+      out.push({ handle: h, generation });
+      const p = tree.people[h];
+      for (const fh of p?.spouse_families || []) {
+        for (const ch of tree.families?.[fh]?.child_handles || []) {
+          if (tree.people?.[ch] && !seen.has(ch)) next.push(ch);
+        }
+      }
+    }
+    level = next;
+  }
+  return out;
+}
+
 /**
  * 「挂载到 masterTreeId 的始祖镜像节点」handle（读侧推导专用，docs/founder-attach.spec §3-2）。
  * 与 resolveFounderHandle 的区别：祖谱（kind='clan'）的 tree-meta.founder_handle 指向的是
@@ -199,14 +258,44 @@ export function founderLockMessage(person, tree, masterTreeId, entry) {
   return '';
 }
 
-/** 断言始祖节点可编辑（写路径统一入口；不可编辑 → 403） */
-export async function assertFounderEditable(tree, handle, masterTreeId, entry = null) {
+/**
+ * 节点写只读文案（**路由预检与写路径的唯一判据**）：
+ * ① 上层镜像（`upperMirrorLockMessage`：chain 镜像 / founder 镜像指向祖谱或世本）优先，
+ * ② 其后才是始祖锁（`founderLockMessage`：本树始祖镜像 / 空白占位）。
+ * `masterTreeId` 树自身（中华世本）恒可编辑 → `''`。
+ *
+ * 为什么必须是**同一个函数**：两条判据此前分别落在路由层（只查 founderLockMessage）与写路径
+ * （再并上 upperMirrorLockMessage）→ 祖谱镜像 / chain 镜像节点在路由预检漏放，走到扣费之后才 403，
+ * 响应带 `fee_refunded` 且资产流水出现成对的 `edit_fee -1` + `fee_refund +1`（实测缺陷）。
+ * @returns {Promise<string>} 可编辑 → `''`
+ */
+export async function personEditLockMessage(person, tree, masterTreeId, entry = null) {
+  if (!person || !tree) return '';
+  if (masterTreeId && tree.tree_id === masterTreeId) return '';
+  const upper = await upperMirrorLockMessage(person, tree.tree_id);
+  if (upper) return upper;
+  return founderLockMessage(person, tree, masterTreeId, entry);
+}
+
+/**
+ * 断言始祖节点可编辑（写路径统一入口；不可编辑 → 403）
+ *
+ * 例外（契约 v2 C6）：请求体**只**含 `birth_place` / `residence_places` 两项时放行 ——
+ * 始祖的出生地 / 居住地属于本树自填记录（家族树「来源地」镜像也读它），
+ * 而姓名 / 生卒 / 健在等身份字段仍走镜像只读（同一请求里夹带任一锁字段 → 照旧 403）。
+ *
+ * 判据与写路径（`lib/tree-write.js` 的 `updatePerson`）**同一函数** `personEditLockMessage`，
+ * 覆盖全部只读分支（本树始祖镜像 / 空白占位 / 祖谱镜像 / 世本镜像 / chain 镜像）——
+ * 预检必须拦在扣费之前，被拒请求不得产生任何资产流水。
+ * @param {object|null} body PUT 请求体；不传 = 沿用旧口径（一律按只读断言）
+ */
+export async function assertFounderEditable(tree, handle, masterTreeId, entry = null, body = null) {
   const person = tree?.people?.[handle];
   if (!person) return;
   if (tree.tree_id === masterTreeId) return;
   const metaEntry = entry || (await metaEntryOf(tree.tree_id));
-  const msg = founderLockMessage(person, tree, masterTreeId, metaEntry);
-  if (msg) {
+  const msg = await personEditLockMessage(person, tree, masterTreeId, metaEntry);
+  if (msg && !isPlaceFieldsOnly(body)) {
     const e = new Error(msg);
     e.status = 403;
     throw e;

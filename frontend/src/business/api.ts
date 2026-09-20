@@ -11,12 +11,18 @@
 
 import { getAuthToken } from './auth';
 import { TITLE_DISPLAY_ORDER } from './format';
+import { placeViewOf, placeViewsOf } from './place';
 import type {
   PersonDetail,
+  PersonPlaceInput,
+  PersonPlaceView,
   PersonSummary,
+  ProfileLifespanView,
   SearchParams,
   SearchResult,
+  SetTreeOriginResult,
   TreeMeta,
+  TreeOriginCandidates,
   FamilyRef,
   EstablishBranchResult,
   ConvergeClanResult,
@@ -182,18 +188,23 @@ interface RawPerson {
   extended?: {
     attributes?: Array<{ type: string; value: string }>;
     profile?: {
-      birth?: { date?: string; place?: string };
-      death?: { date?: string; place?: string };
+      birth?: ProfileLifespanView;
+      death?: ProfileLifespanView;
       name_given?: string;
       name_surname?: string;
     };
   };
   profile?: {
-    birth?: { date?: string; place?: string };
-    death?: { date?: string; place?: string };
+    birth?: ProfileLifespanView;
+    death?: ProfileLifespanView;
     families?: ProfileFamily[];
     primary_parent_family?: ProfileFamily;
   };
+  /**
+   * 居住地（契约 v2）：后端由树 JSON `residence_places`（`[{ origin_code, note }]`）派生的读形状。
+   * 顺序即展示顺序；上限 9 条。
+   */
+  residence_places?: PersonPlaceView[];
 }
 
 /** person profile 内嵌的家庭成员摘要（带姓名） */
@@ -357,8 +368,12 @@ export async function fetchPerson(
   // 注意：单对象路由无尾斜杠（/api/people/<handle>）
   const raw = await request<RawPerson>(`/people/${handle}?profile=all`, { treeId });
   const summary = toPersonSummary(raw);
+  // 地点派生字段与生卒同源（profile 优先、extended 兜底）：出生地取 `profile.birth`，居住地取顶层数组
+  const prof = raw.profile || raw.extended?.profile;
   return {
     ...summary,
+    birth_place: placeViewOf(prof?.birth),
+    residence_places: placeViewsOf(raw.residence_places),
     profiles: [],
     // 婚配/家庭关系：数据在 profile.families + primary_parent_family（零额外请求）
     families: buildFamilyRefs(raw.profile),
@@ -531,6 +546,20 @@ export async function fetchPersonForEdit(
 }
 
 /**
+ * `PUT /people/<handle>` 请求体：服务端 Gramps 形状对象的原样回传 + 本项目扩展字段。
+ * 契约 v2：出生地 / 居住地一律提交**原始码 + 备注**（`birth_place` / `residence_places`），
+ * **不提交**后端派生的 `place`；两个字段都不得省略（空值也要发空形状 / 空数组）。
+ */
+export interface PersonSavePayload {
+  /** 出生地（空 → `{ origin_code: '', note: '' }`） */
+  birth_place: PersonPlaceInput;
+  /** 居住地（多条，上限 9 条；空 → `[]`） */
+  residence_places: PersonPlaceInput[];
+  /** 其余字段为 Gramps 形状（`RawPerson` 原样回传，如 primary_name / attribute_list / birth_date …） */
+  [key: string]: unknown;
+}
+
+/**
  * 保存人物（PUT 完整对象，需登录）
  * 注：Gramps-Web 的 ETag 是响应 hash（非对象 hash），If-Match 永远不匹配，
  * 故不使用乐观锁，直接 PUT。
@@ -540,7 +569,7 @@ export async function fetchPersonForEdit(
 export async function savePerson(
   treeId: string,
   handle: string,
-  person: any,
+  person: PersonSavePayload,
   token: string,
 ): Promise<{ fee?: FeeInfo }> {
   const res = await fetch(`${API_BASE}/people/${handle}`, {
@@ -1881,6 +1910,61 @@ export async function updateTreeMeta(
     throw new Error(err?.error || `更新失败 (${res.status})`);
   }
   clearMetaCache();
+}
+
+/**
+ * 家族树「发源地」候选（`GET /tree/origin-candidates`，需 `X-Tree-Id`；匿名可读）。
+ *
+ * 候选 = **始祖 + 其下 1–2 代（共三代）的全部节点**（含未填码的节点：`place_code === ''`）。
+ * **始祖无法认定时后端返 200 + `founder:null` + `candidates:[]`（不报 400）** ⇒ 调用方据此提示不可指定。
+ * 契约：docs/person-places.spec.md §6（C8′ ⑤）。
+ */
+export async function fetchOriginCandidates(
+  treeId: string,
+  token?: string,
+): Promise<TreeOriginCandidates> {
+  const headers: Record<string, string> = { 'X-Tree-Id': treeId };
+  const t = token || getAuthToken();
+  if (t) {
+    headers['Authorization'] = `Bearer ${t}`;
+  }
+  const res = await fetch(`${API_BASE}/tree/origin-candidates`, { headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || err?.error || `读取发源地候选失败 (${res.status})`);
+  }
+  return res.json();
+}
+
+/**
+ * 指定家族树「发源地」（`POST /admin/set-tree-origin`；权限档与 `PUT /tree-meta` **完全一致** = chief_editor）。
+ *
+ * 入参 `{ tree_id, person_handle }` —— 把该树的发源地设为**被点选节点（始祖三代内）的出生地**；
+ * 不做任何自动同步（原 C8「写时同步镜像」已作废，契约 C8′）。
+ *
+ * 失败面（后端逐字文案，调用方**原样展示、不得改编**）：
+ * 404『未找到 tree: …』/ 404『树不存在: …』/ 400『该节点不属于本树』/
+ * 400『本树无法认定始祖：…』/ 400『该节点不在本树始祖三代范围内（仅始祖及其下两代可作为发源地）』/
+ * 400『该节点未填写出生地行政区划代码』/ 401『未登录或登录已过期』/ 403『需要总编辑权限』。
+ */
+export async function setTreeOrigin(
+  token: string,
+  data: { tree_id: string; person_handle: string },
+): Promise<SetTreeOriginResult> {
+  const res = await fetch(`${API_BASE}/admin/set-tree-origin`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer ' + token,
+    },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || err?.error || `指定发源地失败 (${res.status})`);
+  }
+  clearMetaCache();
+  return res.json();
 }
 
 // ---- 统计 ----

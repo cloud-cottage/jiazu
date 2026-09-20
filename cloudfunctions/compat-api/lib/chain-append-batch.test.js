@@ -423,7 +423,9 @@ test('正常路 3 代：世数递 1 / 一条线 / 随父姓 / 全 M / 全已故 
     assert.equal(p.is_living, false, '总谱节点锁定已故');
     assert.equal(p.birth_date, '');
     assert.equal(p.death_date, '');
-    assert.equal(p.birth_place, '');
+    // 契约 v2 C4：新建节点初始值 = 结构化空出生地 + 空居住地数组
+    assert.deepEqual(p.birth_place, { origin_code: '', note: '' }, '出生地为结构化空值（契约 v2 C1/C4）');
+    assert.deepEqual(p.residence_places, [], '居住地为空数组（契约 v2 C2/C4）');
     assert.equal(p.death_place, '');
     assert.equal(p.external_tree, '', '结构字段 external_tree 不写（链归属走详情 attributes）');
     assert.equal(p.external_person_handle, '');

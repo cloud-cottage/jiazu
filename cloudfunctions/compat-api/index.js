@@ -61,6 +61,18 @@ import { computeAccess, isHiddenFamily, accessToPayload, computePersonDepth } fr
 // 发源地结构化（docs/geo-origin.spec.md）：路由层只做「未知码 → 400」与「反查生成展示串」两件事；
 // 码表随云函数包内联（lib/geo.js 静态 import lib/geo/divisions.json），无运行期读盘 / 无环境变量。
 import { isKnownOriginCode, resolveOrigin } from './lib/geo.js';
+// 出生地 / 居住地（契约 v2）：路由层只做「上限 400（C10）」「读响应形状（C7）」「始祖放行（C6）」
+// 「tree-meta 镜像回写（C8）」四件事，形状归一 / 展示串一律复用 lib/person-places.js（不另写一套）。
+import {
+  assertKnownOriginCodes,
+  assertPlaceFieldShapes,
+  assertResidencePlacesLimit,
+  hasPlaceContent,
+  placeViewOf,
+  residenceViewOf,
+  treeOriginPatchOf,
+  unknownOriginCodeMessage,
+} from './lib/person-places.js';
 
 const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
 const MAX_DEPTH = 72;
@@ -184,9 +196,22 @@ function toRawPerson(tree, person, detail) {
     event_ref_list: (detail?.events || []).map((e) => ({ ref: e.handle })),
     family_list: person.spouse_families || [],
     parent_family_list: person.parent_family ? [person.parent_family] : [],
+    // 居住地（契约 v2 C7）：顶层数组，`{ place, place_code, place_note }`，顺序即展示顺序，无则 `[]`
+    residence_places: residenceViewOf(person.residence_places),
     profile: {},
   };
-  if (person.birth_date) raw.profile.birth = { date: person.birth_date, place: person.birth_place || '' };
+  // 出生地（契约 v2 C7）：`place` = 码反查展示串（空码 / 未知码 → 空串），备注落 `place_note`。
+  // 有生年**或**有出生地内容即输出 `profile.birth` —— 否则「只填了出生地、生年不详」的节点
+  // 读不回来，前端保存时会把出生地写空。
+  const birthPlace = placeViewOf(person.birth_place);
+  if (person.birth_date || hasPlaceContent(person.birth_place)) {
+    raw.profile.birth = {
+      date: person.birth_date || '',
+      place: birthPlace.place,
+      place_code: birthPlace.place_code,
+      place_note: birthPlace.place_note,
+    };
+  }
   if (person.death_date) raw.profile.death = { date: person.death_date, place: person.death_place || '' };
   const spouseFams = (person.spouse_families || []).map((fh) => profileFamily(tree, tree.families[fh])).filter(Boolean);
   if (spouseFams.length) raw.profile.families = spouseFams;
@@ -470,6 +495,48 @@ async function handleRequest(event) {
       if (description !== undefined) entry.description = description;
       await saveMeta(meta);
       return send(200, { ok: true, entry });
+    }
+
+    // 家族树「发源地」人工指定（契约 v2 C8′；权限档与 PUT /tree-meta 完全一致：仅 chief_editor）
+    // 入参 `{ tree_id, person_handle }` —— 把 tree-meta 的 `origin_code` / `origin` 设为**用户点选的**
+    // 本树「始祖三代内」某节点的出生地。**不做任何自动同步**（原 C8「写时同步镜像」口径已作废）。
+    // 校验全部先于写入：① tree_id 存在；② 节点属于本树；③ 节点在始祖三代内；④ 节点出生地有码。
+    // 成功：`{ ok, origin_code, origin, source: { handle, gramps_id, name } }`。
+    if (pathname === '/admin/set-tree-origin' && method === 'POST') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      const user = await colGet('jiazu_users', u.phone);
+      if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
+      const body = parseBody(event);
+      const wantTreeId = String(body.tree_id || '').trim();
+      const wantHandle = String(body.person_handle || '').trim();
+      const meta = await getMeta();
+      const entry = Object.values(meta?.trees || {}).find((t) => t && t.tree_id === wantTreeId);
+      if (!entry) return send(404, { error: `未找到 tree: ${wantTreeId}` });
+      const srcTree = await getTree(wantTreeId);
+      if (!srcTree) return send(404, { error: `树不存在: ${wantTreeId}` });
+      const person = wantHandle ? srcTree.people?.[wantHandle] : null;
+      if (!person) return send(400, { error: '该节点不属于本树' });
+      const founderHit = fa.resolveOriginFounder(srcTree, entry);
+      if (!founderHit) return send(400, { error: fa.founderUndecidedMessage(srcTree) });
+      const inScope = fa.founderThreeGenerations(srcTree, founderHit.handle).some((c) => c.handle === wantHandle);
+      if (!inScope) return send(400, { error: '该节点不在本树始祖三代范围内（仅始祖及其下两代可作为发源地）' });
+      // ④ 节点出生地必须有结构化码（`place_code` = 归一后的 `birth_place.origin_code`，历史字符串视为无码）
+      const srcCode = placeViewOf(person.birth_place).place_code;
+      if (!srcCode) return send(400, { error: '该节点未填写出生地行政区划代码' });
+      // ④′ R1（Zang 2026-09-20 裁定）：码必须是**已登记**码 —— 节点上的脏码不得被镜像进 tree-meta
+      //     （与 PUT /tree-meta 同一判据、同一逐字文案）
+      if (!isKnownOriginCode(srcCode)) return send(400, { error: unknownOriginCodeMessage(srcCode) });
+      const patch = treeOriginPatchOf(person.birth_place);
+      entry.origin_code = patch.origin_code;
+      entry.origin = patch.origin;
+      await saveMeta(meta);
+      return send(200, {
+        ok: true,
+        origin_code: patch.origin_code,
+        origin: patch.origin,
+        source: { handle: person.handle, gramps_id: person.gramps_id || '', name: person.name || '' },
+      });
     }
 
     // ================= 等级 =================
@@ -2481,9 +2548,34 @@ async function handleRequest(event) {
       const body = parseBody(event);
       // ② 只读预检（始祖 / 上层镜像 → 403，不扣费）；请求体无可修改字段 → 无效请求，不扣费
       const putTree = await getTree(treeId);
-      await fa.assertFounderEditable(putTree, peMatch[1], MASTER_TREE_ID);
+      // 地点字段形状闸门（写路径 C1′/C2′）：`residence_places` 显式提供但非数组、
+      // `birth_place` 显式提供但非对象 → 400（校验先于扣费 / 落盘 / 写入）。
+      // 理由：归一化只是读侧容错，拿它当写侧清洗会把原居住地 / 出生地码静默抹掉还收 1 片（实测缺陷）。
+      try {
+        assertPlaceFieldShapes(body);
+      } catch (e) {
+        return send(errorStatusOf(e, 400), { error: e.message });
+      }
+      // 居住地上限（契约 v2 C10）：第 10 条 → 400（**后端拦，不得只靠前端**；校验先于扣费）
+      try {
+        assertResidencePlacesLimit(body.residence_places);
+      } catch (e) {
+        return send(errorStatusOf(e, 400), { error: e.message });
+      }
+      // R1（Zang 2026-09-20 裁定）：`birth_place` 与 `residence_places` 每条的非空码必须是已登记码，
+      // 未知码 → 400「出生地行政区划代码无效：<码>」（与 PUT /tree-meta 同口径，校验先于扣费）。
+      try {
+        assertKnownOriginCodes(body);
+      } catch (e) {
+        return send(errorStatusOf(e, 400), { error: e.message });
+      }
+      // 只读预检（契约 v2 C6）：请求体**只**含出生地 / 居住地两项时放行；夹带锁字段照旧 403。
+      // 判据 = `personEditLockMessage`（与写路径 `tree-write.updatePerson` **同一函数**，覆盖全部只读分支：
+      // 本树始祖镜像 / 空白占位 / 祖谱镜像 / 世本镜像 / chain 镜像）—— **必须拦在扣费之前**，
+      // 被拒请求不得扣费、不得产生任何资产流水（含 `fee_refunded`）；本调用在下方 `chargeBamboo` 之前。
+      await fa.assertFounderEditable(putTree, peMatch[1], MASTER_TREE_ID, null, body);
       if (!eco.hasPersonChanges(body)) {
-        return send(400, { error: '请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号）' });
+        return send(400, { error: '请求体不包含可修改内容（姓名 / 性别 / 生卒 / 健在 / 称号 / 出生地 / 居住地）' });
       }
       // ②′ 值级比对：与现值逐字段规范化后**完全相同** → no-op 编辑（打开弹窗不改东西点保存）：
       //     不扣费、不写树（version / updated_at 不动）、不写详情、不产生任何 txs 流水，
@@ -2556,6 +2648,39 @@ async function handleRequest(event) {
     // ================= 读接口（P1） =================
     // 节点级可见分层：guest/logged-in 裁剪树梢近代世（master/成员/特权 full）
     const readAccess = await resolveTreeAccess(headers, treeId, tree);
+
+    // GET /tree/origin-candidates（契约 v2 C8′ ⑥）：家族树「发源地」候选 = 始祖 + 下 1–2 代（共三代）。
+    // 读口径：需 X-Tree-Id（上方已拦）；节点级可见性裁剪与家族页读一致。
+    // **始祖识别失败不报 400** —— `founder: null` + `candidates: []`，前端据此提示不可用。
+    // `is_current` = 该候选的出生地码 == tree-meta 当前 `origin_code`（当前来源地的贡献节点）。
+    if (pathname === '/tree/origin-candidates' && method === 'GET') {
+      const meta = await getMeta();
+      const entry = Object.values(meta?.trees || {}).find((t) => t && t.tree_id === treeId) || null;
+      const hit = fa.resolveOriginFounder(tree, entry);
+      const founderHandle = hit && !readAccess.isHiddenPerson(hit.handle) ? hit.handle : '';
+      const shape = (p) => ({ handle: p.handle, gramps_id: p.gramps_id || '', name: p.name || `${p.surname || ''}${p.given || ''}` });
+      const candidates = founderHandle
+        ? fa
+            .founderThreeGenerations(tree, founderHandle)
+            .filter((c) => !readAccess.isHiddenPerson(c.handle))
+            .map((c) => {
+              const p = tree.people[c.handle];
+              const view = placeViewOf(p.birth_place);
+              return {
+                ...shape(p),
+                generation: c.generation,
+                birth_place: view,
+                is_current: !!entry?.origin_code && view.place_code === String(entry.origin_code),
+              };
+            })
+        : [];
+      return send(200, {
+        tree_id: treeId,
+        founder: founderHandle ? shape(tree.people[founderHandle]) : null,
+        current: { origin_code: String(entry?.origin_code ?? ''), origin: String(entry?.origin ?? '') },
+        candidates,
+      });
+    }
 
     // /events/<handle>
     const evMatch = pathname.match(/^\/events\/([^/]+)$/);

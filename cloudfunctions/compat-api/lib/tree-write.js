@@ -24,10 +24,18 @@ import {
   nextPersonId,
   nextFamilyId,
 } from './store.js';
-import { founderLockMessage, metaEntryOf, isFounderMirror, isUpperMirror, upperMirrorLockMessage, MIRROR_LOCK_MESSAGE, treeKindOf, resolveFounderHandle, TREE_KIND } from './founder-attach.js';
+import { metaEntryOf, isFounderMirror, isUpperMirror, personEditLockMessage, MIRROR_LOCK_MESSAGE, treeKindOf, resolveFounderHandle, TREE_KIND } from './founder-attach.js';
 import { idAllocator, reserveFamilyIds } from './id-seq.js';
 import { resolveNode } from './id-resolve.js';
 import { isKnownOriginCode, resolveOrigin } from './geo.js';
+// 出生地 / 居住地（契约 v2）：写路径白名单 + 归一 + 形状闸门 + 上限的唯一真源
+import {
+  assertPlaceFieldShapes,
+  assertResidencePlacesLimit,
+  isPlaceFieldsOnly,
+  normalizeBirthPlace,
+  normalizeResidencePlaces,
+} from './person-places.js';
 
 export const EXTERNAL_KEYS = [
   'external_tree',
@@ -158,24 +166,39 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
     const person = tree.people[handle];
     if (!person) throw new Error('person not found');
 
+    // 地点字段形状闸门（实证缺陷：非数组 `residence_places` 归一为 `[]` → 静默清空居住地还照收 1 片）：
+    // 显式提供但非数组 / 非对象 → 400，先于只读闸门与任何字段写入（与路由层同序：400 先于 403）。
+    assertPlaceFieldShapes(body);
+
     // 上层镜像只读（docs/founder-attach.spec.md §5 / docs/clan-tree.spec.md §3-7）：
     // - 任一上层树的镜像节点（始祖 founder / 祖谱顶端链 chain）→ 403，需到真身所在层修改
     // - 始祖位置的空白占位态 → 403「请先认祖」（不允许自行填写身份数据）
+    // 例外（契约 v2 C6，与路由层 `assertFounderEditable` **同一判据函数** `personEditLockMessage`）：
+    // 请求体**只**含 `birth_place` / `residence_places` 两项时放行 —— 出生地 / 居住地是本树自填记录
+    // （家族树「发源地」由用户在始祖三代内人工指定，C8′）；夹带姓名 / 生卒 / 健在等锁字段仍 403。
     if (opts.masterTreeId && treeId !== opts.masterTreeId) {
-      const mirrorLock = await upperMirrorLockMessage(person, treeId);
       const entry = opts.founderEntry !== undefined ? opts.founderEntry : await metaEntryOf(treeId);
-      const lock = mirrorLock || founderLockMessage(person, tree, opts.masterTreeId, entry);
-      if (lock) {
+      const lock = await personEditLockMessage(person, tree, opts.masterTreeId, entry);
+      if (lock && !isPlaceFieldsOnly(body)) {
         const err = new Error(lock);
         err.status = 403;
         throw err;
       }
     }
 
-    const { surname, given, name } = nameParts(body.primary_name);
-    person.surname = surname;
-    person.given = given;
-    person.name = name;
+    // 居住地上限（契约 v2 C10）：在任何字段写入之前拦下（第 10 条 → 400），
+    // 免得「先改名字再抛错」把进程内树对象改脏。
+    assertResidencePlacesLimit(body.residence_places);
+
+    // 姓名：**只在显式提供 `primary_name` 时**才改写（C6 插曲 · 2026-09-20）——
+    // 「只提 birth_place / residence_places」的放行路径没有 primary_name，
+    // 无条件改写会把始祖姓名抹成「未知」（实测复现：PUT 放行 200 但树内 name 变「未知」）。
+    if (body.primary_name !== undefined && body.primary_name !== null) {
+      const { surname, given, name } = nameParts(body.primary_name);
+      person.surname = surname;
+      person.given = given;
+      person.name = name || person.name;
+    }
     if (body.gender !== undefined && [0, 1, 2].includes(body.gender)) {
       person.gender = genderFromNum(body.gender);
     }
@@ -186,6 +209,15 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
       lockedDeceased: !!opts.deceasedLocked || (!!opts.masterTreeId && treeId === opts.masterTreeId),
       deceasedLockLabel: opts.deceasedLockLabel,
     });
+
+    // 出生地 / 居住地（契约 v2 C1/C2）→ 树 JSON 结构字段（写路径白名单）：
+    // 只覆盖「显式提供」的键（未提供的保持原值），值一律归一为 `{ origin_code, note }` / 数组。
+    // **显式 `null` 一律等同未提供**（F5 修复）：`normalizeBirthPlace(null)` 归一为
+    // `{origin_code:'',note:''}`、`normalizeResidencePlaces(null)` 归一为 `[]` —— 若照写就会把原出生地 /
+    // 原居住地静默清空（还照收 1 片），与「变更判定把 null 当未提供」自相矛盾。
+    // 置空一律由合法空值完成：`birth_place:{origin_code:'',note:''}` / `residence_places:[]`。
+    if (body.birth_place !== undefined && body.birth_place !== null) person.birth_place = normalizeBirthPlace(body.birth_place);
+    if (body.residence_places !== undefined && body.residence_places !== null) person.residence_places = normalizeResidencePlaces(body.residence_places);
 
     // 跨树软关联（结构字段）→ 树 JSON；其余属性 → 详情
     const ext = {};
@@ -247,7 +279,8 @@ export async function createPerson(treeId, body) {
       gender: genderFromNum(body.gender),
       birth_date: '',
       death_date: '',
-      birth_place: '',
+      birth_place: { origin_code: '', note: '' },
+      residence_places: [],
       death_place: '',
       parent_family: '',
       spouse_families: [],
@@ -447,7 +480,8 @@ function newChainPerson({ handle, grampsId, surname, given, gender = 'U' }) {
     gender: ['M', 'F', 'U'].includes(gender) ? gender : 'U',
     birth_date: '',
     death_date: '',
-    birth_place: '',
+    birth_place: { origin_code: '', note: '' },
+    residence_places: [],
     death_place: '',
     parent_family: '',
     spouse_families: [],
@@ -917,6 +951,9 @@ export function nextTreeId(meta, surnameChar) {
  *   原零参回调不受影响，契约向后兼容）
  * - originCode（可选）：结构化发源地（6 位行政区划码）。非空时先校验（未知码 → 400 fail），
  *   校验通过后 `origin` 由名称表反查**覆盖**；未给时保持 legacy（`origin` 直写）。
+ * - 契约 v2 C11（不变量）：「树上发源地 = 某节点出生地」永远成立 —— 建树时把同一个 `originCode`
+ *   写入**始祖节点**的 `birth_place.origin_code`（`note:''`）。故此后「发源地」的**人工指定**
+ *   走 `POST /admin/set-tree-origin`（C8′），而不是靠任何自动同步。
  */
 export async function createTree({
   surnameChar,
@@ -964,7 +1001,9 @@ export async function createTree({
         gender,
         birth_date: '',
         death_date: '',
-        birth_place: '',
+        // C11：建树发源地直填 tree-meta 的同时写入始祖节点出生地码（不变量：树上发源地 = 某节点出生地）
+        birth_place: { origin_code: code, note: '' },
+        residence_places: [],
         death_place: '',
         parent_family: '',
         spouse_families: [],
@@ -1181,7 +1220,8 @@ export async function addSpouseNode({
         gender: ['M', 'F', 'U'].includes(gender) ? gender : 'U',
         birth_date: '',
         death_date: '',
-        birth_place: '',
+        birth_place: { origin_code: '', note: '' },
+        residence_places: [],
         death_place: '',
         parent_family: '',
         spouse_families: [],

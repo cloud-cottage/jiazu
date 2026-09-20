@@ -58,7 +58,13 @@
       "death_date": "1920",
       "is_living": true,        // 显式健在状态（可选）。true=健在；false=已故（death_date 可空=卒年不详）。
                                 // 缺省（旧数据无此字段）由读路径推断：有 death_date → 已故，否则视作健在（隐私保守）
-      "birth_place": "",        // 可选：发祥地/出生地（时间轴可用）
+      "birth_place": { "origin_code": "", "note": "" },   // 出生地（**2026-09-20 起为对象**，非字符串）：
+                                // origin_code = 三级行政区划码（可空串）；note = 细节补充（展示文案 =「备注」）
+                                // 历史存量形态为字符串 ⇒ 读侧必须容错归一为 {origin_code:'', note:<原串>}，非法类型 → 空对象
+                                // 口径真源 = docs/person-places.spec.md（§1 / §3-2）
+      "residence_places": [],   // 居住地（**2026-09-20 新增**）：[{ origin_code, note }] 数组，**上限 9 条**，
+                                // 顺序即展示顺序；无则 []；第 10 条由后端 400 拒绝（C10）
+                                // 口径真源 = docs/person-places.spec.md（§2）
       "death_place": "",
       "parent_family": "F1001",          // 所属父母家族 handle（无则缺省 = 根候选）
       "spouse_families": ["F2001"],      // 本人作为父亲/母亲的家族列表
@@ -189,6 +195,7 @@ tree-meta 从"配置文件"升级为**文档**（`_id = "global"`，内容 = 现
 
 **条目字段（`trees.<tree_id>`）补充**：`tree_id`、`path_alias`、`surname_char`（姓氏汉字）、**`surname_pinyin`**（该树**实际采用**的姓氏拼音；新建树 / 拆分 / 新建祖谱均写，口径与遗留缺口见 `docs/tree-id.spec.md` §4）、`kind`（`'master'` / `'clan'` / `'family'`，见 `docs/clan-tree.spec.md` §2）、`display_title` / `genealogy_name` / `hall_name` / `origin` / `description` / `founder_*` 等展示字段。
 **条目字段补充（2026-09-20 新增 · 发源地结构化）**：**`origin_code`**（**字符串**：6 位行政区划代码；**空串意为「未结构化」**；**结构化真源**；口径见 `docs/geo-origin.spec.md`）；同条的 **`origin` 降级**为「**写时由名称表反查 `origin_code` 生成的展示串**（**软冗余**，**禁止前端手改**）」——两者冲突时**以 `origin_code` 为准**；**读侧 legacy 判据一律 `(entry.origin_code ?? '') === ''`**（**字段缺失与空串同判**：存量未迁移树**不补写空串**）。
+**条目字段补充（2026-09-20 追加 · 发源地 ＝ 人工指定）**：`trees.<tree_id>.origin_code` / `origin` 的**内容来源**自本日起为「**用户在始祖附近节点中人工指定的结果**」—— **不存在任何「改始祖出生地即自动回写 tree-meta」的逻辑**（Zang 2026-09-20 口径变更：原「写时同步镜像」**已作废**）。指定入口 = **`POST /admin/set-tree-origin`** `{ tree_id, person_handle }`（权限同 `PUT /tree-meta` = chief_editor；返回含 `source: {handle, gramps_id, name}`）；**可选范围 = 始祖节点 + 其下 1–2 代（共三代）**，且**被指定节点的 `birth_place.origin_code` 必须非空**；候选读接口 = `GET /tree/origin-candidates`（始祖识别失败时返回 `founder:null, candidates:[]`，不报 400）；**始祖认定 = `founder_handle` 优先，缺失时取唯一「非镜像」根节点**（`String(external_mirror) !== 'true'` 且 `parent_family` 为空；**0 个或多个 → 400**；⚠️ 实测 `qin_31206` / `liu_21016` 的 `founder_handle` 为**空串**，判据必须是「非空」而非「字段存在」）。**建树时**（`POST /admin/create-tree`）填写的发源地 **同时写 tree-meta 与始祖节点 `birth_place.origin_code`（`note:''`）**，使「树上发源地 = 某节点出生地」恒成立。`PUT /tree-meta` 的直写分支**保留为兼容入口，不再是正规入口**。**完整口径（契约 C1–C11、读响应形状、迁移、回滚）= `docs/person-places.spec.md`**。
 条目的 `tree_id` **不是**自由填写的字符串：由 `<姓氏拼音>_<汉字码点>_<两位序号>` 规则生成（唯一真源 = `cloudfunctions/compat-api/lib/tree-write.js` 的 `surnamePinyin()` / `nextTreeId()` / `genClanTreeId()`；**无兜底**，取不到拼音一律 400）→ 完整口径见 **`docs/tree-id.spec.md`**。
 
 ### 5.6 `sms_codes`（临时验证码，TTL 索引 5 分钟）

@@ -82,8 +82,46 @@ export interface PersonSummary {
   external_mirror?: string;
 }
 
+/**
+ * 出生地 / 居住地：**提交形状**（契约 v2）。
+ * `{ origin_code, note }` —— 前端只提交结构化码 + 备注；展示串由后端写路径按码反查生成
+ * （真源 `cloudfunctions/compat-api/lib/geo.js`），前端**不得**自己拼展示串落库。
+ */
+export interface PersonPlaceInput {
+  /** 6 位行政区划代码（空串 = 未选定；只选到省 / 市亦合法） */
+  origin_code: string;
+  /** 细节补充（界面文案「备注」；无码的历史自由文本亦落此字段） */
+  note: string;
+}
+
+/**
+ * 出生地 / 居住地：**读响应派生形状**（后端派生，前端只读展示）。
+ * `place` 是码反查后的展示串（空码 → 空串），`place_note` 是备注。
+ */
+export interface PersonPlaceView {
+  /** 码反查后的展示串（空码 → `''`） */
+  place: string;
+  /** 结构化码真源（编辑回填用；空串 = 无码） */
+  place_code: string;
+  /** 备注（无码旧数据的正文也落此字段 → 建档回显不丢） */
+  place_note: string;
+}
+
+/** 读响应里 `profile.birth` / `profile.death` 的生卒形状（含派生地点字段） */
+export interface ProfileLifespanView {
+  date?: string;
+  /** 码反查后的展示串（空码 → `''`） */
+  place?: string;
+  place_code?: string;
+  place_note?: string;
+}
+
 /** 人物详情 */
 export interface PersonDetail extends PersonSummary {
+  /** 出生地（读响应派生形状；无数据 → `undefined`） */
+  birth_place?: PersonPlaceView;
+  /** 居住地（多条，顺序即展示顺序；无数据 → `[]`） */
+  residence_places?: PersonPlaceView[];
   profiles: PersonProfile[];
   families: FamilyRef[];
   events: EventRef[];
@@ -234,4 +272,52 @@ export interface ConvergeClanResult {
   /** 迁移的家族记录数 */
   moved_families: number;
   spirit: ConvergeSpiritTransfer;
+}
+
+// ---- 家族树「发源地」人工指定（契约 v2 C8′；docs/person-places.spec.md §6） ----
+
+/**
+ * 发源地候选节点（`GET /tree/origin-candidates` 的 `candidates[]`）。
+ *
+ * `birth_place` 为**读响应派生形状**（与出生地 / 居住地读形状同形，前端只读、不提交）：
+ * `place` = 码反查后的展示串（空码 → `''`）、`place_code` = 结构化码真源
+ * （**空串 = 该节点未填码 ⇒ 界面置灰不可选**）、`place_note` = 备注。
+ */
+export interface TreeOriginCandidate {
+  handle: string;
+  gramps_id: string;
+  name: string;
+  /** 世代：1=始祖 / 2=子代 / 3=孙代（可选范围 = 始祖及其下 1–2 代，共三代） */
+  generation: number;
+  birth_place: {
+    place: string;
+    place_code: string;
+    place_note: string;
+  };
+  /** 当前生效的发源地是否由该节点贡献（出生地码 == tree-meta 现行 `origin_code`） */
+  is_current: boolean;
+}
+
+/**
+ * 发源地候选读响应（`GET /tree/origin-candidates`，需 `X-Tree-Id`）。
+ * **始祖无法认定时后端返 200 + `founder:null` + `candidates:[]`（不报 400）**，界面据此给可读提示。
+ */
+export interface TreeOriginCandidates {
+  tree_id: string;
+  /** 始祖（无法认定 → `null`） */
+  founder: { handle: string; gramps_id: string; name: string } | null;
+  /** 当前已生效的发源地（tree-meta 软冗余，供弹窗回显） */
+  current: { origin_code: string; origin: string };
+  candidates: TreeOriginCandidate[];
+}
+
+/** 发源地指定出参（`POST /admin/set-tree-origin`） */
+export interface SetTreeOriginResult {
+  ok: boolean;
+  /** 被指定节点出生地码（后端写路径反查展示串） */
+  origin_code: string;
+  /** 展示串（由后端 `resolveOrigin()` 生成，前端不拼） */
+  origin: string;
+  /** 发源地来源节点 */
+  source: { handle: string; gramps_id: string; name: string };
 }
