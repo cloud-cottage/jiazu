@@ -57,3 +57,7 @@ logs/
 
 # uni-app
 frontend/unpackage/
+
+# 本地归档（可能含凭据/数据，禁止入库）
+backups/
+*.tar.gz

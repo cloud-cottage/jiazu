@@ -18,7 +18,7 @@ export default defineConfig({
       "/api": {
         // 默认指向自有数据层 compat-api（树 JSON + 详情文档，读写同源）；
         // 本地：COMPAT_SOURCE=local node cloudfunctions/compat-api/local-server.js 3100
-        // 需回旧 Gramps 链路（只读/兼容排查）时用 API_PROXY=http://127.0.0.1:5197（见 npm run dev:h5:legacy）
+        // 指向其他后端时用 API_PROXY 覆盖（legacy Gramps 链路 5197/5198 已于 2026-09-19 退役）
         target: process.env.API_PROXY || "http://localhost:3100",
         changeOrigin: true,
       },
