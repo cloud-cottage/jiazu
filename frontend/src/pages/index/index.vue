@@ -172,11 +172,8 @@
             @update:value="(v: any) => (form.display_title = v)"
           />
           <text class="ct-label">发源地（选填）</text>
-          <t-input
-            :value="form.origin"
-            placeholder="选填，如：山东费县"
-            @update:value="(v: any) => (form.origin = v)"
-          />
+          <!-- 结构化三级行政区划（省 / 市 / 县）；只提交 origin_code，展示串由后端写路径生成 -->
+          <GeoCascader v-model="form.origin_code" />
           <view class="ct-fee">
             <text class="ct-fee-text">建树消耗 {{ TREE_CREATE_FEE_SEEDS }}颗石榴籽（可用籽数见「我的资产」）</text>
             <text class="ct-fee-sub">tree_id 自动生成（姓氏拼音_码点_序号），创建后可立即新增人物</text>
@@ -202,6 +199,7 @@ import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { DigitalHallCard, TreeMeta } from '@/business/types';
 import type { TreeRankInfo, GlobalPersonHit } from '@/business/api';
 import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
+import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
 
 /**
  * 建树确认弹窗文案（docs/economy-ops.spec.md §6.1 第 8.4 条 · 定稿文案，
@@ -409,7 +407,7 @@ onMounted(async () => {
 const showCreate = ref(false);
 const creating = ref(false);
 const createError = ref('');
-const form = ref({ surname: '', founder_name: '', gender: 'M' as 'M' | 'F' | 'U', display_title: '', origin: '' });
+const form = ref({ surname: '', founder_name: '', gender: 'M' as 'M' | 'F' | 'U', display_title: '', origin: '', origin_code: '' });
 
 const canCreateTree = computed(() => isAuthenticated() && authState.role === 'chief_editor');
 const canSubmitCreate = computed(
@@ -454,6 +452,9 @@ async function doCreateTree() {
         founder_name: form.value.founder_name.trim(),
         founder_gender: form.value.gender,
         display_title: form.value.display_title.trim(),
+        // 发源地：只提交结构化码；origin 保留字段仅为 legacy 原样透传（有码时后端以码反查结果覆盖）
+        // `origin_code` 归一空串：真源 `tree-meta` 老树该字段可能缺失（undefined），不得把它发给后端
+        origin_code: form.value.origin_code || '',
         origin: form.value.origin.trim(),
       },
       token,
@@ -464,7 +465,7 @@ async function doCreateTree() {
       icon: 'none',
     });
     showCreate.value = false;
-    form.value = { surname: '', founder_name: '', gender: 'M', display_title: '', origin: '' };
+    form.value = { surname: '', founder_name: '', gender: 'M', display_title: '', origin: '', origin_code: '' };
     clearMetaCache();
     await loadHalls();
     openTreeHome(res.tree_id);

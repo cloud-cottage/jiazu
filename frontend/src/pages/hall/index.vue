@@ -9,7 +9,7 @@
         <text class="title">{{ hallInfo?.display_title || '加载中...' }}</text>
         <text class="genealogy" v-if="hallInfo?.genealogy_name">谱名：{{ hallInfo.genealogy_name }}</text>
         <text class="hall-name" v-if="hallInfo?.hall_name && hallInfo.hall_name !== '暂无'">堂号：{{ hallInfo.hall_name }}</text>
-        <text class="origin" v-if="hallInfo">发源地：{{ hallInfo.origin }}</text>
+        <text class="origin" v-if="hallInfo && hallInfo.origin">发源地：{{ hallInfo.origin }}</text>
         <text class="desc" v-if="hallInfo">{{ hallInfo.description }}</text>
 
         <!-- 管理员编辑入口 -->
@@ -304,8 +304,9 @@
           <input v-model="editForm.hall_name" class="input" placeholder="如：三让堂" />
         </view>
         <view class="form-item">
-          <text class="label">堂号发源地</text>
-          <input v-model="editForm.origin" class="input" placeholder="如：江苏苏州洞庭" />
+          <text class="label">发源地</text>
+          <!-- 结构化三级行政区划（省 / 市 / 县）；legacy 旧文本仅在无码时兜底展示 -->
+          <GeoCascader v-model="editForm.origin_code" :legacy="editForm.origin" />
         </view>
         <view class="form-item">
           <text class="label">简介</text>
@@ -349,6 +350,7 @@ import DocLayoutPanel from '@/components/doc-layout-panel/doc-layout-panel.vue';
 import FamilyMessages from '@/components/family-messages/family-messages.vue';
 import ShibenTimeline from '@/components/shiben-timeline/shiben-timeline.vue';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
+import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
 
 const treeId = ref('');
 const spiritInfo = ref<SpiritInfo | null>(null);
@@ -364,7 +366,7 @@ const archiveModal = ref<InstanceType<typeof PersonDetailModal> | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
-const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', description: '' });
+const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', origin_code: '', description: '' });
 
 // 视图切换：血脉图示（默认） / 版式文档 / 家族消息（审批入口，仅管理权限）
 const view = ref<'pedigree' | 'doc' | 'msg'>('pedigree');
@@ -772,6 +774,7 @@ function openEdit() {
     archive_url: hallInfo.value.archive_url || '',
     hall_name: hallInfo.value.hall_name || '',
     origin: hallInfo.value.origin || '',
+    origin_code: hallInfo.value.origin_code || '',
     description: hallInfo.value.description || '',
   };
   editError.value = '';

@@ -26,6 +26,8 @@ export {
 } from './jade-ops';
 export { buildPedigreeForest, flattenForest } from './pedigree';
 export { personIdDisplay, dateDisplay, titleLabel, nameWithTitles, attrMapOf, TITLE_ATTR_KEYS, TITLE_DISPLAY_ORDER } from './format';
+export { provincesOf, citiesOf, countiesOf, resolveNames, pathOfCode, isKnownCode, SHOW_FILTER_NAMES, OVERSEAS_CODE } from './geo';
+export type { GeoProvince, GeoCity, GeoCounty, ResolvedOriginNames, OriginPath } from './geo';
 export { ICON, genderIconSrc } from './icons';
 export type { TreePersonNode } from './pedigree';
 export type { TreeMeta, TreeEntry, PersonSummary, PersonDetail, PersonProfile, FamilyRef, EventRef, MediaRef, CitationRef, NoteRef, CustomAttribute, SearchParams, SearchResult, DigitalHallCard } from './types';

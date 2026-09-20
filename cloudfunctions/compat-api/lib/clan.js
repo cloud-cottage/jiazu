@@ -45,6 +45,7 @@ import {
 } from './founder-attach.js';
 import { nextGrampsId, surnamePinyin } from './tree-write.js';
 import { idAllocator, reserveFamilyIds, reservePersonIds } from './id-seq.js';
+import { isKnownOriginCode, resolveOrigin } from './geo.js';
 
 /** 建谱申请集合（新建集合 → docs/PENDING_DEPLOY.md） */
 export const CLAN_REQUEST_COLLECTION = 'jiazu_clan_requests';
@@ -366,6 +367,7 @@ export function buildClanRequest({
   clanTitle = '',
   requestedBy = '',
   note = '',
+  originCode = '',
   now = new Date().toISOString(),
 }) {
   return {
@@ -376,6 +378,7 @@ export function buildClanRequest({
     master_handle: masterHandle || '',
     master_name: masterName || '',
     clan_title: String(clanTitle || '').slice(0, 40),
+    origin_code: String(originCode || '').trim(),
     status: 'pending',
     requested_by: requestedBy || '',
     note: String(note || '').slice(0, 200),
@@ -572,6 +575,7 @@ export async function clanInfo({ treeId, meta = null, getTreeFn = getTree, listI
  * 树 JSON + 顶端世本镜像段 + tree-meta 注册（kind='clan'）
  * - onBeforeWrite：全部校验通过后、落库前调用
  * - ownRootName：可选的祖谱自有支系入口节点（缺省留空，允许后续续编）
+ * - originCode（可选）：结构化发源地（6 位行政区划码）；非空先校验（未知 → 400），通过后覆盖 origin
  */
 export async function createClanTree({
   surname,
@@ -582,6 +586,7 @@ export async function createClanTree({
   chainDepth = DEFAULT_CHAIN_DEPTH,
   ownRootName = '',
   origin = '',
+  originCode = '',
   hallName = '',
   description = '',
   initiatorPhone = '',
@@ -590,6 +595,8 @@ export async function createClanTree({
   const char = String(surname || '').trim();
   if (!/^[\u4e00-\u9fa5]$/.test(char)) throw badRequest('请填写单个汉字姓氏');
   if (!masterTreeId || !masterHandle) throw badRequest('请选择中华世本（总谱）中的始祖节点');
+  const code = String(originCode || '').trim();
+  if (code && !isKnownOriginCode(code)) throw badRequest(`发源地行政区划代码无效：${code}`);
 
   const meta = await getMeta();
   const masterEntry = entryOf(meta, masterTreeId);
@@ -692,7 +699,8 @@ export async function createClanTree({
     genealogy_name: String(genealogyName || '').trim() || `${char}氏祖谱`,
     archive_url: '',
     hall_name: String(hallName || '').trim() || `${char}氏宗祠`,
-    origin: String(origin || '').trim(),
+    origin: code ? resolveOrigin(code).display : String(origin || '').trim(),
+    origin_code: code,
     description: String(description || '').trim() || `新建祖谱，始祖：${masterPerson.name || ''}（${kindLabel(TREE_KIND.MASTER)}）`,
     master_tree_id: masterTreeId,
     master_handle: masterHandle,

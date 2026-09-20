@@ -12,8 +12,9 @@
       "genealogy_name": "",
       "archive_url": "",
       "hall_name": "",
-      "origin": "黑龙江安达",
-      "description": "民国年间始居于黑龙江省绥化地区安达市。"
+      "origin": "黑龙江省绥化市安达市",
+      "description": "民国年间始居于黑龙江省绥化地区安达市。",
+      "origin_code": "231281"
     },
     "ji_23395_01": {
       "tree_id": "ji_23395_01",
@@ -21,7 +22,7 @@
       "surname_char": "季",
       "display_title": "季氏费县白露家族",
       "hall_name": "暂无",
-      "origin": "山东临沂费县新庄季家白露",
+      "origin": "山东省临沂市费县",
       "description": "祖籍山东省临沂市费县新庄镇季家白露村。一支于 1960 年代初迁至黑龙江省鸡西市梨树镇河西村。",
       "enable_custom_domain": true,
       "kind": "family",
@@ -29,7 +30,8 @@
       "founder_gramps_id": "I000209",
       "founder_name": "季花",
       "genealogy_name": "季氏费县白露家谱",
-      "archive_url": ""
+      "archive_url": "",
+      "origin_code": "371325"
     },
     "liu_21016_01": {
       "display_title": "刘氏家族",
@@ -38,8 +40,9 @@
       "genealogy_name": "",
       "archive_url": "",
       "hall_name": "",
-      "origin": "山东",
-      "description": "上世纪自山东省迁入黑龙江省安达市"
+      "origin": "山东省",
+      "description": "上世纪自山东省迁入黑龙江省安达市",
+      "origin_code": "370000"
     },
     "qin_31206_01": {
       "display_title": "秦氏鸡西家族",
@@ -48,8 +51,9 @@
       "genealogy_name": "",
       "archive_url": "",
       "hall_name": "",
-      "origin": "山东沂水",
-      "description": "解放前自山东省临沂市沂水县迁入黑龙江省鸡西市梨树区"
+      "origin": "山东省临沂市沂水县",
+      "description": "解放前自山东省临沂市沂水县迁入黑龙江省鸡西市梨树区",
+      "origin_code": "371323"
     },
     "shen_27784_01": {
       "display_title": "沈氏临沂家族",
@@ -58,8 +62,9 @@
       "genealogy_name": "",
       "archive_url": "",
       "hall_name": "",
-      "origin": "山东临沂",
-      "description": "解放前后自山东省临沂市迁入黑龙江省鸡西市梨树区。"
+      "origin": "山东省临沂市",
+      "description": "解放前后自山东省临沂市迁入黑龙江省鸡西市梨树区。",
+      "origin_code": "371300"
     },
     "zhonghua": {
       "tree_id": "zhonghua",
@@ -165,7 +170,7 @@
       "path_alias": "/li_26446_01",
       "surname_char": "李",
       "display_title": "李氏家族",
-      "genealogy_name": "李氏家谱",
+      "genealogy_name": "李氏石磷家谱",
       "archive_url": "",
       "hall_name": "李氏宗祠",
       "origin": "",
@@ -183,11 +188,12 @@
       "genealogy_name": "纪氏家谱",
       "archive_url": "",
       "hall_name": "纪氏宗祠",
-      "origin": "",
+      "origin": "黑龙江省鸡西市恒山区",
       "description": "解放前后居于黑龙江省鸡西市恒山区。",
       "enable_custom_domain": false,
       "created_at": "2026-09-19T02:04:04.985Z",
-      "created_by": "16601061656"
+      "created_by": "16601061656",
+      "origin_code": "230303"
     },
     "rong_23481_01": {
       "tree_id": "rong_23481_01",
@@ -227,11 +233,12 @@
       "genealogy_name": "恒氏家谱",
       "archive_url": "",
       "hall_name": "恒氏宗祠",
-      "origin": "辽宁",
+      "origin": "辽宁省朝阳市",
       "description": "新建家族树，始祖：恒未知",
       "enable_custom_domain": false,
       "created_at": "2026-09-19T03:08:57.453Z",
-      "created_by": "16601061656"
+      "created_by": "16601061656",
+      "origin_code": "211300"
     },
     "li_26446_02": {
       "tree_id": "li_26446_02",

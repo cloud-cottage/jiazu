@@ -24,8 +24,10 @@ export interface TreeEntry {
   archive_url?: string;
   /** 堂号（如「三让堂」），可选 */
   hall_name?: string;
-  /** 堂号发源地 */
+  /** 堂号发源地展示串（写时由后端按 `origin_code` 反查生成的软冗余；legacy 旧数据为原文） */
   origin: string;
+  /** 发源地结构化真源：6 位行政区划代码（前端只提交本字段，展示串由后端写路径生成） */
+  origin_code?: string;
   description: string;
   /** 是否中华世本总谱 */
   is_master?: boolean;

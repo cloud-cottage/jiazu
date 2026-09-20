@@ -163,7 +163,8 @@
         </view>
         <view class="form-item">
           <text class="label">发源地</text>
-          <input v-model="editForm.origin" class="input" placeholder="如：山东临沂" />
+          <!-- 结构化三级行政区划（省 / 市 / 县）；legacy 旧文本仅在无码时兜底展示 -->
+          <GeoCascader v-model="editForm.origin_code" :legacy="editForm.origin" />
         </view>
         <view class="form-item">
           <text class="label">简介</text>
@@ -200,6 +201,7 @@ import { personIdDisplay } from '@/business/format';
 import TreePedigree from '@/components/tree-pedigree/tree-pedigree.vue';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
 import FamilyMessages from '@/components/family-messages/family-messages.vue';
+import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
 
 const props = defineProps<{ treeId: string }>();
 
@@ -221,7 +223,7 @@ const clanEntry = ref<TreeEntry | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
-const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', description: '' });
+const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', origin_code: '', description: '' });
 
 /** 管理权限判定（口径与普通家族树首页一致：chief_editor 全局 / 本树 tree_steward） */
 async function loadManageRights() {
@@ -250,6 +252,7 @@ function openEdit() {
     archive_url: e.archive_url || '',
     hall_name: e.hall_name || '',
     origin: e.origin || '',
+    origin_code: e.origin_code || '',
     description: e.description || '',
   };
   editError.value = '';

@@ -1082,6 +1082,8 @@ export async function createTree(
     display_title?: string;
     genealogy_name?: string;
     hall_name?: string;
+    /** 发源地结构化真源：6 位行政区划代码（非空未知码 → 后端 400） */
+    origin_code?: string;
     origin?: string;
     description?: string;
   },
@@ -1859,6 +1861,9 @@ export async function updateTreeMeta(
     genealogy_name?: string;
     archive_url?: string;
     hall_name?: string;
+    /** 发源地结构化真源：6 位行政区划代码（非空未知码 → 后端 400） */
+    origin_code?: string;
+    /** 发源地展示串：legacy 旧数据**原样回传**即可；有码时后端以码反查结果覆盖（前端不拼串） */
     origin?: string;
     description?: string;
   },

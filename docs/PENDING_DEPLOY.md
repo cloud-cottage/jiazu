@@ -34,6 +34,10 @@
 > 云函数 `compat-api` 的 `GET /tree/rank` **`person_count` 语义变更**（**字段名 / 形状 / 类型不变** ⇒ **必须重打包**，否则云端**不报错、只静默返旧口径数值**）；首页家族 / 祖谱卡片文案改「**N 人**」+ 家族页（`hall`）树图统计栏改为同一口径（**H5 必须重打包 + hosting 部署**）；**CloudBase 集合与云端数据：无变化**（§23-2 / §23-3 均为「无」）。
 > **取代 §21 的卡片显示口径**（旧「N 人（含外树 M）」单列镜像显示已作废；**§21 正文不改写**，其 `mirror_count` 降级为**保留字段、不再参与展示**）。
 > 本批状态：**已实施（本地已验证，2026-09-19（Zang 汇总））** —— 实施与本地验证已完成（证据见 §23-1）；上云动作仍未执行；本节只登记上云动作，**不表示已实现 / 已通过 / 已部署**。
+> **2026-09-20 追加（本批 → §24）**：**家族树「发源地」结构化（三级行政区划 + 台湾省补全 + 海外单列）**（规格 `docs/geo-origin.spec.md`；口径来源 = Kevin 四问裁定 + Zang 契约 v1）——
+> 云函数 `compat-api` **新增结构化字段 `origin_code`**（`PUT /tree-meta` 白名单 + 建树 / 建祖谱落库 + 立支复制 / 拆树置空共 5 处，**必须重打包**，否则云端不认 `origin_code` 且不会做「未知码 → 400」）；
+> **云端数据：有变更**（**纯数据批次**：`config/tree-meta.json` 存量 `origin` → `origin_code` + 展示串重算，§8 逐树映射 17 行，含 md5 前后登记位）；**CloudBase 集合：无变化**（§24-2「无」）；
+> 前端 H5 / 小程序**必须重打包**（建树弹窗 + 家族树编辑 + 祖谱编辑三处自由文本 → 三级级联菜单；数据集随包发布、**零请求**）。
 
 ---
 
@@ -1979,3 +1983,470 @@ cd frontend && npm run build:mp-weixin                                      # �
 - **测试文件**（实施侧新增 / 修改的单测，如既有 `cloudfunctions/compat-api/lib/home-sort-search.test.js`）：纯本地，**不进打包产物**。
 - **文档**：`docs/home-sort-search.spec.md`（本批 §10-6 新增 · §10-2 作废标记 · §5-1 末条 · §9 部署指针）、`docs/permission-tier.spec.md`（§5 末条补注）、本清单 **§23**：不进产物、不影响云端。
 - `/tmp` 下的副本与取证文件：临时产物。
+
+---
+
+## 24. 本批：家族树「发源地」结构化（三级行政区划 + 台湾省补全 + 海外单列；**代码批次 + 纯数据批次**）
+
+> **权威规格** = `docs/geo-origin.spec.md`（2026-09-20 成文，Zang 契约 v1；**口径唯一真源**）。口径来源 = Kevin 2026-09-20 四问四答（存储结构 = 行政区划代码 / 数据源 = 内置静态数据集进仓 / 台湾省全省补全 / 存量批量迁移）+ Zang 补充裁定（`origin` 降级为写时反查生成的软冗余、`origin_code` 为结构化真源、海外哨兵码 `999999`、世本 `中华` legacy 特例）。
+> **本批性质** = **代码批次（云函数 + 前端）** **＋ 纯数据批次（`config/tree-meta.json` 存量迁移）** —— 两类动作的云端步骤**不能互相替代**（同 §13 A / B 的分野）。
+> **云端数据：有变更**（§24-3：tree-meta 存量 `origin` → `origin_code` + 展示串重算，逐树映射见规格 §8）；**CloudBase 集合：无变化**（§24-2「无」）。
+> ⚠️ **落地实况（2026-09-20 08:39–08:45 只读实测，规格 §0-4 逐条）**：数据集 `config/geo-divisions.json`、反查模块 `lib/geo.js`、生成脚本 `scripts/gen-geo-divisions.mjs`、迁移脚本 `scripts/migrate-tree-origin.mjs`、三处落库/复制改动（`lib/tree-write.js` / `lib/clan.js` / `lib/branch-clan-ops.js`）**已落盘**；`PUT /tree-meta` 白名单、`POST /admin/create-tree` 与祖谱路由接线、前端菜单、单测**未落盘**。`grep -c 'origin_code' cloudfunctions/compat-api/index.js` = **0**。
+> ⚠️ **新增部署项（本批独有）**：数据集**必须随云函数包发布**（`lib/geo.js` 运行时读盘，esbuild 不会把 JSON 打进产物）—— 见 §24-1 第 2 条步骤与判据。
+
+> 🔄 **§24R 现状回写（2026-09-20 09:01–09:03 CST · Jing 实测）** —— 上列「落地实况」与「新增部署项」**均已过期**：**本节的判据与动作按本块更新**；本节以下的正文是 08:45 时点的历史清单，**旧行保留原文**，逐条作废 / 取代见下。
+>
+> | 子节 | 状态（实测 2026-09-20） |
+> |---|---|
+> | §24-0 第 1 行（云函数重打包） | **代码面已全部落地**（四路由接线 + `PUT /tree-meta` 白名单）⇒ **仅剩「重打包 + 部署」**（见 **§24-1R**） |
+> | §24-0 第 2 行（CloudBase 集合：无） | ✅ **保持「无」** |
+> | §24-0 第 3 行（云端数据：有变更） | ✅ **有变更**，且**迁移已执行完成**（md5 前后值见 **§24-3R / §24-3-1R**）⇒ **仅剩「上传云端」** |
+> | §24-0 第 4 行（前端产物） | **前端改造已落地**（三处级联菜单 + 类型 + 类型定义）；**未落盘项 = 数据产物迁出 `src/static/`**（🆕 见 **§24-4R / §24-9**） |
+> | §24-1 第 ② 步（数据集必须随云函数包发布 / `GEO_DIVISIONS_FILE`） | 🚫 **已作废（2026-09-20，取代者 §24-1R）** —— `lib/geo.js` 改为**静态 JSON import**，esbuild **内联** |
+> | §24-2（集合：无） | ✅ 保持 |
+> | §24-3（迁移命令 + md5 登记位） | ✅ **已执行完成**；md5 已填（**§24-3R / §24-3-1R**） |
+> | §24-4（前端重打包） | ⚠️ **部分被超越**（见 §24-4R）；🆕 **新增小程序主包体积项**（**§24-9**） |
+> | §24-5（冒烟） | 判据数值更新见 **§24-5R** |
+> | §24-6（不需要上云的东西） | ⚠️ **部分被超越**（测试文件已落盘）见 **§24-6R** |
+> | §24-7（阻塞点） | 更新见 **§24-7R** |
+>
+> **两条关键判据的新值（旧 → 新）**：
+> - **源码侧**：`grep -c 'origin_code' cloudfunctions/compat-api/index.js` = **0 → 8**（四路由接线完成）。
+> - **产物侧**：`grep -c 'origin_code' cloudfunctions/deploy/compat-api/index.js` **仍为 0**（未重打包）⇒ **「重打包 + 部署」仍是本批唯一硬阻塞**（另有两条 🆕 阻塞项见 §24-7R）。
+> - **原「数据集随包」判据整体作废**，取代者 = esbuild **内联判据**：`grep -c '999999'` ≥ 1 **且** `grep -c '无法读取行政区划真源'` = 0（**§24-1R**）。
+>
+> **本批次总览另见 §24-10。**
+
+
+### 24-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **必须重打包 + 部署**（已完成部分：`lib/geo.js` + `lib/tree-write.js` / `lib/clan.js` / `lib/branch-clan-ops.js` 三处改动；**待落**：`PUT /tree-meta` 白名单 + 两条路由接线）+ **数据集随包发布**（见 §24-1 第 2 条） | 无（硬阻塞见 §24-7） |
+| 2 | CloudBase 集合 | **无**（不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **有变更**：`config/tree-meta.json` 存量迁移（**17 行逐树映射**中 **11 行迁移**；**1 行 legacy 特例不动** = `zhonghua`；**5 行空值不动**）→ **重跑迁移上传** + **核对 `jiazu_assets` 是否引用旧 id（本批无 id 变更 ⇒ 通常无需动）** | 需 CB_ENV / CB_KEY |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**：三处自由文本输入（建树弹窗 / 家族树编辑 / 祖谱编辑）→ **三级级联菜单**；数据集 `frontend/src/static/geo/divisions.json` 随包发布、**零请求** | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 24-1 云函数 `compat-api`（**必须重打包 + 部署**）
+
+**为什么需要**：结构化真源 `origin_code` 与「未知码 400」「由码反查生成展示串」全在云函数内；不重打包 ⇒ 云端**不认 `origin_code`**（`PUT /tree-meta` 白名单不含该字段 ⇒ 结构化编辑**静默丢弃**）、且**无码表校验**（可写入任意码）。
+
+**本批代码改动面（规格 §6-2 / §6-3，共 5 处硬要求；行号为 2026-09-20 只读实测）**：
+
+| # | 文件 | 实测锚点 | 改动 | 状态 |
+|---|---|---|---|---|
+| W1 | `cloudfunctions/compat-api/index.js` | `:439` 路由 / **`:445` 字段白名单** / `:454` `entry.origin = origin` | 白名单**新增 `origin_code`**；`origin` 改为**反查生成**（不再直取入参） | ⚠️ **待 Kong-A**（`grep -c 'origin_code' index.js` = **0**） |
+| W2 | `index.js` + `lib/tree-write.js` | `index.js:1967` 路由 / `:1982` `origin: body.origin` → `lib/tree-write.js:929`（形参 `originCode`）/ **`:998-999`** 落库 | 路由传 `originCode: body.origin_code` | ✅ **lib 层已落盘** / ⚠️ **路由接线待做** |
+| W3 | `index.js` + `lib/clan.js` | `index.js:1696` / `:1779` → `lib/clan.js:589`（形参）/ **`:699-700`** 落库；`:378`（`buildClanRequest`） | 两条路由传 `originCode` | ✅ **lib 层已落盘** / ⚠️ **路由接线待做** |
+| C1 | `lib/branch-clan-ops.js` | **`:716` `origin_code: entry.origin_code || ''`**（立支整条复制） | 已补 | ✅ **已落盘** |
+| C3 | `lib/tree-write.js` | **`:1088` `origin_code: ''`**（拆树新树） | 已补 | ✅ **已落盘** |
+
+> 无需改（已核实）：`lib/branch-clan-ops.js:915`（汇宗 `delete trees[srcKey]`，字段随条目消失）、`:964` `markShellSource()`（`{...base}` 展开保真）、`lib/tree-write.js:2377-2388` `refreshTreeMetaStats()`（`patch` 只含统计键）。
+> 新增模块：**`cloudfunctions/compat-api/lib/geo.js`**（133 行，零 npm 依赖，纯读；导出 `resolveOrigin` / `isKnownOriginCode` / `SHOW_FILTER_NAMES` / `OVERSEAS_CODE` / `GEO_FILE` 等）。
+
+```bash
+# ① 重打包（仓库根；产物 cloudfunctions/deploy/compat-api/index.js）
+frontend/node_modules/.bin/esbuild cloudfunctions/compat-api/index.js \
+--bundle --platform=node --format=cjs --external:@cloudbase/node-sdk \
+--outfile=cloudfunctions/deploy/compat-api/index.js
+
+# ② ⚠️ 数据集必须随云函数包发布（本批独有；缺此步 = 云端首次调用即抛错）
+#    lib/geo.js 用 fs.readFileSync 运行时读盘（esbuild 只 bundle JS，不会把 JSON 打进去）
+#    二选一：
+#      (a) 把真源副本放进云函数目录（随 functionRoot=./cloudfunctions/deploy 一起上传）
+#          —— 随包路径须在本节登记（待 Kong-A 定案，规格 §11-2 第 3 条）
+#      (b) 设云函数环境变量 GEO_DIVISIONS_FILE 指向随包副本的绝对路径
+#    不做 (a)/(b) 的后果：lib/geo.js:48 抛 `[geo] 无法读取行政区划真源 <路径>：<原因>`
+
+# ③ 部署（cloudbaserc.json 已配 functionRoot=./cloudfunctions/deploy、envId=liwu-d8gek6jjdab1d087c）
+tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c
+
+# ④ 重打包判据（两条都要 ≥ 1；未重打 = 0）
+grep -c 'origin_code' cloudfunctions/deploy/compat-api/index.js
+grep -c 'GEO_DIVISIONS_FILE\|geo-divisions' cloudfunctions/deploy/compat-api/index.js
+```
+
+
+#### 24-1R 云函数重打包判据 · 回写（2026-09-20）
+
+- 🚫 **上列第 ② 步「数据集必须随云函数包发布 / 二选一（随包副本 or `GEO_DIVISIONS_FILE`）」已作废（2026-09-20，取代者本小节）** —— `lib/geo.js` 已改为**静态 JSON import**（`import divisions from './geo/divisions.json' assert { type: 'json' }`，`:27`），**esbuild 会把 JSON 内联**进产物；`fs` / `GEO_FILE` / `GEO_DIVISIONS_FILE` 的**运行期读盘逻辑整体删除**（规格 **§5-6R**）。
+- **取代后的判据（三条，重打包后逐条跑）**：
+  ```bash
+  # ① 四路由接线（本批新增）必须体现在产物里
+  grep -c 'origin_code' cloudfunctions/deploy/compat-api/index.js         # 期望 ≥ 1（当前 = 0，未重打）
+  # ② 数据集已内联（取代原「GEO_DIVISIONS_FILE / geo-divisions」字符串代理判据）
+  grep -c '999999' cloudfunctions/deploy/compat-api/index.js              # 期望 ≥ 1
+  # ③ 旧读盘失败路径已不存在
+  grep -c '无法读取行政区划真源' cloudfunctions/deploy/compat-api/index.js # 期望 = 0
+  ```
+  **打前 /tmp 预检**（**不碰 `deploy/`**）：`npx esbuild cloudfunctions/compat-api/index.js --bundle --platform=node --format=esm --outfile=/tmp/geo-bundle-check.js` → **实测 `999999` = 1、`无法读取行政区划真源` = 0**（2026-09-20 09:01）。
+- **源码侧现状（回写实测）**：`grep -c 'origin_code' cloudfunctions/compat-api/index.js` = **0 → 8**（行 `448` / `452` / `465` / `467` / `1751` / `1754` / `1837` / `2008`）；`grep -c '发源地行政区划代码无效' cloudfunctions/compat-api/index.js` = **2**（`:453` / `:1756`）。⇒ **上列「判据当前实测 = `0` / `0`」中，源码侧那半已作废（2026-09-20，取代者本小节）**。
+- ⚠️ **「数据集与前端产物同源」的叙述仍需一处修正**：产物①`cloudfunctions/compat-api/lib/geo/divisions.json` **只为「让 esbuild 有 JSON 可内联」而存在**，**不是**运行期读盘对象；**云端实例工作目录不需要 `config/`**。
+
+
+- **判据当前实测 = `0` / `0`**（2026-09-20 08:36 只读）：`grep -c 'origin_code'`（产物）= **0**；源码侧 `grep -rc 'origin_code' cloudfunctions/compat-api/index.js cloudfunctions/compat-api/lib/` 合计 = **7**（`index.js` **0** / `lib/geo.js` 2（注释）/ `lib/tree-write.js` 2（`:998-999` 落库与 `:1088` 置空）/ `lib/clan.js` 2（`:378` 与 `:699-700`）/ `lib/branch-clan-ops.js` 1（`:716`））⇒ **lib 层已落地、产物未重打、路由层未接线**（命中 ≥1 才是「已重打」）。
+- ⚠️ **判据 ④ 第二条（`GEO_DIVISIONS_FILE` / `geo-divisions`）**：它是「数据集已随包」的**字符串型代理判据**（`lib/geo.js` 内即有 `geo-divisions` 字面 ⇒ 重打后应 ≥1）；**真正判据是部署后冒烟**（§24-5 第 2 条能返 200 而非抛 `[geo] 无法读取行政区划真源`）。**不得**只看字符串就判「数据集已随包」——需**同时**确认随包副本存在或环境变量已设。
+- **本批不新增集合、不改 `cloudbaserc.json`（除可能新增 `GEO_DIVISIONS_FILE` 环境变量）、不动既有环境变量**（`MASTER_TREE_ID=zhonghua` / `COMPAT_SOURCE=cloud` 均沿用）。
+- ⚠️ `cloudfunctions/deploy/compat-api/index.js` 现为 **998,338 B**（2026-09-19 12:50 重打；§19-7 / §21-1 登记值）→ 若仍是该份，则**同时落后 §24 与 §23 的口径**（§23 的 `person_count` 语义变更**无字符串判据**，只能靠数值比对，见 §23-5 第 1 条）。
+- ⚠️ **数据集与前端产物同源**：真源 `config/geo-divisions.json`（381,631 B）→ 产物 `frontend/src/static/geo/divisions.json`（156,131 B，**紧凑序列化**，非字节副本）；一致性守卫 = `node scripts/gen-geo-divisions.mjs --check`（**实测 exit 0**）。云函数侧**不得**另抄一份码表（`AGENTS.md` §2.3 第二套真源禁令）。
+
+
+#### 24-1R-2 数据集真源与产物的回写（2026-09-20）
+
+- **真源**：`config/geo-divisions.json`，**381,631 B / md5 `b8d268c3b4f47da99b3afb0eb633a209`**（本批**未改真源**）。
+- **产物两份、字节相同**：产物① `cloudfunctions/compat-api/lib/geo/divisions.json` + 产物② `frontend/src/static/geo/divisions.json`，各 **156,131 B**（**紧凑序列化**，**不是**真源字节副本）；守卫 = `node scripts/gen-geo-divisions.mjs --check` → **实测 exit 0**，输出「— 三件一致：真源 1 + 产物 2（同一渲染输出）」。 → **（已由 §24-11 / §24-12 取代**：现行 = **形状各异**的 2 份 —— 产物① **153,226 B**（全量紧凑 JSON，含 `_meta`）/ 产物② = **`frontend/src/business/geo/divisions.json`** **31,179 B**（紧凑 + deflateRaw + base64，无 `_meta`）；`--check` 输出行亦已改为「形状各异，同源于唯一真源；前端载荷可还原性已校验」，并**新增两条守卫**（前端载荷可还原 / 无废弃静态产物）**）**
+- ⚠️ **真源读数更正（2026-09-20 · 见 §24-12）**：上行为**剔除 82 项前**的读数；现行真源 = **373,926 B / md5 `da06c5711763f7989e25d8d793c2e4e0`**（取代 **381,631 B / `b8d268c3b4f47da99b3afb0eb633a209`**）。
+- **云函数侧不得另抄码表**（`AGENTS.md` §2.3 第二套真源禁令）—— 口径保持。
+- 🆕 **产物②的落位是新增缺陷项**：`frontend/src/static/**` 会被 uni-app **原样拷贝**进小程序主包 ⇒ **超包体上限**，见 **§24-9**。
+
+
+### 24-2 CloudBase 集合：**无**
+
+- 不新建集合、不加索引、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`（保持 §11-2 的 **12 项**）；本批只改 tree-meta 两个既有字段的取值与新增一个字段，**不落任何新集合**、不加任何索引。
+- **（2026-09-20 · §24-12 附注）** 通读本节：**无**涉及「数据集规模 / md5 / 产物形态与路径 / 测试基线 / 主包体积」的读数 ⇒ **本节无需更正**；上述五类口径的现行真值见 **§24-12**（登记此行以免「未提即漏」）。
+
+### 24-3 云端数据：**有变更**（**纯数据批次：tree-meta 存量迁移**）
+
+**为什么需要**：`origin_code` 是**新增字段**，云端 `jiazu_tree_meta` 文档里**不存在** ⇒ 不迁移则所有存量树在结构化口径下都是「未结构化」（`origin_code = ''`），前端菜单回显为空、展示串只能走 legacy 档；且**能判定到市 / 县的存量值**（Kevin 裁定第 4 条：能到市 / 县的按三级落、只能到省的止于一级）一旦漏迁，后续每次编辑都会把 legacy 原值冲成新值（数据不可逆）。
+
+**逐树映射清单**：**见 `docs/geo-origin.spec.md` §8-2（17 行全表，含 `tree_id` / 旧值 / 新 code / 新展示串 / 判定依据；全表统一标记「待 Kevin 复核」）**；汇总 = **11 行迁移**（止于 L1 = 4 行 / 到 L2 = 4 行 / 到 L3 = 3 行）+ **1 行 legacy 特例不动**（`zhonghua`：`origin='中华'`、`origin_code=''`）+ **5 行空值不动**。**本清单不复制该表**（避免两处各写一套口径）。
+
+
+#### 24-3R 存量迁移 · 执行结果回写（2026-09-20）
+
+- ✅ **迁移已执行完毕**（`node scripts/migrate-tree-origin.mjs --apply`）—— **本地真源已落库**；本节的命令**已跑过**，**剩余动作 = 上传云端**（第 ③ 步）。
+- **md5 前后值（逐字，取代 §24-3-1 的「待填」）**：
+
+  | 对象 | 写入前 md5 | 写入后 md5 |
+  |---|---|---|
+  | `config/tree-meta.json` | **`06c0d732d365b040cc372483d5eebaf1`** | **`9e29ff4628a234d71d41efc9a75cc9ca`** | → ⚠️（**已作废**：现行权威 md5 = `7ba00cf3833ea373b75e9f20b19d9a6e`（9,511 B / 2026-09-20 09:31:55 · Kevin 亲手直改 JSON），取代者 **§24-13(1)**）
+
+- **备份**：`~/jiazu-backups/2026-09-20-migrate-tree-origin/tree-meta.json`（md5 = **写入前值**）+ `/tmp/jiazu-bak-20260920-085451/`。
+- **逐树结果**：共 **17** 棵 → **待写 11 / 跳过 6（含特例 1）**；脚本对每条做「**契约码 vs 名称自动匹配**」交叉核验：**11 条全过**；`--include-auto` **未产生任何补写**；**独立 diff 证明只动 `origin` / `origin_code` 两字段**。 → ⚠️（**判据更正**：现行非空 = **7 / 17**，取代者 **§24-13(2)** / 规格 §13-12-2）
+- **逐条落地值（11 条，逐字）**：`gu_39038_01`→`231281`；`ji_23395_01`→`371325`；`liu_21016_01`→`370000`；`qin_31206_01`→`371323`；`shen_27784_01`→`371300`；`ji_23395`→`371300`；`gu_39038`→`330600`；`qin_31206`→`371300`；`long_40857_01`→`520000`；`heng_24658_01`→`210000`；`li_26446_02`→`370000`。**后 6 条为契约外、经 Zang 批准并入**（完整表 + 展示串见规格 **§8-2R**）。 → ⚠️（**已作废**：6 条契约外迁移已被 Kevin 于 2026-09-20 09:31:55 撤销 ⇒ 现行非空 = **7 / 17**，取代者 **§24-13(2)** / 规格 §13-12-2）
+- **跳过 6 条**：`zhonghua`（`origin='中华'`，**未动**，且 `origin_code` **字段缺失**）+ 5 棵空值树（`ji_32426_01` / `li_26446_01` / `li_26446_03` / `liu_21016` / `rong_23481_01`，**均字段缺失**）。**裁定：不补写空串** ⇒ 读侧判据一律 `(entry.origin_code ?? '') === ''`（规格 §7-3 修正）。
+- **幂等已实测**：`/tmp/jiazu-copy` 副本 `--apply` 得**同值**、复跑**无第二次变化**。
+- **第 ④ 步本地判据现应返回**：`11 / 17`（`origin_code` 非空条目）+ `--check` exit 0。 → ⚠️（**判据更正**：非空条目**期望 7 / 17**（不再期望 11 / 17），取代者 **§24-13(2)**）
+
+
+**具体命令**（仓库根；写法沿用 §3 / §12-1 / §13-2 / §15 既有命令 —— **密钥由用户提供，不代取、不打印**）：
+
+```bash
+# ① 【先副本演练】迁移脚本以 COMPAT_OUT_DIR / COMPAT_META_FILE 指向副本（实测已落盘的脚本与旗标）
+node scripts/migrate-tree-origin.mjs                            # dry-run（默认，只打印映射表）
+COMPAT_OUT_DIR=/tmp/jiazu-copy node scripts/migrate-tree-origin.mjs            # 副本演练（dry-run）
+COMPAT_OUT_DIR=/tmp/jiazu-copy node scripts/migrate-tree-origin.mjs --apply    # 副本演练（真写副本）
+
+# ② 真源迁移（--apply 前自动备份到 ~/jiazu-backups/<YYYY-MM-DD>-<说明>/tree-meta.json，并打印前后 md5）
+node scripts/migrate-tree-origin.mjs --apply
+#    ⚠️ `--include-auto`（未被契约点名的树走自动匹配）**默认关闭**；本轮 17 树已被规格 §8-2 全表点名
+#       ⇒ 本轮**不需要**该开关（是否允许自动落库待 Kevin / Zang 复核，规格 §8-4 第 5 条）
+
+# ③ 重跑迁移上传（tree-meta 逐棵覆盖；命令同 §3 / §12-1）
+CB_ENV=liwu-d8gek6jjdab1d087c CB_KEY=<云开发 API Key> \
+  node scripts/upload-migrated-to-cloudbase.mjs
+
+# ④ 本地侧判据
+python3 -c "import json;t=json.load(open('config/tree-meta.json'))['trees'];print(sum(1 for v in t.values() if v.get('origin_code')),'/',len(t))"   # 期望 11 / 17 → ⚠️（**判据更正**：非空条目**期望 7 / 17**（不再期望 11 / 17），取代者 **§24-13(2)**）
+node scripts/gen-geo-divisions.mjs --check   # 期望 exit 0「✅ 产物与真源一致」
+md5 config/tree-meta.json                   # 与 §24-3-1 登记值比对
+```
+
+#### 24-3-1 备份与 md5 登记位（**迁移前必做；数值由迁移执行者填写**）
+
+| # | 对象 | 写入前 md5 | 写入后 md5 | 备份路径 |
+|---|---|---|---|---|
+| 1 | `config/tree-meta.json` | **`06c0d732d365b040cc372483d5eebaf1`**（2026-09-20 08:36 实测） | *（待填）* | *（待填；惯例 `~/jiazu-backups/<YYYYMMDD-HHMMSS>-geo-origin/` + `/tmp/jiazu-bak-<ts>` 各一份）* |
+| 2 | `cloudfunctions/deploy/compat-api/index.js` | **998,338 B**（2026-09-19 12:50；判据 `grep -c 'origin_code'` = 0） | *（待填）* | 由 esbuild 重生成，无需备份 |
+
+
+#### 24-3-1R md5 登记位 · 已填（2026-09-20，取代上表两行的「待填」）
+
+| # | 对象 | 写入前 md5 | 写入后 md5 | 备份路径 |
+|---|---|---|---|---|
+| 1 | `config/tree-meta.json` | **`06c0d732d365b040cc372483d5eebaf1`** | **`9e29ff4628a234d71d41efc9a75cc9ca`** | `~/jiazu-backups/2026-09-20-migrate-tree-origin/tree-meta.json`（md5 = 写入前值）+ `/tmp/jiazu-bak-20260920-085451/` | → ⚠️（**已作废**：现行权威 md5 = `7ba00cf3833ea373b75e9f20b19d9a6e`；旧快照 `9e29ff46…` 不得用于回滚 / 上传，取代者 **§24-13**）
+| 2 | `cloudfunctions/deploy/compat-api/index.js` | **998,338 B** / md5 `d61a8aebfb3f3095baae4e1e731fd675`（2026-09-19 12:50） | *（仍待重打包；目标判据见 §24-1R）* | 由 esbuild 重生成，无需备份 |
+
+- **上列「只取一份的判据」已实测成立**：迁移后除 `origin` / `origin_code` 两字段外**逐字节未变**（独立 diff）。
+
+
+- ⚠️ **`/tmp` 备份不可作为唯一依据**（系统会清理）→ 必须另存 `~/jiazu-backups/`（既有口径：§16-3 追加 / §17-3）。
+- **只取一份的判据**：迁移后 `config/tree-meta.json` 的**其余字段逐字节未变**（口径 `AGENTS.md` §2.1：口径变更必须走 spec 章节 + 数据修正批次，**不得顺手统一其它字段**）。
+- ⚠️ **`jiazu_assets` 无需为本批改写**：本批**不改任何 `tree_id`**（不是 §20-2 的原地改名）⇒ 集合内 `ref.tree_id` / `desc` **不涉及**本批；若迁移执行时发现引用异常，**以云端实际为准**、只做核对（§16-3 追加既有口径）。
+- **不需要动作的两项**：`jiazu_id_seq` **不动**（不铸号）；`jiazu_person_details` **无手工删键**（本批不删节点、不改详情键）。
+
+### 24-4 前端产物（**必须重打包：H5 + 小程序**）
+
+**为什么需要**：三处自由文本输入换成三级级联菜单 + 数据集随包发布 —— **不重打包则线上仍是自由文本输入**（可写入任意字符串 ⇒ 与结构化真源分叉）。
+
+| 区域 | 文件（规格 §7-5 实测锚点） | 改动 |
+|---|---|---|
+| 建树弹窗（选填） | `frontend/src/pages/index/index.vue`（`:174-179` 输入；`form` `:412`；提交 `:457`；重置 `:467`） | 自由文本 → **三级级联菜单**；提交字段由 `origin` 改为 **`origin_code`** |
+| 家族树页「编辑族谱信息」 | `frontend/src/pages/hall/index.vue`（`:308` 输入；`editForm` `:367`；回填 `:774`） | 同上 |
+| 祖谱页「编辑祖谱信息」 | `frontend/src/components/clan-hall/clan-hall.vue`（`:166` 输入；`editForm` `:224`；回填 `:252`） | 同上 |
+| 展示（**不改**） | `pages/index/index.vue:96`、`pages/hall/index.vue:12`、`pages/family/index.vue:24` | 继续读 `origin`（服务端生成的软冗余）；**「待完善」兜底字面逐字保留** |
+| 类型 | `business/types.ts:28` / `:170`、`business/api.ts:1085` / `:1862` | 新增 `origin_code?: string`（`origin` **保留**） |
+| 数据集产物 | `frontend/src/static/geo/divisions.json`（**新增**，由真源生成） | 随包发布；消费方式 = **构建期静态引入**（**禁止运行时 `fetch`**，规格 §5-4） |
+
+
+#### 24-4R 前端产物 · 回写（2026-09-20）
+
+- ✅ **上表前 4 行的前端改造均已落盘**：新增 `frontend/src/business/geo.ts`（**144 行**）+ `frontend/src/components/geo-cascader/geo-cascader.vue`（**239 行**）；三处录入点（`frontend/src/pages/index/index.vue:202` / `frontend/src/pages/hall/index.vue:353` / `frontend/src/components/clan-hall/clan-hall.vue:204`）均已 `import GeoCascader from '@/components/geo-cascader/geo-cascader.vue'`；选择器**只提交码**（`emit('update:modelValue', draftCode)`），**不拼展示串**（展示串真源在后端写路径）。
+- 🚫 **上表「数据集产物」行已作废（2026-09-20，取代者本小节 + §24-9）**：产物**不得**留在 `frontend/src/static/geo/divisions.json`（uni-app 对 `src/static/**` **原样拷贝** ⇒ 小程序主包死重）。**新路径与新结构以 Kong 落地为准**（规格 **§13-3**，本册**不预设**路径）。
+- **零请求判据保持**（**构建期静态引入**，非运行时 `fetch`）；**反例登记保持**（`frontend/src/business/api.ts:1832` 的 `fetch('/static/tree-meta.json')` **不得**照抄）。
+
+
+```bash
+cd frontend && VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5   # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+
+cd frontend && npm run build:mp-weixin                                      # 小程序产物（同批上传）
+```
+
+- **零请求判据**（与 `docs/home-sort-search.qa.md` §4-1 同口径）：打开建树弹窗 / 家族树编辑弹窗 / 首页列表，网络面板增量 = **`0 fetch + 0 XHR`**（含阳性对照）。
+- **反例登记（不得照抄）**：`frontend/src/business/api.ts:1832` 现以 `fetch('/static/tree-meta.json')` **运行时取静态件** —— geo 数据集**不得**采用该形态（规格 §5-4）。
+
+### 24-5 部署后冒烟验证（按序做）
+
+1. **重打包判据 ≥ 1**：`grep -c 'origin_code' cloudfunctions/deploy/compat-api/index.js`（未重打 = **0**）；**数据集随包判据**：确认随包副本存在或 `GEO_DIVISIONS_FILE` 已设（§24-1 第 ② 步；字符串代理判据见 §24-1 判据 ④ 第二条的注意事项）；
+2. **数据集可用（本批独有 · 关键）**：登录后打开建树弹窗（或任一带发源地的读接口）→ **不得**出现 `[geo] 无法读取行政区划真源 …` / `[geo] 行政区划真源为空 …`；带 `chief_editor` 令牌 `POST /admin/create-tree` 传 `origin_code:'370000'` → **200**（**若 500 + 上述文案 = 数据集未随包**）；
+3. **结构化写入（白名单）**：带 `chief_editor` 令牌 `PUT /tree-meta` 传 `{tree_id, origin_code:'370000'}` → **200**，且响应 `entry.origin` = **「山东省」**（服务端反查生成），`entry.origin_code` = `'370000'`（**字段未被静默丢弃**）；
+4. **未知码 → 400**：同请求传 `origin_code:'000000'`（不在码表内）→ **400** + 文案 **`发源地行政区划代码无效：000000`**（**逐字取自实现**，见规格 §6-4(a)），且 tree-meta **未写入**（回读 `origin_code` 仍为原值）；
+5. **legacy 不覆盖**：对 `zhonghua` 传 `{tree_id:'zhonghua', origin_code:''}` → **200**，`origin` **仍为「中华」**（不得被清空）；
+6. **立支复制（C1）**：普通树立支 → 新树 tree-meta 条目的 `origin_code` = 源树值（**不为空**），`origin` = 反查结果；
+7. **拆树置空（C3）**：拆树 → 新树 `origin_code` = `''` **且** `origin` = `''`（无孤儿码）；
+8. **存量迁移回读**：云端 `jiazu_tree_meta` 中 `origin_code` **非空条目 = 11**、`zhonghua` 的 `origin` 仍为 **「中华」**、5 个空值树仍为 `''`（逐条与规格 §8-2 表比对）；
+9. **前端**：建树弹窗 / 家族树编辑 / 祖谱编辑三处均为**三级级联菜单**（任一级可止步）；**伪级名不出现在可选项**；选「海外」→ 无下级、展示 **「海外」**；卡片 / 页头展示串与规格 §7-2 黄金用例逐条一致；**网络增量 0 请求**；
+10. **小程序端**：重打后同 §24-5 第 9 条验一遍。
+
+
+#### 24-5R 冒烟验证 · 判据更新（2026-09-20）
+
+- **第 1 条判据更新**：源码侧 `grep -c 'origin_code' cloudfunctions/compat-api/index.js` = **8**（已接线）；**产物侧仍须重打包后 ≥ 1**。🚫 **原「数据集随包判据（随包副本存在 / `GEO_DIVISIONS_FILE` 已设）」整条作废（2026-09-20，取代者本小节）**，改为「产物内 `grep -c '999999'` ≥ 1 **且** `grep -c '无法读取行政区划真源'` = 0」。
+- **第 2 条判据更新**：云端**不再**需要 `config/`（静态 import 内联）⇒ 若仍见 `[geo] 无法读取行政区划真源 …`，说明**产物是旧版（未重打包）**，**不是**「数据集未随包」。
+- **第 8 条（存量迁移回读）**：本地真源已满足（**11 / 17**；`zhonghua` 的 `origin` 仍为 `中华`；5 棵空值树的 `origin_code` **字段缺失**，非空串）；云端的回读**待第 ③ 步上传后**执行。 → ⚠️（**判据更正**：现行非空 = **7 / 17**，取代者 **§24-13(2)** / 规格 §13-12-2）
+- **第 9 条新增子判据（前端）**：三处录入点菜单均可止步于任一级；🆕 **直筒子市（东莞市 / 中山市 / 儋州市 / 嘉峪关市）县级列表为空时须可正常「确定」**（规格 §13-2 第 3 条）。
+- **第 10 条新增**：小程序**主包体积**须 ≤ **`2,097,152 B`**（见 **§24-9**）。
+
+
+### 24-6 本批**不需要**上云的东西
+
+- **测试文件**（**实测尚未落盘**：`cloudfunctions/compat-api/lib/` 下只有 `geo.js`、无 `geo*.test.js`；`grep -c 'geo' package.json` = **0**）：规划名 `cloudfunctions/compat-api/lib/geo-divisions.test.js` / `lib/geo-origin-write.test.js`；纯本地（**必须注册进根 `package.json` 的 `scripts.test`，未注册 = 假绿**），**不进打包产物**；`npm test` 跑 `/tmp` 副本，**不得当云端回归**；
+- **数据集与生成脚本本身**：`config/geo-divisions.json`（真源，进 Git）+ `scripts/build-geo-divisions.mjs` / `scripts/gen-geo-divisions.mjs` 是**离线工具与数据**，**不进云函数 JS 产物**（但真源**必须随云函数包发布**，见 §24-1 第 ② 步 —— 两件事不同，勿混）。
+- **文档**：`docs/geo-origin.spec.md`（本批规格真源）与本清单 **§24**：不进产物、不影响云端；
+- **`/tmp/jiazu-*` 下的副本、备份与取证文件**：临时产物（正式备份另存 `~/jiazu-backups/`）；
+- **`frontend/dist/**` 现有构建产物**：需重打，**不得**沿用（同 §23-4 既有口径）。
+
+
+#### 24-6R 「不需要上云」清单 · 回写（2026-09-20）
+
+- 🚫 **上列第 1 条「测试文件实测尚未落盘」已作废（2026-09-20，取代者本小节）**：`cloudfunctions/compat-api/lib/geo.test.js`（**349 行 / 17 test**）**已建并注册**进根 `package.json` 的 `scripts.test`（**25 → 26 项**）；全量基线 **430 tests / 430 pass / 0 fail / 0 skipped**（规格 **§9-1R / §13-7**）。**纯本地、不进打包产物**的口径保持；`npm test` 跑 `/tmp` 副本、**不得当云端回归**（口径不变）。
+- ⚠️ **上列第 2 条的「真源必须随云函数包发布」半句已作废（2026-09-20，取代者 §24-1R）**：数据集由 **esbuild 内联**，**不需要**随包副本；但**产物①`cloudfunctions/compat-api/lib/geo/divisions.json` 会进云函数产物**（作为内联源）—— 与「`config/` 真源不进产物」**是两件事**。
+- **其余各条保持**（文档 / `/tmp` 副本与备份 / `frontend/dist/**` 不得沿用）。
+
+
+### 24-7 阻塞点
+
+- ⚠️ **必须先完成实施再部署**：**lib 层与脚本已落盘**（实测），但 `PUT /tree-meta` 白名单、`POST /admin/create-tree` 与祖谱两条路由的接线、前端菜单、单测**仍待 Kong-A**（规格 §0-4 未落盘清单）；`grep -c 'origin_code' cloudfunctions/compat-api/index.js` = **0** ⇒ **路由层与产物均不含本批改动**。
+- ⚠️ **新增阻塞项：数据集必须随云函数包发布**（本批独有，见 §24-1 第 ② 步）。`lib/geo.js:14-16` 头部明写该要求：`fs.readFileSync` **运行时读盘**、esbuild 只 bundle JS ⇒ 不把真源副本放进云函数目录、或未设 `GEO_DIVISIONS_FILE`，云端**首次调用即抛** `[geo] 无法读取行政区划真源 <路径>：<原因>`（`lib/geo.js:48`）⇒ 建树 / 建祖谱 / 结构化编辑路径**全部 500**。**二选一必须做，并在本节登记随包路径或环境变量取值**。
+- ⚠️ **云函数重打包与数据迁移是两件事、都要做**：只重打包不迁移 ⇒ 存量树 `origin_code` 全为空、菜单回显为空；只迁移不重打包 ⇒ 云端 `PUT /tree-meta` **静默丢弃** `origin_code`（新值写不进）。
+- ⚠️ **前端与云函数必须同批发布**：只发云函数不发 H5 ⇒ 线上仍是自由文本输入（可写入与真源分叉的字符串）；只发 H5 不发云函数 ⇒ 菜单选了码但云端不落库（回显立刻变空）。
+- **内存缓存**：`lib/store.js` 的 `metaCache` 进程内常驻 —— 本地迁移后 / 云端部署后**必须重启实例**才生效（口径见 §20-1 末条）。
+- **未决项不影响部署本身**：港澳下级清单 / 台湾省确切项数 / 「候选」码值核对等（规格 §11-2）由实施批次收口；**核对未通过的映射行一律降级或不迁移**（规格 §8-4 第 1 条）。
+- H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §4 / §16-4 / §17-4 / §22 / §23-4）。
+
+
+#### 24-7R 阻塞点 · 回写（2026-09-20）
+
+- ⚠️ **上列第 1 条已大幅收敛**：**代码面全部落地**（lib 层 + 四路由 + 白名单 + 前端菜单 + 单测）⇒ **唯一硬阻塞 = 云函数重打包 + 部署**（判据见 **§24-1R**）。
+- 🚫 **上列第 2 条「新增阻塞项：数据集必须随云函数包发布」已作废（2026-09-20，取代者 §24-1R）** —— **该阻塞点已消除**（esbuild 内联）。
+- 🆕 **新增阻塞项①（前端）**：**数据产物仍在 `frontend/src/static/geo/`** ⇒ 小程序**主包超限**（**2,243,357 B** > **2,097,152 B**），**必须迁出后方可上传小程序**（规格 **§13-3** / **§24-9**）。**H5 不受此限**，但**同批发布口径**要求一并处理。
+- 🆕 **新增阻塞项②（数据面 · 未落盘）**：**真源仍含 82 个非 6 位第三级项**（东莞 **36** / 中山 **23** / 儋州 **18** / 嘉峪关 **5**）⇒ 4 个直筒子市**尚未止于第二级**（规格 **§13-2**）。
+- **上列第 3 / 4 条（重打包与数据迁移都要做、前端与云函数同批发布）保持有效**。
+- **上列第 5 条（`lib/store.js` 的 `metaCache` 常驻 ⇒ 迁移后 / 部署后必须重启实例）保持有效**。
+- **上列第 6 条（未决项不影响部署本身）保持有效**；港澳 / 台湾项数 / 候选码值等未决以规格 **§11-2R** 的收口表为准。
+
+
+### 24-8 跨册登记
+
+- **口径唯一真源 = `docs/geo-origin.spec.md`**（本清单只登记上云动作与判据，不复制口径）。
+- **跨册回写（未完成）**：`AGENTS.md` §0 文档索引 + §9 速查的本册登记行、`docs/data-model.md` 的 `origin_code` 字段行 —— 落盘状态以规格 §12 的登记表为准。
+
+#### 24-8R 跨册登记 · 回写（2026-09-20）
+
+- ✅ **上列第 2 项已作废（2026-09-20，取代者本小节）**：`docs/data-model.md` §5.5 的 **`origin_code` 字段行已落盘**（**本次回写完成**；`origin` 降级说明同处）。
+- 🚫 **上列第 1 项仍未落盘**：`AGENTS.md` §0 / §9 的登记行 —— **本轮不重试**（写入被保护策略拦截 = 未获同意），**由 Zang 向 Kevin 取授权后写**；**拟稿（已按新实测更新）见规格 §12-1**。
+- **接口口径不变**：本清单只登记上云动作与判据，**口径唯一真源仍是 `docs/geo-origin.spec.md`**。
+
+
+
+### 24-9 小程序主包体积（🆕 **新增项 · 2026-09-20 裁定**）
+
+**为什么新增**：本批把数据产物放进 `frontend/src/static/**`，而 **uni-app 对 `src/static/**` 是「原样拷贝」** ⇒ **主包直接背上全量数据集**，属**本次改动引入的回归**（规格 **§13-3**）。
+
+| 时点 | 小程序主包 | MiB | 上限 `2,097,152 B`（2 MiB） |
+|---|---|---|---|
+| **改前** | **1,948,274 B** | 1.858 MiB | ✅ **未越线** |
+| **改后（当前）** | **2,243,357 B** | 2.139 MiB | ❌ **超限 146 KB**（= 146,205 B） |
+
+- **Jing 复核实测（2026-09-20 09:02 CST）**：`find frontend/dist/build/mp-weixin -type f -exec stat -f%z {} \; | awk '{s+=$1} END {print s}'` = **2,249,939 B**（同口径、同量级、**同样越线**）；H5 同法 = **2,379,757 B**（**H5 无同款硬上限，不作阻塞项**）。**以「越线」为定论**，具体字节数以**最新一次构建**为准。
+- **死重主因对照**：`frontend/dist/build/mp-weixin/static/geo/divisions.json` 实测 **156,131 B**（= 产物② 全量拷贝）；但**不得**把「改前 → 改后」的全部差额（**295,083 B**）都归给数据集（含本批其它前端改动）。
+- **动作（必须先做）**：把前端数据产物**迁出 `frontend/src/static/**`** → 重打小程序 → **实测主包 ≤ `2,097,152 B`**；**新路径以 Kong 落地为准**（规格 §13-3）。**未达标不得上传小程序**。
+- **判据命令**：`cd frontend && npm run build:mp-weixin` 后按上表重算，并把**前后值登记到本小节**。
+
+#### 24-9R 本小节「当前读数」更正（**追加 · 2026-09-20 09:13–09:17 CST 实测 · 取代上表「改后（当前）」行**）
+
+> 上表「**改后（当前）2,243,357 B / 超限 146 KB**」是**迁移前的中间态**读数（该状态下前端产物曾**同时**存在于旧 `src/static/geo/` 与新路径 ⇒ **双份**）。**现行真值（本册最终口径）**：
+
+| 时点 | 小程序主包 | MiB | 上限 `2,097,152 B`（2 MiB） |
+|---|---|---|---|
+| **改前**（未含本次改动的基线） | **1,948,274 B** | 1.858 MiB | ✅ 未越线 |
+| 迁移前中间态（产物双份） | 2,243,357 B | 2.139 MiB | ❌ 超限 146 KB |
+| **修复后（现行 · 本次发布口径）** | **1,985,417 B** | **1.8934 MiB** | ✅ **未越线，余量 111,735 B** |
+
+- **实测**（09:13–09:17 CST）：整包 `frontend/dist/build/mp-weixin` = **1,991,999 B**（其中唯一分包 `pages/special` = **6,582 B**）⇒ 主包 = 1,991,999 − 6,582 = **1,985,417 B**；主包内 **`static/geo` 已无**（`ls dist/build/mp-weixin/static/geo` → `No such file or directory`）；`business/geo.js` = **33,152 B**；dist 重建于 **09:10–09:11**。
+- 相对「改前」基线的净增量 = **+37,143 B**（= 1,985,417 − 1,948,274）；上表第 2 行的超限额 146 KB 与第 3 行的差额 295,083 B **均为历史行，不得再引用**。
+- ⇒ **§24-7R「新增阻塞项①」关闭**（体积判据达标）；**管控线不变**：**≤ 2,097,152 B**，且**产物不得再落 `frontend/src/static/**`**（规格 **§13-11-2**）。
+- 逐条取代清单（含测试基线 431 / 26）见 **§24-12**。
+
+### 24-10 本批次「已实现 / 已作废」总览（🆕 2026-09-20 回写）
+
+| 子节 | 状态 |
+|---|---|
+| §24-0 | ⚠️ 第 1 / 4 行部分被超越；第 2 / 3 行保持 |
+| §24-1 | ✅ 代码面全部落地；**判据与第 ② 步按 §24-1R / §24-1R-2 执行** |
+| §24-2 | ✅ 保持（CloudBase 集合：无） |
+| §24-3 | ✅ **已执行完成**（§24-3R / §24-3-1R）；**剩余动作 = 上传云端** |
+| §24-4 | ⚠️ 前端改造已落盘；**数据产物落位按 §24-4R + §24-9 修正** |
+| §24-5 | ⚠️ 冒烟判据按 §24-5R 执行 |
+| §24-6 | ⚠️ 第 1 / 2 条被超越（§24-6R） |
+| §24-7 | ⚠️ 阻塞点按 §24-7R 执行 |
+| §24-8 | ✅ 保持（口径真源 = `docs/geo-origin.spec.md`）；跨册回写状态见规格 **§12-2** |
+| **§24-9** | 🆕 **小程序主包体积项（新增）** |
+| **§24-10** | 🆕 **本总览（新增）** |
+
+> **边界声明**：§24 正文成文于 2026-09-20 08:45 的实测时点，本轮回写**只对 §24 追加**；**其余批次（§1–§23）本轮回写未改动一行**（`AGENTS.md` §0 第 4 条）。`AGENTS.md` **本轮未修改**（未获授权，见规格 §13-9）。
+
+
+
+### 24-11 追补：2026-09-20 09:07–09:08 实测（**Kong 落地中 · 取代 §24-1R-2 / §24-4R / §24-9 的相应读数**）
+
+> **时点 = 2026-09-20 09:07–09:09 CST（只读实测）**。§24 上文与 §24R / §24-9 的相应读数**已被本小节取代**；**旧行保留原文**。
+>
+> ⚠️ **本小节的部分读数已作废（追加标注 · 2026-09-20 · 取代者 §24-12）**：**（2）末行「主包体积须重测」→ 已重测（1,985,417 B 未越线，见 §24-9R）**；**（3）整段「测试基线变为 414 / 413 / 1」→ 已修（431 / 431 / 0，`geo.test.js` 单跑 18/18，见 §24-12(3)）**；**（4）第 1 / 2 / 3 行 → 均已关闭（geo.ts 已切新路径 / `scripts/verify-geo-frontend.mjs` 已落盘 9,458 B / 主包已达标）**；**（1）与（4）第 4 行（云函数未重打包）仍成立** —— 现行为 `cloudfunctions/deploy/compat-api/index.js` **998,338 B / mtime 2026-09-19 12:50 / `grep -c 'origin_code'` = 0**。**以下原文一律保留**。
+
+**（1）直筒子市 82 项已剔除（取代 §24-7R 的「新增阻塞项②」）**：
+
+| 项 | 剔除前 | **剔除后（实测 09:07）** |
+|---|---|---|
+| 真源 `config/geo-divisions.json` | 381,631 B / md5 `b8d268c3b4f47da99b3afb0eb633a209` | **373,926 B / md5 `da06c5711763f7989e25d8d793c2e4e0`** |
+| `counties` | 3,449（码长 `{6: 3367, 9: 82}`） | **3,367（码长 `{6: 3367}`）** |
+| 全部码 | 3,853 | **3,771**（无重复） |
+| 东莞 / 中山 / 儋州 / 嘉峪关 | 36 / 23 / 18 / 5 | **`counties` = 0**（止于第二级） |
+| `_meta.source_sha256` | `7f150ed0…` | **`9114c1454e8cf3e35af5223c99df281e2266fb73287d96b1ef589db1bb0392d7`** |
+
+⇒ **§24-7R 的「新增阻塞项②」关闭**（可选：重跑 `node scripts/gen-geo-divisions.mjs --check` → **实测 exit 0**）。
+
+**（2）前端数据产物已迁出 `src/static/`（取代 §24-4R 的「按 §13-3 修正」与 §24-9 的迁移前口径）**：
+
+- 产物②新路径 = **`frontend/src/business/geo/divisions.json`**（**31,179 B**，形状 = **紧凑 + deflateRaw + base64（无 `_meta`）**）；**`frontend/src/static/geo/` 已删除**（死重来源消失）。
+- 产物①（云函数）= `cloudfunctions/compat-api/lib/geo/divisions.json`，**153,226 B**（**全量紧凑 JSON（含 `_meta`）**）—— **两份产物形状各异**（**取代 §24-1R-2 的「产物两份、字节相同」**）。
+- **新增前端解压模块** `frontend/src/business/geo/inflate.ts`（raw DEFLATE / RFC 1951 + base64 / UTF-8；零依赖、零 IO）。
+- **`--check` 新增两条守卫**（**实测 exit 0**）：「前端载荷可还原：deflateRaw 解压 + 相对码还原后与真源 `provinces` 逐字段一致」+「**无废弃静态产物**：`frontend/src/static/geo/divisions.json` 不存在（主包死重守卫）」。
+- ⚠️ **主包体积须重测**：现存 `frontend/dist/build/mp-weixin/static/geo/divisions.json` 是 **08:54 旧构建**（`dist/` 不进 Git）⇒ §24-9 的 `2,243,357 B` 是**迁移前**读数，**重打后按 §24-9 判据复测并回填**。
+
+**（3）测试基线变为 414 / 413 / 1（取代 §24-6R 的「430 / 430 / 0」）**：
+
+- 实测 `npm test` → **`# tests 414` / `# pass 413` / `# fail 1` / `# skipped 0`**；`scripts.test` 仍 **26** 项。
+- **唯一失败项 = `cloudfunctions/compat-api/lib/geo.test.js` 的整文件加载期失败**（照录）：`ENOENT … '/Users/kevin/bistro/jiazu/frontend/src/static/geo/divisions.json' at …geo.test.js:66:30` —— **它仍在读已被删除的旧产物②路径**。⇒ 判据**生效**（已注册的测试项让 `npm test` **变红**，非假绿）；**修复属代码面**（改读新路径 / 后端产物 / 纯函数），**本清单不动代码**。
+
+**（4）该时点的未一致项（登记 · 不代为判定）**：
+
+| # | 现象 | 影响 |
+|---|---|---|
+| 1 | `frontend/src/business/geo.ts:15` 仍 `import divisionsJson from '@/static/geo/divisions.json';`（mtime 08:49，未随迁移更新） | 旧路径已删除 ⇒ **前端当前构建会失败**（未切到 `inflate.ts`） |
+| 2 | `inflate.ts` 头部引用的 `scripts/verify-geo-frontend.mjs` **实测不存在** | 悬空引用 / 未落盘 |
+| 3 | `frontend/dist/build/mp-weixin/static/geo/divisions.json` 为 08:54 旧构建 | 主包体积**待重测** |
+| 4 | `cloudfunctions/deploy/compat-api/index.js` 仍未重打包 | **§24-1 的唯一硬阻塞不变** |
+
+> **边界**：以上均为 **09:07–09:08 的只读实测**；Kong 当时仍在收尾 ⇒ 属**「落地中的中间态」**，不得据此判缺陷。**其余批次（§1–§23）本轮未改一行；`AGENTS.md` 本轮未修改。**
+
+
+
+### 24-12 追补二：**2026-09-20 09:13–09:17 CST 实测真值** —— **§24-11 的 414 基线与 4 条未一致项整批作废**（含 §24-1R-2 / §24-2 / §24-9 的行内更正）
+
+> **时点 = 2026-09-20 09:13–09:17 CST（Jing 只读实测；每条读数均附复测命令）**。
+> ⚠️ **§24-11 是「Kong 收尾中」的中间态快照** ⇒ 其 **（2）末行「主包体积须重测」/（3）整段「414 / 413 / 1」/（4）第 1、2、3 行，全部作废**；**§24-9 的「改后（当前）2,243,357 B」与 §24-1R-2 的「真源 381,631 B / 产物②旧路径 / 两份产物字节相同 / 守卫输出『同一渲染输出』」亦作废**（取代者 = 本节）。**旧行原文完整保留**，仅在行尾 / 小节尾**追加标注**（`AGENTS.md` §0 第 4 条）。
+> **本清单不改代码、不重试 `AGENTS.md`、不执行任何部署动作。**
+
+**（1）逐条取代（上轮所写 → 实测真值）**
+
+| # | 上轮所写（中间态） | **实测真值（09:13–09:17 CST）** | 证据 |
+|---|---|---|---|
+| 1 | §24-11(4)-1 = 规格 §13-10-4-1：「`frontend/src/business/geo.ts:15` 仍 import 旧 `@/static/geo/…` ⇒ **前端当前构建会失败**」 | **已修**：`geo.ts:28` = `import divisionsJson from '@/business/geo/divisions.json';`、`:29` = `import { inflateBase64ToUtf8 } from './geo/inflate';`；`cd frontend && npm run type-check`（`vue-tsc --noEmit`）= **exit 0 / 零错**；`build:h5` 与 `build:mp-weixin` **均成功**（dist 产物 mtime **09:10:43**） | `sed -n '26,30p' frontend/src/business/geo.ts`；`npm run type-check`；`stat -f '%Sm %N' frontend/dist/build/mp-weixin/app.js` |
+| 2 | §24-11(3)：「测试基线变为 **414 / 413 / 1**（`geo.test.js` 整文件 ENOENT，读已删除的旧产物②）」 | **已修**：`npm test` = **431 tests / 431 pass / 0 fail / 0 skipped**；`node --test cloudfunctions/compat-api/lib/geo.test.js` 单跑 = **18 / 18 / 0**；`scripts.test` 枚举 = **26** 项 | `npm test`（末尾 `# tests 431` / `# pass 431` / `# fail 0`）；`node --test cloudfunctions/compat-api/lib/geo.test.js`（`1..18`） |
+| 3 | §24-11(4)-2：「`scripts/verify-geo-frontend.mjs` **实测不存在** ⇒ 悬空引用」 | **已落盘**：**9,458 B**，mtime **09:12**；实跑 **16 项检查全过、exit 0**（含「自研 DEFLATE vs node `zlib` **210 组模糊测试逐字节一致**」与 4 个直筒子市 `isTerminalCity=true / 县级列表为空`） | `ls -l scripts/verify-geo-frontend.mjs` → `9458 Sep 20 09:12`；`node scripts/verify-geo-frontend.mjs` → `✅ 全部通过：16 项检查` |
+| 4 | §24-9 表「改后（当前）**2,243,357 B** / 超限 146 KB」；§13-3 的 Jing 复核值 2,249,939 B | **已重测**：主包 **1,985,417 B = 1.8934 MiB**（上限 `2,097,152 B` ⇒ **余量 111,735 B，未越线**）；整包 **1,991,999 B**（唯一分包 `pages/special` = 6,582 B）；**主包内已无 `static/geo`**；`business/geo.js` = **33,152 B** | 见 **§24-9R**（`find frontend/dist/build/mp-weixin -type f -exec stat -f%z {} \;` 求和；`ls …/static/geo` → `No such file or directory`） |
+| 5 | §24-1R-2：「真源 `config/geo-divisions.json` **381,631 B / md5 `b8d268c3b4f47da99b3afb0eb633a209`**（本批**未改真源**）」 | **已重建**：**373,926 B / md5 `da06c5711763f7989e25d8d793c2e4e0`**；`counties` **3,367**（码长分布 `{6: 3367}`，**无非 6 位项**）；全部码 **3,771**（**无重复**）；`_meta.source_sha256` = `9114c1454e8cf3e35af5223c99df281e2266fb73287d96b1ef589db1bb0392d7` | `wc -c config/geo-divisions.json` + `md5 -q`；python3 统计 `counties` / 码长分布 / 重复 |
+| 6 | §24-1R-2：「**产物两份、字节相同**，各 **156,131 B**；产物② = `frontend/src/static/geo/divisions.json`」 | **形状各异**：产物①（云函数）`cloudfunctions/compat-api/lib/geo/divisions.json` **153,226 B**（全量紧凑 JSON，含 `_meta`）/ 产物②（前端）`frontend/src/business/geo/divisions.json` **31,179 B**（紧凑 + deflateRaw + base64，无 `_meta`，由 `frontend/src/business/geo/inflate.ts` 还原）；**`frontend/src/static/geo/` 已删除**（uni-app 对 `src/static/**` 原样拷贝 = **死重**，主包越限的**真正根因**） | `ls -l` 两产物；`ls frontend/src/static/` → `icons/`、`logo.png`、`tree-api.json`、`tree-meta.json` |
+| 7 | §24-1R-2 守卫输出：「— 三件一致：真源 1 + 产物 2（**同一渲染输出**）」 | **`node scripts/gen-geo-divisions.mjs --check` = exit 0**，输出 5 行，末行改为「— 三件一致：真源 1 + 产物 2（**形状各异**，同源于唯一真源；**前端载荷可还原性已校验**）」；**新增两条守卫**：「**前端载荷可还原**」（deflateRaw 解压 + 相对码还原后与真源 `provinces` 逐字段一致）+「**无废弃静态产物**」（`frontend/src/static/geo/divisions.json` 不存在；**存在即 exit 1**） | `node scripts/gen-geo-divisions.mjs --check; echo exit=$?` → `exit=0` |
+| 8 | （§24-11 未登记）发布前的中间态把前端产物构建为**双份** | ⇒ 主包 2,243,357 B（超限 146 KB）**属本次改动引入的回归**；修复后 **1,985,417 B**，相对**未含本次改动的基线 1,948,274 B** 增量 **+37,143 B** ⇒ **回归已消解** | `1,991,999 − 6,582 = 1,985,417`；`1,985,417 − 1,948,274 = 37,143`；`2,097,152 − 1,985,417 = 111,735` |
+
+**（2）三条已定口径（本册口径登记；与规格 §13-11-1 / §13-11-2 / §13-11-3 同源）**
+
+1. **直筒子市（已落盘）**：真源剔除 **82** 个非 6 位码的街道 / 镇级项（广东东莞 **36** / 广东中山 **23** / 海南儋州 **18** / 甘肃嘉峪关 **5**）；这 4 市**法定无县级** ⇒ **止于第二级**（**选到市即终点**）；前端以**数据驱动**的 `isTerminalCity()`（`frontend/src/business/geo.ts:123`；`geo-cascader.vue:138` 消费）终止且**不渲染空列**，**不写死地名**；构建脚本 `scripts/build-geo-divisions.mjs` 同步加 `pruneUncodedLevel3()`（`:116` 定义 / `:204` 调用，**判据只用码形状** `^\d{6}$`，日志列出被剔除项）；真源 `_meta.note` ⑤ 已登记。⇒ **§24-7R「新增阻塞项②」关闭**。
+2. **前端产物形态与主包体积管控线**：前端产物 = `frontend/src/business/geo/divisions.json`（**31,179 B**）+ `frontend/src/business/geo/inflate.ts`（自研 raw DEFLATE（RFC 1951）/ base64 / UTF-8 还原；**小程序与 H5 运行时均无** `zlib` / `DecompressionStream`）。**管控线：小程序主包 ≤ `2,097,152 B`（2 MiB），且产物不得落 `frontend/src/static/**`** —— **后续任何前端数据新增一律按此判据**（现行余量 **111,735 B**）；**未达标不得上传小程序**（H5 无同款硬上限，不作阻塞项）。
+3. **测试基线（本册最终口径）**：`scripts.test` = **26** 项；`npm test` = **431 tests / 431 pass / 0 fail / 0 skipped**（含 `geo.test.js` **18** 条）。⇒ **§24-6R 的 430 / 430 / 0 与 §24-11(3) 的 414 / 413 / 1 两套读数一并作废**（历史行保留）。
+
+**（3）仍未关闭项（唯一）：云函数未重打包** —— `cloudfunctions/deploy/compat-api/index.js` = **998,338 B / mtime 2026-09-19 12:50**、`grep -c 'origin_code'` = **0** ⇒ **§24-1 的硬阻塞不变**（属部署动作，本清单不代做）。
+
+> **边界**：本轮回写**只对 §24 追加**（§24-1R-2 / §24-2 / §24-9 / §24-11 为行尾或小节尾**追加标注**，§24-12 为**新增小节**）；**§1–§23 未改一行**；**`AGENTS.md` 未修改**（未获授权，见规格 §13-9）；**未改任何代码、未重试 `AGENTS.md`、未执行部署**。
+
+---
+
+### 24-13 追补三：**2026-09-20 09:31:55 真源外部人工写入（Kevin）后的权威台账** —— **§24-3 / §24-3-1R 的「md5 前后值 + 11 条落地值」一并更新**
+
+> **时点 = 2026-09-20（Jing · 只读复核；真源逐条读盘，未做任何写入）**。
+> **本节只追加**：§24-3 / §24-3-1R 的历史行**原文完整保留**，仅在行尾追加标注；**不改代码、不碰真源、不重试 `AGENTS.md`、未执行任何部署动作。**
+
+**（1）`config/tree-meta.json` 的 md5 三态（**现行权威 = 第三行**）**
+
+| 状态 | md5 | 字节 | 时点 | 效力 |
+|---|---|---|---|---|
+| 迁移前 | `06c0d732d365b040cc372483d5eebaf1` | — | 08:54 之前 | 历史（备份 `~/jiazu-backups/2026-09-20-migrate-tree-origin/tree-meta.json` = 写入前值） |
+| 首次 `--apply` 后 | `9e29ff4628a234d71d41efc9a75cc9ca` | `9620 B` | 08:54–09:31:55 | **已作废**（中间态快照：含 6 条契约外落码 + `heng_24658_01` 的 `210000`） |
+| **现行权威** | **`7ba00cf3833ea373b75e9f20b19d9a6e`** | **`9511 B`** | **2026-09-20 09:31:55（Kevin 亲手直改 JSON）** | **上传云端 / 一切口径的唯一源状态** |
+
+- **复测命令**：`wc -c config/tree-meta.json; md5 -q config/tree-meta.json; stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' config/tree-meta.json`。
+- **写入方式 = 直改真源 JSON 文件（非 API）**：`PUT /tree-meta` 只会写入一个字符串（非空码 → `entry.origin_code = <码>`；空串 → `entry.origin_code = ''`），**API 侧不存在删除该字段的代码路径**，而真源中被撤销的树是**字段整体缺失** ⇒ 结构性证据见规格 **§13-12-1**。
+- **本册 7 处已在行尾追加标注**（原字保留）：`:2122`（§24-3 md5 表 · md5 作废）、`:2125`（§24-3「逐树结果：待写 11 / 跳过 6」· 判据更正）、`:2126`（「逐条落地值（11 条）」· 作废）、`:2129`（「第 ④ 步本地判据现应返回 11 / 17」· 判据更正）、`:2150`（判据命令「期望 11 / 17」· 判据更正）、`:2167`（§24-3-1R md5 表 · 作废）、`:2227`（§24-5 冒烟第 8 条「11 / 17」· 判据更正）。
+
+**（2）17 棵权威台账（**更替 §24-3 / §24-3-1R 的「11 行迁移 + 6 行跳过」**）**
+
+- **现行 `origin_code` 非空 = `7 / 17`**（判据命令的期望值从 **11 / 17 更正为 7 / 17**）：
+  - **契约内 5 棵**（迁移前后一致）：`gu_39038_01` = `231281`（`黑龙江省绥化市安达市`）/ `ji_23395_01` = `371325`（`山东省临沂市费县`）/ `liu_21016_01` = `370000`（`山东省`）/ `qin_31206_01` = `371323`（`山东省临沂市沂水县`）/ `shen_27784_01` = `371300`（`山东省临沂市`）；
+  - **Kevin 人工值 2 棵**：`heng_24658_01` = `211300`（`辽宁省朝阳市`，**取代** `210000` / `辽宁省`）/ `ji_32426_01` = `230303`（`黑龙江省鸡西市恒山区`，**原 `origin` 为空、原无码字段**）；
+- **经 Kevin 于 09:31:55 撤销、回退为 legacy 5 棵**（`origin_code` 字段**不存在**，`origin` 为迁移前旧文本）：`ji_23395` = `山东临沂` / `gu_39038` = `浙江绍兴` / `qin_31206` = `山东临沂` / `long_40857_01` = `贵州` / `li_26446_02` = `山东`；
+- **特例**：`zhonghua` = `中华`（无 `origin_code` 字段，本轮未动）；
+- **空 origin（字段缺失）4 棵**：`liu_21016` / `li_26446_01` / `rong_23481_01` / `li_26446_03`（`origin` 均为空串）。
+- ⇒ **§24-3 的「逐条落地值（11 条）」与「跳过 6 条」两行作废**；**取代者 = 规格 §13-12-2**（含档位与逐字展示串的完整表）。
+
+**（3）上传口径（**硬，无例外**）**
+
+1. **云端上传一律以 `7ba00cf3833ea373b75e9f20b19d9a6e` 这一状态的 `config/tree-meta.json` 为源**；**不得上传** §24-3 / §24-3-1R 记录的旧快照（`9e29ff46…`），**不得**用任何备份 / 沙箱副本覆盖现行真源。
+2. **禁止「按原映射补回」**：6 条契约外迁移**已被 Kevin 撤销**，`heng_24658_01` 的 `210000`、`ji_23395` 的 `371300` 等旧值**不得回写**；后续任何同类动作（含一切存量迁移补写）**必须先取得人类一句明确同意**（**Zang 的「契约外扩展」授权已由 Kevin 收回**，规格 §13-12-3 第 2 条）。
+3. **首次 apply 过的 `9e29ff46…` 快照已作废**（**保留记录、仅供追溯**：`9620 B` / 08:54 / 含 6 条契约外落码 + `heng` 的 `210000`）⇒ §24-3-1R 的「写入后 md5」一栏**以本节第三行为准**。
+4. **新增已知限制 KL-1**（**非缺陷、不修**）：`PUT /tree-meta` 的空串码分支会把**已迁移**的 `origin_code` 落为 `''`（last-write-wins，无版本 / 并发校验）⇒ **迁移前就已加载的旧页面若原样保存，会静默丢失结构化码**；替换口径与缓解项见规格 **§13-12-4**。
+
+**（4）跨册：`docs/geo-origin.qa.md` 的 2 条 FAIL 已改判为非缺陷（同一笔外部写入所致）**
+
+| 该册位置 | 原判定 | 现判定 |
+|---|---|---|
+| §4 **D5-b**（收尾 md5 与前值不一致） | FAIL | **撤销：非产品缺陷**（Kevin 亲手外部人工写入） |
+| §5 **E3-c**（11 棵与 §8-2R 不一致） | FAIL 5/11 | **撤销：判据失效**（§8-2R 已整表作废） |
+
+⇒ 该册 §7 md5 表的「❌ 不一致」同批改判为「**外部人工写入，符合预期**」；§8 FAIL-1 的「**从备份 / 沙箱副本恢复 §8-2R 的 11 条落地值**」**建议作废且动作禁止**；该册新增风险条 **R8**（过期内存副本整文件回写）。**依据与逐条改判见该册 §12。**
+
+**（5）本批唯一仍成立的硬阻塞（不变）**：`cloudfunctions/deploy/compat-api/index.js` **未重打包** —— `998,338 B` / `mtime 2026-09-19 12:50` / `grep -c 'origin_code'` = **0** ⇒ **§24-1 的硬阻塞不变**（属部署动作，本节**只登记、不代做**）。
+
+> **边界**：本轮回写**只对 §24 追加**（§24-3 / §24-3-1R 共 5 处**行尾标注** + 本节**新增小节**）；**§1–§23 未改一行**；**`AGENTS.md` 未修改**（未获授权，见规格 §13-9）；**未改代码、未写真源、未重跑验证、未执行部署**。

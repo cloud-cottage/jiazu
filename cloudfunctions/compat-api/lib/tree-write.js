@@ -27,6 +27,7 @@ import {
 import { founderLockMessage, metaEntryOf, isFounderMirror, isUpperMirror, upperMirrorLockMessage, MIRROR_LOCK_MESSAGE, treeKindOf, resolveFounderHandle, TREE_KIND } from './founder-attach.js';
 import { idAllocator, reserveFamilyIds } from './id-seq.js';
 import { resolveNode } from './id-resolve.js';
+import { isKnownOriginCode, resolveOrigin } from './geo.js';
 
 export const EXTERNAL_KEYS = [
   'external_tree',
@@ -914,6 +915,8 @@ export function nextTreeId(meta, surnameChar) {
  * - onBeforeWrite：全部校验通过后、落库前调用（建树扣费挂这里 → 校验不过不扣款）；
  *   入参 = 已生成的 tree_id（P1：`docs/economy-fee.spec.md` §5-2 扣籽时写 `ref.tree_id`；
  *   原零参回调不受影响，契约向后兼容）
+ * - originCode（可选）：结构化发源地（6 位行政区划码）。非空时先校验（未知码 → 400 fail），
+ *   校验通过后 `origin` 由名称表反查**覆盖**；未给时保持 legacy（`origin` 直写）。
  */
 export async function createTree({
   surnameChar,
@@ -923,6 +926,7 @@ export async function createTree({
   genealogyName = '',
   hallName = '',
   origin = '',
+  originCode = '',
   description = '',
   initiatorPhone = '',
   onBeforeWrite = null,
@@ -932,6 +936,8 @@ export async function createTree({
   const given = String(founderName || '').trim();
   if (!given) throw fail('请填写始祖姓名');
   const gender = ['M', 'F', 'U'].includes(founderGender) ? founderGender : 'M';
+  const code = String(originCode || '').trim();
+  if (code && !isKnownOriginCode(code)) throw fail(`发源地行政区划代码无效：${code}`);
 
   const meta = await getMeta();
   const treeId = nextTreeId(meta, char);
@@ -992,7 +998,8 @@ export async function createTree({
     genealogy_name: String(genealogyName || '').trim() || `${char}氏家谱`,
     archive_url: '',
     hall_name: String(hallName || '').trim() || `${char}氏宗祠`,
-    origin: String(origin || '').trim(),
+    origin: code ? resolveOrigin(code).display : String(origin || '').trim(),
+    origin_code: code,
     description: String(description || '').trim() || `新建家族树，始祖：${founderFullName}`,
     enable_custom_domain: false,
     created_at: now,
@@ -1081,6 +1088,7 @@ export async function splitTree({ treeId, ancestorHandle, ancestorName = '', ini
       archive_url: '',
       hall_name: '',
       origin: '',
+      origin_code: '', // 拆树 = 新树无发源地（与 origin 同置空）
       description: `由 ${treeId} 拆分而来，始祖：${ancestor.name || ancestorName}`,
       enable_custom_domain: false,
       created_at: new Date().toISOString(),

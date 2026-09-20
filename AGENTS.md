@@ -17,6 +17,7 @@
 | 存储与契约 | `docs/data-model.md` | 三层存储切分、各层 schema、兼容层 API 契约、**§7 写一致性** |
 | 部署待办 | `docs/PENDING_DEPLOY.md` | **只做本地阶段的全部上云动作登记**（P0–P5 批次、数据修正批次、冒烟步骤） |
 | 业务域规格 | `docs/*.spec.md` | `id-system` / `tree-id` / `uri-aliases` / `clan-tree` / `marriage` / `founder-attach` / `branch-clan-ops` / `economy*` / `spirit-domain` / `chain-batch-append` / `home-sort-search` / `permission-tier` / `zhonghua-cleanup-2026-09` |
+| 发源地结构化规格 | `docs/geo-origin.spec.md` | 家族树「发源地」三级行政区划口径（省—地级—县级）· 台湾省补全 · 海外哨兵码 `999999` · `origin_code` 真源 / `origin` 软冗余 · 展示串拼接与伪级名过滤 · 存量迁移映射清单（Zang 契约 v1，2026-09-20；部署项见 `docs/PENDING_DEPLOY.md` §24） |
 | 质检汇编 | `docs/*.qa.md` | `branch-clan-ops` / `chain-batch-append` / `home-sort-search` 的**历史质检证据** |
 | 候选/执行清单 | `docs/zhonghua-cleanup-candidates-2026-09.md` | 世本清理逐节点清单 + 附录 A（上云待删详情 `_id`） |
 | 端口唯一真源 | `../ctrl/PORTS.md` | bistro 工作台端口口径（jiazu 条目见其 §2） |
@@ -185,12 +186,13 @@ npm test                               # node --test（见下）
 cd frontend && npm run type-check      # vue-tsc --noEmit
 ```
 
-- **`npm test` = `node --test` + 26 个测试文件**（根 `package.json` 的 `scripts.test`）：**24 个**在 `cloudfunctions/compat-api/lib/*.test.js`（tree-access / tree-write / chain-append-batch / marriage / child-write / master-living / founder-attach / founder-reattach / reset-founder / meta-guard / node-delete / reparent-cross / id-system / assets / messages / economy-fee / economy-spirit / economy-market / branch-clan-ops / home-sort-search / noop-edit-integrity / marriage-candidates / mirror-count / family-population）+ **2 个**在 `auth-server/`（`tree-access.test.js`、`read-filter.test.js`）。
+- **`npm test` = `node --test` + 26 个测试文件**（根 `package.json` 的 `scripts.test`）：**26 个全部**在 `cloudfunctions/compat-api/lib/*.test.js`（tree-access / tree-write / chain-append-batch / marriage / child-write / master-living / founder-attach / founder-reattach / reset-founder / meta-guard / node-delete / reparent-cross / id-system / assets / messages / economy-fee / economy-spirit / economy-market / branch-clan-ops / home-sort-search / noop-edit-integrity / marriage-candidates / mirror-count / family-population / family-write-guard / geo）。**`auth-server/` 两项已随该遗留链路退役撤下**（`docs/PENDING_DEPLOY.md` §1；2026-09-20 实测：`scripts.test` 枚举 26 项 = 磁盘 `lib/*.test.js` 26 个，无未注册文件）。
   - **新增测试文件必须同步注册进 `scripts.test`**——**未注册 = 假绿**（`docs/PENDING_DEPLOY.md` §14-4 / §16-1 明确口径）。
   - **`npm test` 跑的是本地副本**（`COMPAT_SOURCE=local` + `/tmp` 副本、`COMPAT_OUT_DIR` / `COMPAT_META_FILE` 钩子），**与云端数据无关，不得当云端回归用**（`docs/PENDING_DEPLOY.md` §14-4）。
   - **测试写入纪律**：测试必须对真源**零写入**，收尾断言比对真源 md5（`lib/*.test.js` 普遍如此，如 `reparent-cross` / `node-delete` / `mirror-count`）。
   - ⚠️ **`auth-server` 若退役，测试清单必须同步收敛**（删除 `auth-server/tree-access.test.js`、`auth-server/read-filter.test.js` 两行，并把对应读裁剪覆盖确认已由 compat-api 侧承担——`docs/PENDING_DEPLOY.md` §1 已注明「若 auth-server 不上云，只需 compat-api 版」）。
-- **本手册成文时点（2026-09-19）实测基线（如实登记，勿当承诺）**：`npm test` → **427 tests / 426 pass / 1 fail**；唯一失败项 = `cloudfunctions/compat-api/lib/mirror-count.test.js`「M6 真源 `ji_23395_01`：`mirror_count` 动态一致、`person_count` 快照 89 + 不变量」，失败断言为 `点名的节点 I000237 必须仍存在于真源 ji_23395_01`（`mirror-count.test.js:189`，由 `:329` 调用）——即**真源数据已漂移、测试点名快照未同步**，属**已知未决**（修复需二者之一：更新点名集合，或恢复该节点；**在未定案前不得擅自改断言**）。
+- **本手册成文时点（2026-09-19）实测基线（如实登记，勿当承诺；2026-09-20 已被下条取代）**：`npm test` → **427 tests / 426 pass / 1 fail**；唯一失败项 = `cloudfunctions/compat-api/lib/mirror-count.test.js`「M6 真源 `ji_23395_01`：`mirror_count` 动态一致、`person_count` 快照 89 + 不变量」，失败断言为 `点名的节点 I000237 必须仍存在于真源 ji_23395_01`（`mirror-count.test.js:189`，由 `:329` 调用）——即**真源数据已漂移、测试点名快照未同步**，属**已知未决**（修复需二者之一：更新点名集合，或恢复该节点；**在未定案前不得擅自改断言**）。
+  - **2026-09-20 实测基线（取代上段；口径见 `docs/geo-origin.spec.md` §13-7 / §13-11-3）**：`npm test` → **431 tests / 431 pass / 0 fail / 0 skipped**；`auth-server/` 已退役、`lib/geo.test.js`（18 条）新增。上段的 **427 / 426 / 1 属 `0d774bd^` 结构 + `058b5f7` 读数**的旧基线，差量已结案：**427 − 14（`auth-server` 两文件随 `ce4131c` 删除、`0d774bd` 撤引用）− 10（`family-population` 22→12）+ 10（`family-write-guard`）= 413**，**413 + 18（`geo.test.js`）= 431**。`mirror-count` 现不再失败是**断言跟随真源重同步**（`058b5f7` 排除集改空、`23a8467` 快照 87→61），**不是真源回退**。根因机制：`migrate-output/**` 被 `.gitignore` 忽略（第 12 行），真源树不进版本管理 ⇒ 点名 / 快照类断言会随数据漂移。
 - 一次性修复脚本惯例：先 dry-run（无 `--apply`），必要时 `COMPAT_OUT_DIR=<副本>` 演练，最后 `--apply`（`README.md` §数据修复/一次性脚本）。
 - 真机 / UI 验证：H5 真机质检是本仓质检的主流形式（`docs/*.qa.md`），但**质检在 `/tmp` 副本 + 非占用端口上跑**（例：`/tmp/qa-copy` + 端口 `3458`），**全程不碰用户正在使用的 3100 / 5199**（`docs/home-sort-search.qa.md` 头部）。
 
@@ -219,6 +221,7 @@ cd frontend && npm run type-check      # vue-tsc --noEmit
 | 写前端接口封装 | `frontend/src/business/api.ts` 新增函数 → `business/index.ts` 转出 → 类型进 `business/types.ts` |
 | 查端口 / 起服务 | `../ctrl/PORTS.md` 或 ctrl 面板（sid `jiazu-api` 3100、`jiazu` 5199；批量启动按表序，数据层先起） |
 | 查部署判据 | `docs/PENDING_DEPLOY.md` 对应批次小节的 `grep -c` 重打包判据 + 「部署后冒烟验证（按序做）」 |
+| 改「发源地」字段 | `docs/geo-origin.spec.md`（口径真源）；结构化真源 = `origin_code`（**读侧判据一律 `(entry.origin_code ?? '') === ''`** —— 缺字段与空串同判，裁定见 §7-3 修正），`origin` 是**写时由名称表反查生成**的软冗余（**禁前端手改**）；写路径 = `PUT /tree-meta` 白名单 + 建树 / 建祖谱 / 立支复制 / 拆树置空**五处必须同步**；真源 `config/geo-divisions.json` + 反查模块 `lib/geo.js`（**静态 JSON import 被 esbuild 内联 ⇒ 无需随云函数包发布 `config/`**，见 §5-6R） |
 
 ---
 

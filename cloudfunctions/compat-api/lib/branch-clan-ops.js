@@ -713,6 +713,7 @@ export async function establishBranch({
       archive_url: '',
       hall_name: entry.hall_name || '',
       origin: entry.origin || '',
+      origin_code: entry.origin_code || '', // 整条复制路径必须同步带 origin_code（契约 §发源地）
       description: `由 ${treeId} 立支而来，始祖：${person.name || ''}（原树镜像）`,
       enable_custom_domain: false,
       created_at: now.toISOString(),

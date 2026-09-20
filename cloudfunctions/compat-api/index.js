@@ -58,6 +58,9 @@ import { idAllocator, reserveFamilyIds, reservePersonIds, numberOfId } from './l
 import { treeActivity } from './lib/tree-activity.js';
 import { countFamilyMembers } from './lib/family-population.js';
 import { computeAccess, isHiddenFamily, accessToPayload, computePersonDepth } from './lib/tree-access.js';
+// 发源地结构化（docs/geo-origin.spec.md）：路由层只做「未知码 → 400」与「反查生成展示串」两件事；
+// 码表随云函数包内联（lib/geo.js 静态 import lib/geo/divisions.json），无运行期读盘 / 无环境变量。
+import { isKnownOriginCode, resolveOrigin } from './lib/geo.js';
 
 const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
 const MAX_DEPTH = 72;
@@ -442,8 +445,12 @@ async function handleRequest(event) {
       const user = await colGet('jiazu_users', u.phone);
       if (!user || user.role !== 'chief_editor') return send(403, { error: '需要总编辑权限' });
       const body = parseBody(event);
-      const { tree_id, display_title, genealogy_name, archive_url, hall_name, origin, description } = body;
+      const { tree_id, display_title, genealogy_name, archive_url, hall_name, origin, origin_code, description } = body;
       if (!tree_id) return send(400, { error: '缺少 tree_id' });
+      // 校验先行（docs/geo-origin.spec.md §6-2 W1）：非法码在**任何字段写入之前**拒绝 ——
+      // meta 是进程内常驻缓存，提前写 entry 会让「被拒的请求」被后续任意一次成功 saveMeta 顺手落盘。
+      const code = origin_code === undefined ? undefined : String(origin_code ?? '').trim();
+      if (code && !isKnownOriginCode(code)) return send(400, { error: `发源地行政区划代码无效：${code}` });
       const meta = await getMeta();
       const entry = Object.values(meta.trees).find((t) => t.tree_id === tree_id);
       if (!entry) return send(404, { error: `未找到 tree: ${tree_id}` });
@@ -451,7 +458,15 @@ async function handleRequest(event) {
       if (genealogy_name !== undefined) entry.genealogy_name = genealogy_name;
       if (archive_url !== undefined) entry.archive_url = archive_url;
       if (hall_name !== undefined) entry.hall_name = hall_name;
+      // legacy 直写分支（未结构化调用方 / 存量前端）：保留原样
       if (origin !== undefined) entry.origin = origin;
+      // 结构化分支（docs/geo-origin.spec.md §6-1/§6-2 W1）：
+      //   · 非空码 → `origin` 由名称表**反查覆盖**（软冗余以真源为准，禁止前端手改）；
+      //   · 空串 = 合法「未结构化」→ 只落 `origin_code=''`，**不覆写** `origin`（legacy 兼容）。
+      if (code !== undefined) {
+        entry.origin_code = code;
+        if (code) entry.origin = resolveOrigin(code).display;
+      }
       if (description !== undefined) entry.description = description;
       await saveMeta(meta);
       return send(200, { ok: true, entry });
@@ -1733,6 +1748,13 @@ async function handleRequest(event) {
           return send(e.status || 400, { error: e.message });
         }
         const id = clan.genRequestId();
+        // 结构化发源地（docs/geo-origin.spec.md §6-2 W3）：申请单落 origin_code。
+        // 采集期即校验（与落库同口径、同文案）：非法码不许进申请单 —— 否则该单审批时
+        // createClanTree 才 400，申请永远批不过，只能人工清库。
+        const originCode = String(body.origin_code ?? '').trim();
+        if (originCode && !isKnownOriginCode(originCode)) {
+          return send(400, { error: `发源地行政区划代码无效：${originCode}` });
+        }
         const request = clan.buildClanRequest({
           id,
           surname,
@@ -1743,6 +1765,7 @@ async function handleRequest(event) {
           clanTitle: body.clan_title,
           requestedBy: u.phone,
           note: body.note,
+          originCode,
         });
         await colSet(clan.CLAN_REQUEST_COLLECTION, id, request);
         return send(200, {
@@ -1810,6 +1833,8 @@ async function handleRequest(event) {
           chainDepth: body.chain_depth,
           ownRootName: body.founder_name,
           initiatorPhone: request.requested_by,
+          // 结构化发源地：申请单上的码带过来（历史申请无该字段 → undefined → lib 层按空串处理）
+          originCode: request.origin_code,
         });
         await colSet(clan.CLAN_REQUEST_COLLECTION, rid, {
           ...request,
@@ -1980,6 +2005,7 @@ async function handleRequest(event) {
           genealogyName: body.genealogy_name,
           hallName: body.hall_name,
           origin: body.origin,
+          originCode: body.origin_code,
           description: body.description,
           initiatorPhone: u.phone,
           // 校验全部通过后、落库前扣 9颗石榴籽（不足 409 → 不建树、不扣籽）

@@ -188,6 +188,7 @@ tree-meta 从"配置文件"升级为**文档**（`_id = "global"`，内容 = 现
 ```
 
 **条目字段（`trees.<tree_id>`）补充**：`tree_id`、`path_alias`、`surname_char`（姓氏汉字）、**`surname_pinyin`**（该树**实际采用**的姓氏拼音；新建树 / 拆分 / 新建祖谱均写，口径与遗留缺口见 `docs/tree-id.spec.md` §4）、`kind`（`'master'` / `'clan'` / `'family'`，见 `docs/clan-tree.spec.md` §2）、`display_title` / `genealogy_name` / `hall_name` / `origin` / `description` / `founder_*` 等展示字段。
+**条目字段补充（2026-09-20 新增 · 发源地结构化）**：**`origin_code`**（**字符串**：6 位行政区划代码；**空串意为「未结构化」**；**结构化真源**；口径见 `docs/geo-origin.spec.md`）；同条的 **`origin` 降级**为「**写时由名称表反查 `origin_code` 生成的展示串**（**软冗余**，**禁止前端手改**）」——两者冲突时**以 `origin_code` 为准**；**读侧 legacy 判据一律 `(entry.origin_code ?? '') === ''`**（**字段缺失与空串同判**：存量未迁移树**不补写空串**）。
 条目的 `tree_id` **不是**自由填写的字符串：由 `<姓氏拼音>_<汉字码点>_<两位序号>` 规则生成（唯一真源 = `cloudfunctions/compat-api/lib/tree-write.js` 的 `surnamePinyin()` / `nextTreeId()` / `genClanTreeId()`；**无兜底**，取不到拼音一律 400）→ 完整口径见 **`docs/tree-id.spec.md`**。
 
 ### 5.6 `sms_codes`（临时验证码，TTL 索引 5 分钟）
