@@ -52,6 +52,12 @@ export interface TreeEntry {
   clan_handle?: string;
   /** 始祖人物 gramps_id：世系图以始祖为唯一根构建（始祖节点即真实人物，可编辑） */
   founder_gramps_id?: string;
+  /**
+   * 始祖态（R2b，docs/founder-attach.spec.md §9-4）：`'none'` = **无始祖态**
+   * （重置始祖后 / 从未指定 → 该树任意节点可发起认祖，认祖即指定始祖）；
+   * **有始祖时该字段被后端删除**（缺省 = 有始祖）。
+   */
+  founder_state?: 'none';
   /** 平台子域前缀：非空表示开通专属子域（如 "shiben" → https://shiben.jiapu100.com） */
   subdomain?: string;
   enable_custom_domain: boolean;

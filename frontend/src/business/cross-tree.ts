@@ -4,9 +4,17 @@
  * 生成跨 tree 跳转链接
  */
 
-import type { TreeMeta } from './types';
+import type { TreeEntry, TreeMeta } from './types';
 import { personIdDisplay } from './format';
-import { fetchTreeMetaRemote } from './api';
+import {
+  CHAIN_MIRROR_LOCK_MESSAGE,
+  CLAN_FOUNDER_LOCK_MESSAGE,
+  FOUNDER_LOCK_MESSAGE,
+  ORPHAN_MIRROR_LOCK_MESSAGE,
+  familyMirrorLockMessage,
+  fetchTreeMetaRemote,
+} from './api';
+import type { TreeKind } from './api';
 
 /** 中华世本（总谱）tree_id */
 export const MASTER_TREE_ID = 'zhonghua';
@@ -243,13 +251,124 @@ function cachedTreeMeta(): Promise<TreeMeta | null> {
   return metaPromise;
 }
 
+/** tree-meta 层级（**与后端 `treeKindOf` 同口径**：显式 kind 优先，缺省按 family 兼容旧数据） */
+export function treeKindOf(entry: TreeEntry | null | undefined): TreeKind {
+  const k = String(entry?.kind ?? '').trim();
+  if (k === 'master' || k === 'clan' || k === 'family') return k;
+  return entry?.is_master ? 'master' : 'family';
+}
+
+/** 树的层级 + 展示名（tree-meta；取不到 → family + tree_id） */
+export async function treeLayerOf(treeId: string): Promise<{ kind: TreeKind; title: string }> {
+  const id = String(treeId || '').trim();
+  if (!id) return { kind: 'family', title: '' };
+  const meta = await cachedTreeMeta();
+  const entry = Object.values(meta?.trees || {}).find((t) => t.tree_id === id);
+  return { kind: treeKindOf(entry), title: entry?.display_title || id };
+}
+
 /**
  * 树的 display_title（取 tree-meta；**取不到时回退显示 tree_id**，口径 A 第 3 条）。
  */
 export async function treeDisplayTitleOf(treeId: string): Promise<string> {
   const id = String(treeId || '').trim();
   if (!id) return '';
-  const meta = await cachedTreeMeta();
-  const entry = Object.values(meta?.trees || {}).find((t) => t.tree_id === id);
-  return entry?.display_title || id;
+  return (await treeLayerOf(id)).title;
+}
+
+// ============================================================================
+// R3 只读不变量（始祖真源反转 · 变体 A；裁定书 v1 · Zang 2026-09-20）
+// 前端判据必须与后端 **逐条一致**，否则会出现「界面可点、后端 403」或「真身被误锁」。
+// ============================================================================
+
+/**
+ * **只读镜像判据**（与后端 `lib/founder-attach.js` 的 `isReadonlyMirror` 逐条同口径）：
+ * `external_mirror === 'true'` 且 `external_tree` 非空 且 `external_tree !== 本树 treeId`，
+ * 且 `external_link_type` ∈ {founder, chain}。
+ *
+ * **与方向无关**：镜像指向上层（家族树 ← 祖谱 / 世本）还是**下层**（祖谱 ← 家族树始祖的登记镜像）都只读；
+ * 真身节点在**其所在树**内可写 —— 家族树始祖即真身（R2），本树内不再有只读徽标 / 禁用态。
+ * 唯一例外 = 出生地 / 居住地（契约 v2 C6，后端 `isPlaceFieldsOnly` 在只读闸门内放行）。
+ */
+export function isReadonlyMirror(fields: MirrorFields | null | undefined, treeId = ''): boolean {
+  if (!fields) return false;
+  if (String(fields.external_mirror ?? '').trim() !== 'true') return false;
+  const target = String(fields.external_tree ?? '').trim();
+  if (!target) return false;
+  if (treeId && target === treeId) return false;
+  const linkType = String(fields.external_link_type ?? '').trim();
+  return linkType === 'founder' || linkType === 'chain';
+}
+
+/** 孤儿镜像（R2b）：镜像标记在、真身不可达（无 `external_tree`）→ 本层只读（后端 `isOrphanMirror` 同口径） */
+export function isOrphanMirror(fields: MirrorFields | null | undefined): boolean {
+  return (
+    String(fields?.external_mirror ?? '').trim() === 'true' &&
+    !String(fields?.external_tree ?? '').trim()
+  );
+}
+
+/**
+ * 家族树始祖的**登记指针**（R2）：`external_link_type === 'founder'` + `external_tree` 非空
+ * 但**不带镜像标记** → 本树始祖仍是真身（身份字段本树可写），只是登记到了上层树。
+ * （后端 `hasFounderRegistrationPointer` 同口径；与 `isReadonlyMirror` 互斥。）
+ */
+export function hasFounderRegistrationPointer(fields: MirrorFields | null | undefined): boolean {
+  return (
+    String(fields?.external_link_type ?? '').trim() === 'founder' &&
+    !!String(fields?.external_tree ?? '').trim() &&
+    String(fields?.external_mirror ?? '').trim() !== 'true'
+  );
+}
+
+/** 本层节点的只读视图（徽标 + 方向相关提示；可编辑节点 → `readonly:false`、两串皆空） */
+export interface MirrorReadonlyView {
+  /** 本层是否整节点只读（R3 判据；孤儿镜像亦为 true） */
+  readonly: boolean;
+  /** 状态徽标文案（如「始祖节点 · 家族树镜像」；可编辑 → ''） */
+  tag: string;
+  /** 只读提示（按 `external_tree` 层级生成；可编辑 → ''） */
+  note: string;
+  /** 镜像指向层的 kind（可编辑 / 孤儿 → ''） */
+  targetKind: TreeKind | '';
+}
+
+/**
+ * 取本层节点的只读徽标与提示（**唯一入口**：页面不得自拼只读文案）。
+ * 分档与后端 `mirrorLockMessageOf` 完全同构：
+ * 孤儿镜像 → 孤儿文案；chain 镜像 → 需到总谱修改；founder 镜像按目标层
+ * family（`该节点为 X 始祖的镜像，需在 X 中修改`）/ clan / master 取文案。
+ */
+export async function mirrorReadonlyViewOf(
+  fields: MirrorFields | null | undefined,
+  treeId = '',
+): Promise<MirrorReadonlyView> {
+  if (isOrphanMirror(fields)) {
+    return {
+      readonly: true,
+      tag: '始祖节点 · 孤儿镜像',
+      note: ORPHAN_MIRROR_LOCK_MESSAGE,
+      targetKind: '',
+    };
+  }
+  if (!isReadonlyMirror(fields, treeId)) {
+    return { readonly: false, tag: '', note: '', targetKind: '' };
+  }
+  const linkType = String(fields?.external_link_type ?? '').trim();
+  if (linkType === 'chain') {
+    return {
+      readonly: true,
+      tag: '世系链节点 · 世本镜像',
+      note: CHAIN_MIRROR_LOCK_MESSAGE,
+      targetKind: 'master',
+    };
+  }
+  const { kind, title } = await treeLayerOf(String(fields?.external_tree ?? ''));
+  if (kind === 'family') {
+    return { readonly: true, tag: '始祖节点 · 家族树镜像', note: familyMirrorLockMessage(title), targetKind: kind };
+  }
+  if (kind === 'clan') {
+    return { readonly: true, tag: '始祖节点 · 祖谱镜像', note: CLAN_FOUNDER_LOCK_MESSAGE, targetKind: kind };
+  }
+  return { readonly: true, tag: '始祖节点 · 中华世本镜像', note: FOUNDER_LOCK_MESSAGE, targetKind: kind };
 }

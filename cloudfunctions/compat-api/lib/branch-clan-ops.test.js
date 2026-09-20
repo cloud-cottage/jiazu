@@ -534,7 +534,7 @@ metaFixture.trees.bc_clan_reg = {
 };
 writeTree(targetTree('cv_t_reg', 'slot-empty'));
 regFamily('cv_t_reg', { clan: null, founder: 'cv_t_reg-x' });
-// ③ 拒绝：源树始祖是**真人节点**（非镜像）→ 400《不是上层镜像》，不写不扣
+// ③ 放宽：源树始祖是**真身**（非镜像）→ 汇宗放行（R5；真身随树整体迁入）
 writeTree(plainTree('cv_plain_src'));
 regFamily('cv_plain_src', { clan: null, founder: 'cv_plain_src-top' });
 writeTree(targetTree('cv_t_reg2', 'none'));
@@ -1357,11 +1357,13 @@ test('§10-1-22 汇宗 · 目标解析与校验：同树 / 祖谱 / 总谱 / 镜
     );
   }
   assert.equal(treeMd5Disk('cv_self'), srcMd5, '目标校验不过时源树不写');
-  // 源树始祖不是上层镜像（真人节点 / 非镜像）→ 400（另一条前置；§6-2-2 放宽口径后文案 = 「上层镜像」）
-  await assert.rejects(
-    () => bco.convergeClan({ treeId: 'cv_bad', targetRef: 'cv_t9-x', confirmPeople: 4 }),
-    (e) => expect400(e, /该家族树当前始祖不是上层镜像，无法汇宗/),
-  );
+  // R5 放宽口径（始祖真源反转 · 变体 A）：源树始祖是**真身**（无 external_*、非镜像）同样放行 ——
+  // 旧断言「该家族树当前始祖不是上层镜像，无法汇宗」已随裁定作废（真身随树整体迁入，换树不换号）。
+  const plain = await bco.convergeClan({ treeId: 'cv_bad', targetRef: 'cv_t9-x', confirmPeople: 4 });
+  assert.equal(plain.ok, true, '真身始祖的源树可汇宗（不再要求「上层镜像」）');
+  assert.equal(plain.moved_people, 4, '真身始祖计入迁移集合（不是「不可迁移」）');
+  assert.equal(treeExistsDisk('cv_bad'), false, '源树整体迁入后删除');
+  assert.ok(readTreeDisk('cv_t9').people['cv_bad-top'], '真身始祖随树迁入目标树');
   // 源树为总谱 / 祖谱 → 400
   await assert.rejects(() => bco.convergeClan({ treeId: 'zhonghua', targetRef: 'cv_t9-x', confirmPeople: 1 }), (e) => expect400(e, /中华世本（总谱）不可汇宗/));
   await assert.rejects(() => bco.convergeClan({ treeId: 'bc_clan', targetRef: 'cv_t9-x', confirmPeople: 1 }), (e) => expect400(e, /祖谱不可汇宗/));
@@ -1720,24 +1722,29 @@ test('§6-2-2 回归 · 源树始祖镜像指向祖谱（认祖路线）→ 仍 
   assert.deepEqual(tw.checkTreeIntegrity(dst), []);
 });
 
-test('§6-2-2 拒绝 · 源树始祖是真人节点（非镜像）→ 400「不是上层镜像」，不写不扣', async () => {
+test('§6-2-2 放宽 · 源树始祖是真身节点（非镜像）→ 汇宗放行：真身整体迁入 + 源树删除（R5）', async () => {
   const SRC = 'cv_plain_src';
   const DST = 'cv_t_reg2';
-  const srcMd5 = treeMd5Disk(SRC);
   const dstMd5 = treeMd5Disk(DST);
-  const metaMd5 = md5(META_FILE);
-  const spiritMd5 = spiritColMd5();
   const chiefBefore = JSON.stringify(await el.getAssets(CHIEF));
-  await assert.rejects(
-    () => bco.convergeClan({ treeId: SRC, targetRef: `${DST}-x`, confirmPeople: 4 }),
-    (e) => expect400(e, /该家族树当前始祖不是上层镜像，无法汇宗/),
-  );
-  assert.equal(treeMd5Disk(SRC), srcMd5, '源树一字未写');
-  assert.equal(treeMd5Disk(DST), dstMd5, '目标树一字未写');
-  assert.equal(md5(META_FILE), metaMd5, 'tree-meta 一字未写');
-  assert.equal(spiritColMd5(), spiritMd5, 'jiazu_spirit 一字未写');
+  const res = await bco.convergeClan({ treeId: SRC, targetRef: `${DST}-x`, confirmPeople: 4 });
+  assert.equal(res.ok, true);
+  assert.equal(res.moved_people, 4, '真身始祖计入迁移集合（不再要求「上层镜像」）');
+  assert.equal(res.moved_families, 3);
+  const dst = readTreeDisk(DST);
+  for (const h of ['cv_plain_src-top', 'cv_plain_src-mid', 'cv_plain_src-n', 'cv_plain_src-kid']) {
+    assert.ok(dst.people[h], `${h} 已迁入目标树`);
+  }
+  assert.equal(dst.people['cv_plain_src-top'].name, '季cv_plain_src始祖真身', '真身身份字段随迁不改');
+  assert.equal(dst.people['cv_plain_src-top'].external_mirror, undefined, '真身不带镜像标记（R2/R5）');
+  const topFam = dst.families[dst.people['cv_plain_src-top'].parent_family];
+  assert.ok(topFam, '真实段根挂到一个真实家族下（不是悬空引用）');
+  assert.ok(topFam.child_handles.includes('cv_plain_src-top'));
+  assert.deepEqual(tw.checkTreeIntegrity(dst), []);
+  assert.notEqual(treeMd5Disk(DST), dstMd5, '目标树已改写');
+  assert.equal(treeExistsDisk(SRC), false, '源树树 JSON 已删');
+  assert.equal(SRC in metaNow().trees, false, '源树 tree-meta 条目已删');
   assert.equal(JSON.stringify(await el.getAssets(CHIEF)), chiefBefore, '汇宗 0 片 0 籽：发起人资产逐字节不变');
-  assert.equal(treeExistsDisk(SRC), true, '源树树文件仍在');
 });
 
 // ================= ㉒ 系统级失败不得泄露本机路径（§7 · 入口 /admin/add-child） =================

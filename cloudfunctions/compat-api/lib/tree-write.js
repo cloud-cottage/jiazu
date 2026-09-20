@@ -24,7 +24,7 @@ import {
   nextPersonId,
   nextFamilyId,
 } from './store.js';
-import { metaEntryOf, isFounderMirror, isUpperMirror, personEditLockMessage, MIRROR_LOCK_MESSAGE, treeKindOf, resolveFounderHandle, TREE_KIND } from './founder-attach.js';
+import { metaEntryOf, isFounderMirror, isMirrorMarked, isUpperMirror, personEditLockMessage, resolveChainGen, MIRROR_LOCK_MESSAGE, treeKindOf, resolveFounderHandle, TREE_KIND } from './founder-attach.js';
 import { idAllocator, reserveFamilyIds } from './id-seq.js';
 import { resolveNode } from './id-resolve.js';
 import { isKnownOriginCode, resolveOrigin } from './geo.js';
@@ -170,12 +170,13 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
     // 显式提供但非数组 / 非对象 → 400，先于只读闸门与任何字段写入（与路由层同序：400 先于 403）。
     assertPlaceFieldShapes(body);
 
-    // 上层镜像只读（docs/founder-attach.spec.md §5 / docs/clan-tree.spec.md §3-7）：
-    // - 任一上层树的镜像节点（始祖 founder / 祖谱顶端链 chain）→ 403，需到真身所在层修改
-    // - 始祖位置的空白占位态 → 403「请先认祖」（不允许自行填写身份数据）
+    // 镜像只读（docs/founder-attach.spec.md §5 / docs/clan-tree.spec.md §3-7；R3 只读不变量统一）：
+    // - `external_mirror='true'` 且指针指向别树（不论方向：世本/祖谱/家族树）→ 403，需到真身所在树修改
+    // - 孤儿镜像（有镜像标记但真身不可达）→ 403
     // 例外（契约 v2 C6，与路由层 `assertFounderEditable` **同一判据函数** `personEditLockMessage`）：
     // 请求体**只**含 `birth_place` / `residence_places` 两项时放行 —— 出生地 / 居住地是本树自填记录
     // （家族树「发源地」由用户在始祖三代内人工指定，C8′）；夹带姓名 / 生卒 / 健在等锁字段仍 403。
+    // 注：R2 起家族树始祖（真身 + 登记指针）**不再**被锁 —— 判据里没有任何「始祖位置」分支。
     if (opts.masterTreeId && treeId !== opts.masterTreeId) {
       const entry = opts.founderEntry !== undefined ? opts.founderEntry : await metaEntryOf(treeId);
       const lock = await personEditLockMessage(person, tree, opts.masterTreeId, entry);
@@ -232,9 +233,13 @@ export async function updatePerson(treeId, handle, body, opts = {}) {
     // 避免前端 PUT 未回传时把跨树链接 / 婚姻字段清空
     for (const k of EXTERNAL_KEYS) if (k in ext) person[k] = ext[k];
 
-    // 详情文档（档案字段：attributes 全量替换；events 保持现状）——闭包内**只组装**，不落盘
+    // 详情文档（档案字段：`attributes` **只在显式提供 `attribute_list` 时**才全量替换）——闭包内**只组装**，不落盘
+    // 未提供 `attribute_list`（含 `null`，同 F5：null = 未提供）→ **保持原 `attributes` 不写不删**。
+    // 为什么：契约 v2 C6 例外路径（只传 `birth_place` / `residence_places`，见 `isPlaceFieldsOnly`）
+    // 没有 `attribute_list` —— 若照旧无条件替换，镜像节点详情里既有的封号 / external_* 等会被静默清成
+    // `[]`（同一请求只写出生地，却把档案属性抹掉）。置空一律由显式 `attribute_list: []` 完成。
     const detail = (await getDetail(treeId, handle)) || { tree_id: treeId, handle, events: [], media: [], citations: [], notes: [], attributes: [] };
-    detail.attributes = others;
+    if (body.attribute_list !== undefined && body.attribute_list !== null) detail.attributes = others;
     detail.updated_at = new Date().toISOString();
     pendingDetail = detail;
     return { ok: true, handle };
@@ -757,12 +762,24 @@ export function clanGenerationOf(tree, handle, opts = {}) {
   return genOf.has(handle) ? { inLineage: true, gen: genOf.get(handle) } : miss;
 }
 
-/** 祖谱：树内节点「自身世数」（详情 attributes.external_chain_gen）→ Map（供 clanGenerationOf 优先取用） */
+/**
+ * 祖谱：树内节点「自身世数」→ Map（供 `clanGenerationOf` 优先取用）。**R6 口径（沿真身链下钻）**：
+ * ① 节点自身详情带 `external_chain_gen` → 用它（自身世数优先，与既有口径一致）；
+ * ② 否则该节点若是**镜像**（`external_mirror='true'` 且指向别树）→ 沿 `external_*` 链
+ *    **下钻到真身节点**读其 `external_chain_gen`（外部世本链节点只把世数写在世本详情里）；
+ * ③ 都取不到 → 不落表（调用方按**结构推导**，绝不猜一个世数）。
+ */
 async function clanSelfGenMap(treeId) {
   const map = new Map();
   for (const d of await getAllDetails(treeId)) {
     const g = parseInt(attrMap(d).external_chain_gen || '', 10);
     if (Number.isFinite(g)) map.set(d.handle, g);
+  }
+  const tree = await getTree(treeId);
+  for (const [handle, person] of Object.entries(tree?.people || {})) {
+    if (map.has(handle) || !isMirrorMarked(person)) continue;
+    const drilled = await resolveChainGen({ treeId, handle });
+    if (drilled.gen !== null) map.set(handle, drilled.gen);
   }
   return map;
 }

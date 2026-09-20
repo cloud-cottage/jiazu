@@ -37,7 +37,7 @@ import {
   genRequestId,
   chainGenOf,
   founderRelationNote,
-  isUpperMirror,
+  isReadonlyMirror,
   isFounderMissing,
   planFounderRegister,
   resolveFounderHandle,
@@ -131,34 +131,61 @@ export function assertClanFounderUnique({ entries, surname, masterTreeId, master
   return null;
 }
 
-/** 上层镜像节点（顶端镜像段内：founder / chain） */
-export function isClanMirrorNode(person, treeId) {
-  return isUpperMirror(person, treeId);
+/**
+ * 宗谱**顶端世本镜像段**节点判定（`founder` / `chain`；docs/clan-tree.spec.md §4-1 / §11-2）。
+ *
+ * ⚠️ 与「宗谱自有段的**登记镜像**」（§11-3）**互斥**：后者同样是 `external_mirror='true'` 的只读镜像，
+ * 但方向**朝下**（`external_tree` = 被登记的普通家族树，供「支系入口列表」用），**不属于**顶端镜像段。
+ * 旧判据 `isUpperMirror` 已并入**方向无关**的 `isReadonlyMirror`，单用它会把登记镜像算进世本镜像段
+ * → 宗谱误报「已挂世本」、解除挂载误删登记。
+ *
+ * 判据（自上而下取第一个可用者）：
+ * ① `upperTreeId` 非空（= 本祖谱 tree-meta 的世本 `master_tree_id`）→ `external_tree === upperTreeId`；
+ * ② 否则退回**确定性句柄口径** `handle === mir_<external_person_handle>`
+ *    （`planClanTopMirrors` 的落柄规则；登记镜像的 handle 是随机 hex，不满足）。
+ * @param {string} [upperTreeId] 本祖谱的上层（世本）tree_id；缺省 → 用句柄口径
+ */
+export function isClanTopMirrorNode(person, treeId = '', upperTreeId = '') {
+  if (!isReadonlyMirror(person, treeId)) return false;
+  if (upperTreeId) return String(person.external_tree || '') === String(upperTreeId);
+  return String(person.handle || '') === `${CLAN_MIRROR_PREFIX}${String(person.external_person_handle || '')}`;
 }
 
-/** 顶端镜像段（按 gramps_id 升序，即由始祖往下） */
-export function clanMirrorNodes(tree) {
+/** 顶端镜像段节点（`founder` / `chain`；**不含**自有段登记镜像） */
+export function isClanMirrorNode(person, treeId, upperTreeId = '') {
+  return isClanTopMirrorNode(person, treeId, upperTreeId);
+}
+
+/**
+ * 顶端镜像段（按 gramps_id 升序，即由始祖往下）。
+ * 自有段**登记镜像**（指向下层普通树）**不计入** —— 它们只作「支系入口登记」（§11-3）。
+ * @param {object} tree 祖谱树 JSON
+ * @param {string} [upperTreeId] 本祖谱的世本 tree_id（tree-meta.master_tree_id；缺省 → 句柄口径）
+ */
+export function clanMirrorNodes(tree, upperTreeId = '') {
   if (!tree?.people) return [];
   return Object.values(tree.people)
-    .filter((p) => isUpperMirror(p, tree.tree_id))
+    .filter((p) => isClanTopMirrorNode(p, tree.tree_id, upperTreeId))
     .sort((a, b) => String(a.gramps_id || '').localeCompare(String(b.gramps_id || '')));
 }
 
-/** 祖谱自有段（真实数据：非上层镜像） */
+/** 祖谱自有段（真实数据：非任何镜像 —— 含自有段登记镜像在内的镜像一律不计入本宗人数） */
 export function clanOwnNodes(tree) {
   if (!tree?.people) return [];
   return Object.values(tree.people)
-    .filter((p) => !isUpperMirror(p, tree.tree_id))
+    .filter((p) => !isReadonlyMirror(p, tree.tree_id))
     .sort((a, b) => String(a.gramps_id || '').localeCompare(String(b.gramps_id || '')));
 }
 
 /**
  * 统计口径（docs/clan-tree.spec.md §3-6）：祖谱自有段人数与顶端镜像数**分列**，
  * 镜像不计入本宗人数；祖谱人数不计入世本（世本人数只来自世本自己的树 JSON）。
+ * `mirror_count` = **顶端世本镜像段**节点数；自有段登记镜像不计入两侧（是登记，不是本宗人次）。
+ * @param {string} [upperTreeId] 本祖谱的世本 tree_id（缺省 → 句柄口径）
  */
-export function clanStats(tree) {
+export function clanStats(tree, upperTreeId = '') {
   const own = clanOwnNodes(tree).length;
-  const mirrors = clanMirrorNodes(tree).length;
+  const mirrors = clanMirrorNodes(tree, upperTreeId).length;
   return { own_count: own, mirror_count: mirrors, total: own + mirrors };
 }
 
@@ -228,10 +255,13 @@ export function planClanMirrorPerson({ handle, grampsId, masterPerson, masterTre
 /**
  * 清空祖谱顶端镜像段（纯函数：只改传入的 tree 对象）
  * - 删除镜像节点、指向镜像的家族；自有段节点被「解挂」为根（保留）
+ * - **自有段的登记镜像（§11-3）不动**：它们不属于顶端镜像段（`clanMirrorNodes` 已按方向排除），
+ *   误删会让「支系入口列表」凭空少入口
+ * @param {string} [upperTreeId] 本祖谱的世本 tree_id（缺省 → 句柄口径）
  * 返回 {removed_handles, removed_families}
  */
-export function clearClanTopMirror(tree) {
-  const mirrors = clanMirrorNodes(tree);
+export function clearClanTopMirror(tree, upperTreeId = '') {
+  const mirrors = clanMirrorNodes(tree, upperTreeId);
   if (!mirrors.length) return { removed_handles: [], removed_families: [] };
   const rm = new Set(mirrors.map((p) => p.handle));
   const removedFamilies = [];
@@ -289,7 +319,7 @@ export function applyClanTopMirror({
 }) {
   if (!tree?.people) throw badRequest('祖谱树数据不可用');
   const masters = planClanTopMirrors({ masterTree, masterHandle, depth });
-  clearClanTopMirror(tree);
+  clearClanTopMirror(tree, masterTreeId);
 
   const newPersonId = typeof allocPersonId === 'function' ? allocPersonId : null;
   const newFamilyId = (typeof allocFamilyId === 'function' && allocFamilyId) || (() => '');
@@ -501,8 +531,13 @@ export async function listClans({ meta = null, getTreeFn = getTree, listIdsFn = 
   const out = [];
   for (const e of entries) {
     const tree = await safeTree(getTreeFn, e.tree_id);
-    const founderMirror = tree ? clanMirrorNodes(tree).find((p) => p.external_link_type === FOUNDER_LINK_TYPE) : null;
-    const stats = tree ? clanStats(tree) : { own_count: 0, mirror_count: 0, total: 0 };
+    // 顶端镜像段只按**本祖谱的世本**（master_tree_id）判定：meta 缺该字段 → 函数内退回确定性句柄口径，
+    // 自有段的家族树登记镜像（§11-3）绝不参与 master_* / attached_to_master 推导
+    const upperTreeId = String(e.master_tree_id || '');
+    const founderMirror = tree
+      ? clanMirrorNodes(tree, upperTreeId).find((p) => p.external_link_type === FOUNDER_LINK_TYPE)
+      : null;
+    const stats = tree ? clanStats(tree, upperTreeId) : { own_count: 0, mirror_count: 0, total: 0 };
     out.push({
       tree_id: e.tree_id,
       tree_title: e.display_title || e.tree_id,
@@ -525,7 +560,10 @@ export async function clanInfo({ treeId, meta = null, getTreeFn = getTree, listI
   const entry = entryOf(m, treeId) || { tree_id: treeId };
   const kind = treeKindOf(entry);
   const tree = await safeTree(getTreeFn, treeId);
-  const mirrors = tree ? clanMirrorNodes(tree) : [];
+  // 顶端镜像段 = 指向**本祖谱世本**（master_tree_id）的那一段；自有段登记镜像（§11-3）不入 mirrors，
+  // 也不参与 founderMirror / master_* / attached_to_master 推导（否则宗谱误报「已挂世本」）
+  const upperTreeId = String(entry.master_tree_id || '');
+  const mirrors = tree ? clanMirrorNodes(tree, upperTreeId) : [];
   const own = tree ? clanOwnNodes(tree) : [];
   const founderMirror = mirrors.find((p) => p.external_link_type === FOUNDER_LINK_TYPE) || null;
   const branches = kind === TREE_KIND.CLAN ? await listClanBranches({ clanTreeId: treeId, meta: m, getTreeFn, listIdsFn }) : [];
@@ -821,10 +859,11 @@ export async function detachClanFromMaster({ treeId }) {
   if (!isClanEntry(entry)) throw badRequest('该家族树不是祖谱');
   const tree0 = await getTree(treeId);
   if (!tree0) throw notFound(`树不存在: ${treeId}`);
-  const mirrors = clanMirrorNodes(tree0);
+  const upperTreeId = String(entry.master_tree_id || '');
+  const mirrors = clanMirrorNodes(tree0, upperTreeId);
   if (!mirrors.length) throw badRequest(NO_MASTER_MESSAGE);
 
-  const removed = await updateTrees([treeId], (trees) => clearClanTopMirror(trees[treeId]));
+  const removed = await updateTrees([treeId], (trees) => clearClanTopMirror(trees[treeId], upperTreeId));
   for (const h of removed.removed_handles) {
     try {
       await deleteDetail(treeId, h);
@@ -838,7 +877,7 @@ export async function detachClanFromMaster({ treeId }) {
   await saveMeta(meta);
 
   const after = await getTree(treeId);
-  const stats = after ? clanStats(after) : { own_count: 0, mirror_count: 0 };
+  const stats = after ? clanStats(after, upperTreeId) : { own_count: 0, mirror_count: 0 };
   return {
     ok: true,
     tree_id: treeId,

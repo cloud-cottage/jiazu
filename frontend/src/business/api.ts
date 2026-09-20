@@ -560,6 +560,36 @@ export interface PersonSavePayload {
 }
 
 /**
+ * 只读镜像节点唯一可提交的字段（契约 v2 C6 / 裁定 R3 例外）：
+ * 请求体**只含** `birth_place` / `residence_places` 两项 —— 后端 `isPlaceFieldsOnly` 据此放行，
+ * 夹带姓名 / 生卒 / 健在等锁字段仍 403（且被拒请求不得产生任何资产流水）。
+ */
+export type PersonPlaceSavePayload = Pick<PersonSavePayload, 'birth_place' | 'residence_places'>;
+
+/** `PUT /people/<handle>` 统一出口（完整对象保存 / 只读镜像的出生地·居住地保存共用） */
+async function putPerson(
+  treeId: string,
+  handle: string,
+  body: PersonSavePayload | PersonPlaceSavePayload,
+  token: string,
+): Promise<{ fee?: FeeInfo }> {
+  const res = await fetch(`${API_BASE}/people/${handle}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Tree-Id': treeId,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiStatusError(err?.error?.message || err?.error || `保存失败 (${res.status})`, res.status, err);
+  }
+  return res.json().catch(() => ({}));
+}
+
+/**
  * 保存人物（PUT 完整对象，需登录）
  * 注：Gramps-Web 的 ETag 是响应 hash（非对象 hash），If-Match 永远不匹配，
  * 故不使用乐观锁，直接 PUT。
@@ -572,20 +602,20 @@ export async function savePerson(
   person: PersonSavePayload,
   token: string,
 ): Promise<{ fee?: FeeInfo }> {
-  const res = await fetch(`${API_BASE}/people/${handle}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Tree-Id': treeId,
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(person),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new ApiStatusError(err?.error?.message || err?.error || `保存失败 (${res.status})`, res.status, err);
-  }
-  return res.json().catch(() => ({}));
+  return putPerson(treeId, handle, person, token);
+}
+
+/**
+ * 保存**只读镜像节点**的出生地 / 居住地（契约 v2 C6，裁定 R3 唯一例外；需登录）。
+ * 请求体只含这两项 → 后端只读闸门（镜像整节点只读）放行；其余字段仍由真身所在树管理。
+ */
+export async function savePersonPlaces(
+  treeId: string,
+  handle: string,
+  places: PersonPlaceSavePayload,
+  token: string,
+): Promise<{ fee?: FeeInfo }> {
+  return putPerson(treeId, handle, places, token);
 }
 
 // ---- 家族树等级 ----
@@ -1328,10 +1358,35 @@ export async function deleteNode(
   return authedFetch(treeId, '/admin/delete-node', 'POST', token, body);
 }
 
-// ---- 始祖挂载（认祖 / Founders Attach，docs/founder-attach.spec.md） ----
+// ---- 始祖挂载（认祖 / 登记，docs/founder-attach.spec.md §9 始祖真源反转 · 变体 A） ----
 
-/** 始祖镜像/占位节点的只读提示（后端 403 同一文案） */
+/**
+ * 只读文案常量（**与后端 `lib/founder-attach.js` 的文案常量逐字一致**）。
+ * 裁定书 v1（2026-09-20）变体 A：`external_*` 一律指向**真身所在树**，镜像按
+ * **方向无关只读不变量**（R3）判定 → 文案按 `external_tree` 的层级取用：
+ * - `family`（家族树）→ `familyMirrorLockMessage(title)`（新方向：真身在家族树）
+ * - `clan`（祖谱）→ `CLAN_FOUNDER_LOCK_MESSAGE`
+ * - `master`（中华世本）→ `FOUNDER_LOCK_MESSAGE`
+ * - `chain`（世系链镜像）→ `CHAIN_MIRROR_LOCK_MESSAGE`
+ * - 孤儿镜像（镜像标记在、真身不可达）→ `ORPHAN_MIRROR_LOCK_MESSAGE`
+ * 统一取值入口 = `business/cross-tree.ts` 的 `mirrorReadonlyViewOf`，页面不得自拼文案。
+ */
 export const FOUNDER_LOCK_MESSAGE = '始祖节点信息需在中华世本（总谱）中修改';
+/** 真身在**祖谱**时的只读提示（后端 `CLAN_FOUNDER_LOCK_MESSAGE` 同字面） */
+export const CLAN_FOUNDER_LOCK_MESSAGE = '始祖节点信息需在本姓祖谱中修改';
+/** 世系链（chain）镜像的只读提示：真身在中华世本（后端 `CHAIN_MIRROR_LOCK_MESSAGE` 同字面） */
+export const CHAIN_MIRROR_LOCK_MESSAGE = '该节点为上层（中华世本）镜像，需到总谱修改';
+/** 孤儿镜像（历史脏数据：镜像标记在、真身不可达）只读提示（后端 `PLACEHOLDER_LOCK_MESSAGE` 同字面） */
+export const ORPHAN_MIRROR_LOCK_MESSAGE = '该节点为孤儿镜像（真身不可达）：请先解除登记后在本树重建始祖信息';
+
+/**
+ * **向下**镜像（真身在家族树）的只读文案：`该节点为 <树标题> 始祖的镜像，需在 <树标题> 中修改`
+ * （后端 `familyMirrorLockMessage` 同字面；<树标题> = 真身所在家族树 display_title）。
+ */
+export function familyMirrorLockMessage(treeTitle: string): string {
+  const title = String(treeTitle || '').trim() || '该家族树';
+  return `该节点为 ${title} 始祖的镜像，需在 ${title} 中修改`;
+}
 
 /** 层级标签（树/祖谱/世本），与后端 founder-attach.js kindLabel 一致 */
 export function treeKindLabel(kind: string | undefined): string {
@@ -1477,7 +1532,8 @@ export async function attachFounder(
  * 解除始祖挂载（双方均可发起，无需申请，立即生效）
  * - 挂载树侧：传始祖节点 person_handle
  * - zhonghua 侧：传 master_handle（+ attached_tree_id 指定挂载树）
- * 始祖节点回到空白占位态（保留 I0001 位置），可重新认祖。
+ * R2（docs/founder-attach.spec.md §9-3）：只清跨树登记指针与上层登记镜像，
+ * **始祖真身数据（姓名 / 生卒 / 地点）与详情全部保留**（不再回到「空白占位」态），可重新认祖。
  */
 export async function detachFounder(
   treeId: string,
@@ -1611,6 +1667,12 @@ export interface ClanBranch {
   founder_name: string;
   master_handle: string;
   relation_note: string;
+  /**
+   * 入口推导来源（R4，docs/clan-tree.spec.md §11-3 / docs/branch-clan-ops.spec.md §16-1）：
+   * - `'branch_register'` = 由宗谱**自有段**中指向该家族树始祖的**登记镜像**推导（一条登记 = 一个入口）；
+   * - 缺省 = 由「该家族树始祖指针指向本祖谱」推导（认祖后的常规形态）。
+   */
+  via?: string;
 }
 
 /** 祖谱页面数据（三段版式数据源） */

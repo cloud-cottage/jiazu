@@ -57,7 +57,8 @@
           :loading="splitting"
           @click="confirmSplit"
         >{{ splitting ? '处理中...' : '⛔ 移除并新建家族树' }}</t-button>
-        <!-- 立支（docs/branch-clan-ops.spec.md §6-1 / §9-1）：本树普通节点 N → 新家族树始祖（一次 9999 颗石榴籽） -->
+        <!-- 立支（docs/branch-clan-ops.spec.md §6-1 / §9-1）：本树普通节点 N → 新家族树始祖（一次 9999 颗石榴籽）
+             显示条件 = canEstablishBranch（写权 + 树 kind='family' + 非始祖位 + 非镜像节点）；L1/L2/L3 文案 = §9-2 定稿 -->
         <t-button
           v-if="canEstablishBranch"
           size="small"
@@ -313,7 +314,13 @@ const props = defineProps<{
   treeKind?: string;
   /** 当前节点是否本树始祖位（始祖节点本身不可立支，§3-5） */
   isFounder?: boolean;
-  /** 当前节点是否外树镜像节点（external_mirror='true' / 指向别树的始祖镜像 → 不可立支） */
+  /**
+   * 当前节点是否**外树镜像节点** → 不可立支（docs/branch-clan-ops.spec.md §9-1 显示条件）。
+   * **语义 = 任何 `link_type` 的 `external_mirror === 'true'`**（founder / chain / marriage / child 一视同仁），
+   * 由宿主按节点 `attributes` 原始标记传入。
+   * ⚠️ **不得**改用「R3 只读判据」（`external_link_type ∈ {founder, chain}`）：那会把 marriage / child
+   * 镜像漏判为可立支、错露「🌱 立支」按钮。marriage / child 镜像的**可编辑性**沿用既存口径（本批不扩）。
+   */
   isMirror?: boolean;
   /**
    * 当前节点是否**顶端世系链镜像**（external_link_type='chain'）：
@@ -775,7 +782,9 @@ const establishing = ref(false);
 
 /**
  * 可立支（§9-1 显示条件）：本树写权（`tree_steward` / `chief_editor`，即 canAddNode）
- * 且树 `kind='family'`（总谱 / 祖谱节点不可立支）且该节点非始祖位、非镜像节点。
+ * 且树 `kind='family'`（总谱 / 祖谱节点不可立支）且该节点非始祖位、非镜像节点
+ * （`isMirror` = **任何** `link_type` 的 `external_mirror==='true'`，见上方 prop 口径）。
+ * ⚠️ L1 确认与 L2 / L3 反馈**文案**为 §9-2 定稿（逐字不得改写）→ 本处只维护显示条件，不动字面。
  */
 const canEstablishBranch = computed(
   () =>
@@ -870,7 +879,7 @@ async function confirmEstablishBranch() {
       icon: 'none',
       duration: 4000,
     });
-    // 树图与档案刷新（原树始祖已改为 N，并多出一棵新树）
+    // 树图与档案刷新（R5：原树始祖为真身则保持真身、为镜像时按既有口径；新树始祖 = N 的镜像，并多出一棵新树）
     emit('tree-changed');
   } catch (e: any) {
     // L3 立支失败（定稿文案逐字：直出后端 error 原文，不改写、不自造错误码文案）

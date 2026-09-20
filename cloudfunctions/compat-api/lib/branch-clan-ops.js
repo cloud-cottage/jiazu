@@ -699,6 +699,9 @@ export async function establishBranch({
       founder_name: person.name || '',
       clan_handle: registrations[0].handle, // §13-5：clan_handle = 该树在宗谱的落点
     };
+    // R5（变体 A）：原树始祖 = **N 真身**（真实节点，非镜像）——只改 tree-meta 登记，
+    // **不给 N 写任何 external_\*、不强转镜像**；N 在原树内照旧可编辑（本树始祖可真身写）。
+    // N 若原本已带祖先链镜像指针（历史数据），由 migrate 脚本另批处理，本操作不碰。
     delete srcEntry.founder_state; // 回到「有始祖」态
     trees[srcKey] = srcEntry;
     trees[newTreeId] = {
@@ -812,22 +815,13 @@ export async function convergeClan({
   const src0 = await getTree(treeId);
   if (!src0) throw fail('家族树不存在', 404);
 
-  // 源树当前始祖必须是「指向本层之上的镜像」（§6-2-2 **放宽口径**）：只要求
-  // `external_link_type='founder'` + `external_mirror='true'` + `external_tree` 非空且 **≠ 本树**；
-  // 其 `external_tree` 是祖谱（先认祖）还是**另一棵普通家族树**（立支产物）**均放行** ——
-  // 「立支 → 汇宗」互逆闭环要求立支产物的始祖镜像（指回原树的普通节点）也能直接汇宗。
+  // 源树当前始祖：**镜像（任一方向）或真身**都放行（R5 放宽口径；§3-8 / §6-2-2）：
+  // - 镜像（`external_mirror='true'` + `external_tree` 非空且 ≠ 本树）→ 随树丢弃（只是别树真身的展示副本）；
+  // - **真身**（家族树始祖 = 真源，始祖真源反转变体 A）→ 作为源树**真实节点**整体迁入（换树不换号）。
+  // 唯一要求 = 源树能识别出始祖节点（否则「整树归宗」无从界定）→ 400。
   const srcFounderHandle = currentFounderHandle(src0, srcEntry);
   const srcFounder = srcFounderHandle ? src0.people[srcFounderHandle] : null;
-  const srcFounderUpper = String(srcFounder?.external_tree || '');
-  if (
-    !srcFounder ||
-    srcFounder.external_link_type !== FOUNDER_LINK_TYPE ||
-    String(srcFounder.external_mirror || '') !== 'true' ||
-    !srcFounderUpper ||
-    srcFounderUpper === treeId
-  ) {
-    throw fail('该家族树当前始祖不是上层镜像，无法汇宗');
-  }
+  if (!srcFounder) throw fail('该家族树当前没有始祖节点，无法汇宗');
 
   // 目标节点解析（全局编号 / handle 均可；自动识别所属树）
   const hit = await resolveNode(refText, treeId, { listIdsFn });

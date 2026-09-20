@@ -3181,3 +3181,414 @@ git status --short AGENTS.md; md5 -q AGENTS.md
 - **★ 部署规程不变（关键）**：加固 ① **只对「改动落盘之后启动」的实例生效** —— **pid 25692（:3410，启动 08:55）仍在运行改动前的代码** ⇒ **仍是活跃的覆盖风险源**。故 **§28-2 第 5 条「部署 / 联调 / 页面实操前重启所有 local-server 实例」仍是必需项**，**不得**因加固落地而省略。
 - **复测读数（未变）**：真源 md5 **`35b08517791c11be68fb3d7b2f4d9820`** · 守卫 **exit 1** · `npm test` **449 / 448 / 1**（`not ok 391`）· `git status --short AGENTS.md` **空**。
 - **口径**：**①已落盘 ≠ 门槛转绿**（**未提交、②未落盘、修正未重放、无专项复跑证据**）⇒ 本册**不写「已修」**；逐字引用与残留 TOCTOU 窗口见规格册 **§18-11**。
+
+---
+
+## 29. 部署登记：**始祖真源反转（变体 A · 始祖真身在家族树）**（代码批次 + 纯数据批次 · **必登四项：云函数重打包 / 前端 H5+小程序重打 / 树 JSON 重传 / 存量季·顾两条链就地反转**）（Jing 制度员 · 2026-09-20 17:50 CST · **只追加 · 不改 §25-0～§28-4 历史行**）
+
+> **性质**：本节为**部署台账登记**（**只追加**）—— **未改代码、未写真源、未改 `AGENTS.md` 之外的任何仓文件、未执行任何部署 / 打包 / 重传 / 迁移 / 提交**（本节改动的文档见节末「本节边界」）。
+> **裁定来源**：Zang 终审 v1（2026-09-20）「始祖真源反转」**变体 A** —— 始祖**真身在家族树**；宗谱 / 世本各持**只读镜像**；**世系链镜像方向不变**。口径真源 = `docs/founder-attach.spec.md` **§9**（术语重定义 / R1–R3 / R6 / 代码锚点 / 真源锚点）、`docs/clan-tree.spec.md` **§11**、`docs/branch-clan-ops.spec.md` **§16**（R4 / R5 / R7）。
+> **⚠️ 实现状态（实测 2026-09-20 18:00 CST）**：本批实现在 **17:51–17:56** 已**落到工作区（未提交）** —— `git status --short` = `M lib/{founder-attach.js,branch-clan-ops.js,tree-write.js,founder-attach.test.js}` + `M README.md` + `?? scripts/migrate-founder-inversion-2026-09.mjs`；**`cloudfunctions/compat-api/index.js` 本批未改**；**云函数产物仍未重打包**（md5 `d61a8aeb…` 不变）。落地证据与锚点见 `docs/founder-attach.spec.md` **§9-10**；测试基线仍为红（**454 / 447 / 7**，见 §29-6 第 1 行）⇒ **不得**据本节认为已实现完毕 / 已验证 / 已部署。
+> **时点**：`date` = **2026-09-20 18:00 CST**；本节读数均为**本节实测**（复现命令见 §29-8）。**编号接 §28**（本节为最大节 ⇒ 后续追补接 §30）。
+> **v1.1 校正时点（Jing · 2026-09-20 18:35 CST）**：本节经一轮**校正与收口** —— 追加 **§29-3-1（A1 / A2 / A3）** 与 **§29-9（A6）**；**改写 §29-6 第 1 条**为「**`npm test` 全绿 = 本批交付门槛**（前置条件）」；§29-4 追加第 **15–18** 条；§29-8 追加 v1.1 只读复核命令。**只追加 / 只校正本批新增行**：§25-0～§28-4 历史行**与本节 v1.0 正文一律原文保留**（新口径以「**已作废 / 已取代**」标注 + 追加行落地）。
+> **v1.1 收尾实测（Jing · 2026-09-20 18:40 CST · **取代上列「⚠️ 实现状态」中的测试读数与「`index.js` 本批未改」**）**：① **`npm test` 已全绿** = **454 / 454 / 0 / 0（exit 0）**，实测 **18:38:20 CST** ⇒ §29-6 第 1 条的**交付门槛已达标**（仍以冻结时点的最终一次实测为准）；② **`cloudfunctions/compat-api/index.js` 本批已改**（`git diff --numstat` = **`9 +` / `0 -`**，mtime **18:34:15**）= **A6 接线**（`/tree/rank` 已调 `resolveChainGen`，见 **§29-9**）；③ 同批其余落盘 = `lib/branch-clan-ops.test.js` · `lib/founder-attach.test.js` · `lib/founder-reattach.test.js` · `frontend/src/business/api.ts` · `frontend/src/business/cross-tree.ts` ⇒ **§29-2「前端必须重打」的结论不变、且更必要**；④ **云函数产物仍未重打包**（`cloudfunctions/deploy/compat-api/index.js` = **998,338 B** · mtime **2026-09-19 12:50:59** · md5 **`d61a8aebfb3f3095baae4e1e731fd675`**，与 §29-1 同值 ⇒ §29-1 判定不变）。
+> **v1.1 终校读数（Jing · 2026-09-20 **18:56:57** CST · 追加 · 代码仍在动）**：`npm test` 再测 → **454 tests / 454 pass / 0 fail / 0 skipped**（**exit 0**，`not ok` **0 条**）⇒ **与前一次全绿读数一致**。此后工作区**又新增落盘**（实测 mtime）：`lib/clan.js` `59 +` / `20 -`（18:48:29）、`lib/founder-attach.js` `418 +` / `91 -`（18:48:39）、`lib/tree-write.js` `24 +` / `7 -`（18:48:48）、`frontend/src/business/{types.ts,api.ts,index.ts}`、`frontend/src/components/{clan-hall,family-messages,person-archive,person-manage-panel}` ⇒ **本节的四项动作面（重打包 / 重打前端 / 重传树 JSON / 存量反转）判据不变**；**行号类登记以最新时点为准**（`docs/founder-attach.spec.md` §9-6 / §9-10 (e) 已按 18:57 复核实测校正）。
+> **真源侧进程外写入（Jing · 2026-09-20 **18:58** CST 实测 · 只登记 · **与本次文档校正无关**）**：`migrate-output/**` **文件数实测 319**（本节 v1.0 与 §29-3-1 校正笔记的「318」为 17:5x 时点值，**已陈旧**）。新增 / 改写者 = **运行时写入**（进程外写者，非本校正轮）：新键 `migrate-output/details/zhonghua:6dfb6ba8dc8a57625a115395.json`（607 B，mtime **18:42:17**）+ 改写 `migrate-output/trees/zhonghua.json`（90,401 B）、`migrate-output/collections/jiazu_assets.json`（74,860 B）、`migrate-output/collections/jiazu_id_seq.json`（114 B）（mtime **18:40:16 / 18:42:17**）⇒ 与 `config/tree-meta.json` 是**无乐观锁的活文件**属同一类现象（§28-0 事件 K）。**本文档校正期间的自身写入 = 0**：`config/tree-meta.json` md5 **`5c8ca3aee29bd811cd7e2d4b2cbf8d05`**（9,648 B）与 mtime **2026-09-20 13:36:13** **均未变**，`migrate-output/trees/ji_23395.json`（11:36:14）与 `details/ji_23395:3c95530f8bd4f84dc0b87edc.json`（09-16 13:13:02）**均未被本校正触碰**。⚠️ **对 §29-3 的含义**：真源在**联调期间仍被运行中的实例改写** ⇒ **重传 / 反转的范围与前后 md5 必须以「全部 local-server 重启 + 冻结后」的一次实测为准**（§28-2 第 5 条同址要求）。
+
+> **⭐ v1.2 裁定 D1 校正（Jing · 2026-09-20 **19:19:00** CST 实测 · 只追加 · **取代** v1.1 的「A6 已接线」口径）**：**A6 已回退**（裁定 **D1**）—— `/tree/rank` **不接线** `resolveChainGen`，`cloudfunctions/compat-api/index.js` 与 **HEAD 字节相同**（md5 **`f1f40096323de98f1f2b3d9188c2bac5`**；`git diff --numstat -- cloudfunctions/compat-api/index.js` = **空**、`git status --short` **不再列出该文件**，实测 **19:19** CST）。⇒ 本块上方「v1.1 收尾实测」的**第 ② 项**（『`index.js` 本批已改（`9 +` / `0 -`，mtime 18:34:15）= **A6 接线**』）**已作废**；**§29-9「同批校正」块同址作废**（见 §29-9「v1.2 裁定 D1 校正」）。**§29-1 的产物侧判据不受影响**（产物仍未重打包，md5 仍 `d61a8aebfb3f3095baae4e1e731fd675`）。**R6 的唯一落点 = `lib/tree-write.js` `clanSelfGenMap`（`:772` 定义 / `:781` 调用点，19:19 实测）**，**保留不变**。**逐项读数 / 裁定理由 / 复现命令见 §29-9「v1.2 裁定 D1 校正」块**。
+> **v1.2 测试读数刷新（Jing · 2026-09-20 **19:18:14–19:18:17** CST 实测 · **取代**上列 454 读数）**：`cd /Users/kevin/bistro/jiazu && npm test` → **464 tests / 464 pass / 0 fail / 0 skipped**（`node --test` TAP 汇总逐字 = `1..464` / `# tests 464` / `# pass 464` / `# fail 0` / `# skipped 0`，**exit 0** = 全绿，`not ok` **0 条**）。增量 = **专测文件 `lib/founder-source-reversal.test.js` 已落地并注册**（**44,276 B**，mtime **2026-09-20 19:04**；`scripts.test` 注册数 = **28** = 磁盘 `cloudfunctions/compat-api/lib/*.test.js` **28**）⇒ **+10 tests**（454 → 464）。⇒ 上列 **454 / 454 / 0**（18:38:20 / 18:56:57 两条）**已陈旧**（**同一门槛、更大分母，门槛仍达标**）。
+
+### 29-0 总览（本批动作面 = 4 项 + 1 项「无变化」）
+
+| # | 目标 | 动作 | 阻塞 | 备注（本节实测） |
+|---|---|---|---|---|
+| 1 | 云函数 **`compat-api`** | **重打包 + 部署**（**必须**） | **无**（先决：Kong **落盘终态** + `npm test` 转绿 + 工作区冻结） | 产物当前为 §26-1 同一份（**未重打包铁证**见 §29-1）；实现已在工作区（未提交） |
+| 2 | 前端 **H5 + 小程序** | **重打 + hosting / 开发者工具上传**（**必须**） | hosting 目标 + 云函数域名 | 现有产物 = H5 `2026-09-20 13:20` / mp-weixin `2026-09-20 13:21`（**均早于本批实现 ⇒ 需重打**） |
+| 3 | **云端数据（树 JSON）** | **重传变更树**（**纯数据批次**：**先重传、后手工删旧详情键**，仓内惯例 §12-2 / §26-2） | 备份 + 部署授权 | 变更树清单 = **以 Kong 实装后 `migrate-output/trees/*.json` 的 md5 前后比对为准**（本册不预填数字） |
+| 4 | **`tree-meta`** | **会变**（宗谱 `founder_handle` 指向登记镜像；「R4 通用口径」） | — | ⚠️ 与 §26-4「本批不上传」中的「三次手工改动仍未上云」**同址**；`config/tree-meta.json` 是**无乐观锁的全量落盘文件**（§28-0 事件 K）⇒ **上传前必须重启全部 local-server 实例**（§28-2 第 5 条仍有效） |
+| — | CloudBase 集合 / 索引 | **无**（不新建集合、不新增上传项） | — | 复用既有 `jiazu_tree_meta` / `jiazu_person_details` 等 |
+
+### 29-1 必登 ①：云函数 `compat-api` **必须重打包**（**当前实测未重打包**）
+
+| 项 | 实测（本节 2026-09-20 17:50 CST） |
+|---|---|
+| 产物 | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B** · mtime **2026-09-19 12:50** · md5 **`d61a8aebfb3f3095baae4e1e731fd675`** |
+| 判定 | ❌ **未重打包**（与 §24 / §25-10 / §25-11(1) / **§26-1 同值** ⇒ 本批亦未落地） |
+| **判据 A（立即可跑 · 首选）** | 重打包后 **md5 ≠ `d61a8aebfb3f3095baae4e1e731fd675`** 且 **mtime > 2026-09-20 17:50** —— 若产物仍是这一份，则本批与 §23 / §24 / §25 / §26 的口径**同时落后** |
+| **判据 B（`grep -c` ≥1 形式 · **实测字面已可用**）** | 本批实装字面**已落到源码**（见 §29-1-1 表）：**源码侧 ≥1 / 产物侧期望 ≥1（当前 = 0）** —— 逐串判据与读数见下表 |
+| 产物侧现状对照（**本节复测 18:17 CST**） | `personEditLockMessage` **0** · `residence_places` **0**（产物侧）；**源码侧** = `index.js:1` / `lib/founder-attach.js:3` / `lib/tree-write.js:3`（`personEditLockMessage`）、`lib/tree-write.js:10` / `index.js:4` / `lib/founder-attach.js:1`（`residence_places`） |
+| 产物侧已存在的相关字面（**不构成判据**，仅防误判） | `isUpperMirror` **6** · `PLACEHOLDER_LOCK_MESSAGE` **2** · `planFounderPlaceholder` **2** · `listAttachedTrees` **4** · `external_chain_gen` **10** —— 说明**旧口径已在产物内**，故**只有「本轮新字面 ≥1」才算重打包判据** |
+| 打包命令 | 以**仓库既有打包脚本 / 惯例**为准（同 §23 / §24 / §25-1 / §26-1 的同一命令，本册**不新造**）；产物路径 = `cloudfunctions/deploy/compat-api/index.js` |
+| 部署前必读 | 本批实现**在工作区未提交**（Kong 在途）；打包前须**确认落盘终态 + 冻结工作区**（否则会把半成品打进去，且 `npm test` 当前为红 —— 见 §29-6 第 1 行）；`cloudfunctions/deploy/**` 是**产物**、不是编辑对象 |
+
+#### 29-1-1 重打包判据（逐串 · **实测** 2026-09-20 18:17 CST）
+
+> 口径：**源码侧 ≥1**（证明字面已实现）**且 产物侧期望 ≥1**（证明已重打包）；**产物侧当前全 0 ⇒ 未重打包**。命令见 §29-8。
+
+| # | 字面（**逐字取自实现**） | 对应裁定 | 源码侧（文件:计数） | 产物侧（实测） |
+|---|---|---|---|---|
+| 1 | `isReadonlyMirror` | **R3** 方向无关只读判据 | `founder-attach.js:6` | **0** |
+| 2 | `familyMirrorLockMessage` | **R3** 向下镜像新文案函数 | `founder-attach.js:2` | **0** |
+| 3 | `该节点为孤儿镜像` | **R2b** 新 `PLACEHOLDER_LOCK_MESSAGE` 字面（首段） | `founder-attach.js:1` | **0** |
+| 4 | `isOrphanMirror` | **R2b** 孤儿镜像判定 | `founder-attach.js:2` | **0** |
+| 5 | `planFounderRegistration` | **R2** 真身始祖登记（不覆盖身份字段） | `founder-attach.js:4` | **0** |
+| 6 | `planClanRegistrationMirror` | **R4** 宗谱登记镜像 | `founder-attach.js:2` | **0** |
+| 7 | `clanRegistrations` | **R4** 登记集合读侧 | `founder-attach.js:3` | **0** |
+| 8 | `resolveChainGen` | **R6** 世数下钻真身 | `founder-attach.js:2` + `tree-write.js:2` | **0** |
+| 9 | `始祖的镜像，需在` | **R3** 新文案中段（`familyMirrorLockMessage` 模板） | `founder-attach.js:3` | **0** |
+| 10 | `personEditLockMessage` | §26 批（**同批连带**） | `index.js:1` + `founder-attach.js:3` + `tree-write.js:3` | **0** |
+| 11 | `residence_places` | §26 批（**同批连带**） | `index.js:4` + `tree-write.js:10` + `founder-attach.js:1` | **0** |
+
+> **R5 无独立判据串**：其实装为**删改**（旧字面 `该家族树当前始祖不是上层镜像，无法汇宗` 在源码中**已 0 命中**、新字面 `该家族树当前没有始祖节点，无法汇宗` = `branch-clan-ops.js:1`）⇒ **R5 的判据形式是「旧串 = 0 且新串 ≥1（产物侧期望 ≥1）」**，与上表 1–11 的「≥1」方向相反，故单列。R1（读侧推导复用既有 `listAttachedTrees` / `founderTreeLabel`）**不产生新字面**，判据 = ① 头部注释串（`founder-attach.js` 的 `R1 单一真源` 注释，实测 `:1`）或 ② 行为判据（§29-4 第 14 条冒烟）。
+
+```bash
+cd /Users/kevin/bistro/jiazu
+for s in isReadonlyMirror familyMirrorLockMessage isOrphanMirror resolveChainGen planFounderRegistration planClanRegistrationMirror clanRegistrations '该节点为孤儿镜像' '始祖的镜像，需在' personEditLockMessage residence_places; do printf '%s: ' "$s"; grep -c "$s" cloudfunctions/deploy/compat-api/index.js; done
+grep -c '该家族树当前没有始祖节点，无法汇宗\|该家族树当前始祖不是上层镜像，无法汇宗' cloudfunctions/compat-api/lib/branch-clan-ops.js
+```
+
+```bash
+cd /Users/kevin/bistro/jiazu
+wc -c < cloudfunctions/deploy/compat-api/index.js; md5 -q cloudfunctions/deploy/compat-api/index.js   # 本节：998338 / d61a8aebfb3f3095baae4e1e731fd675
+for s in personEditLockMessage residence_places isUpperMirror PLACEHOLDER_LOCK_MESSAGE; do printf '%s: ' "$s"; grep -c "$s" cloudfunctions/deploy/compat-api/index.js; done
+```
+
+### 29-2 必登 ②：前端 **H5 + 小程序重打**（当前产物早于本批）
+
+| 项 | 实测（本节） |
+|---|---|
+| H5 产物 | `frontend/dist/build/h5/` mtime **2026-09-20 13:20**（`index.html` 847 B）；`assets/index-CCvLUJNW.js` 等为当日产物 |
+| 小程序产物 | `frontend/dist/build/mp-weixin/app.json` = 1,287 B · mtime **2026-09-20 13:21** |
+| 判定 | ❌ **早于本批实现** ⇒ 若本批含前端改动（始祖可写 / 取消占位锁 / 只读文案分支），**必须重打**，否则线上仍是旧只读态 |
+| 命令 | `cd frontend && npm run build:h5`（带 `VITE_API_BASE`）+ `tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c`（沿用 §25-4 口径）；小程序 `npm run build:mp-weixin` + 开发者工具上传 |
+| 判据（候选 · 待回填） | 前端产物的**实装字面**待 Kong 落地后回填；**本册不预设字面**。可立即用的判据 = 产物 mtime > 本节时点 |
+| 备注 | 是否**必须**含前端改动，取决于 Kong 实装的文案分支（R3 / R2b 的只读文案选择）；**以 Kong 交付说明为准**（本册**不代判**） |
+
+### 29-3 必登 ③：**纯数据批次**（树 JSON 重传 + 详情 `_id` 变更 → 旧键清理）
+
+**顺序固定（仓内惯例 · 不可交换）**：**先重传树 JSON / 详情新键 → 再手工删旧详情键**。理由（沿用 §12-2 逐字口径）：上传脚本对详情是 `doc(_id).set()`（**upsert，只增不删**）⇒ 只写新键、不删旧键；**先删后传**会出现「树里已有节点、详情 404」的空窗。
+
+| 步骤 | 动作 | 判据 / 备注 |
+|---|---|---|
+| ① 备份 | 真源备份（`migrate-output/**` + `config/tree-meta.json`），打印**写前 md5**（逐棵 + 聚合） | 仓内惯例：`/tmp/jiazu-bak-<ts>` 或 `~/jiazu-backups/<日期-说明>/` |
+| ② 重传 | `node scripts/upload-migrated-to-cloudbase.mjs`（按 report 逐树上传到 `trees/<tree_id>.json`，并回写 tree-meta + `storage_files`） | 云端逐棵 md5 与本地一致 |
+| ③ 删旧详情键 | **按 `_id` 精确手工删除**（云端 `jiazu_person_details`） | 清单见下表 |
+| ④ 回读验证 | 新键能读回、旧键不存在 | 见 §29-4 冒烟第 5 条 |
+
+**详情 `_id` 变更导致的旧键清理清单（R7 · 候选清单，以 Kong 实装 report 为准）**
+
+| # | 旧键（本节实测**存在**） | 大小 | 对应新键（本节实测**存在**） | 大小 | 处置 |
+|---|---|---|---|---|---|
+| 1 | `ji_23395:3c95530f8bd4f84dc0b87edc`（季花 = 宗谱自有段真身） | 273 B | `ji_23395_01:10400594c54f5203f61bf4fa4b20`（季花 = 家族树始祖） | 333 B | 反转后**旧键删除**（真身落家族树） |
+| 2 | `gu_39038:5ae4c6e505c90d290f71f66b`（顾清学 = 宗谱自有段真身） | 276 B | `gu_39038_01:103f95b87b5a464242933ee319d5`（顾清学 = 家族树始祖） | 336 B | 同上 |
+| 3 | `ji_23395:mir_103ff661b13b19b0f44c89cbe2f7`（季行父 = 宗谱顶端镜像） | 284 B | —（**顶端镜像段方向不变**，不删） | — | **不动** |
+| 4 | `gu_39038:mir_a824b97dab17c3f590b4e3fc`（姒期视 = 宗谱顶端镜像） | 280 B | —（同上） | — | **不动** |
+
+> - **本清单为「实测存在键 + 候选迁移对」**：第 1 / 2 行的**键对**（谁迁到谁）取决于 Kong 的实现选择（是否搬节点 / 是否改 `founder_handle` 指向），**最终键对必须回填实装 report**；第 3 / 4 行是**确定性不动项**（R1：宗谱顶端镜像段方向不变）。
+> - **树 JSON 变更范围**：至少 `ji_23395` · `ji_23395_01` · `gu_39038` · `gu_39038_01` 4 棵（两对反转涉及）；其余树是否变化**以 md5 前后比对为准**，本册**不预填数字**。
+> - **`tree-meta` 同批上传的前置**（§28-2 第 5 条仍有效）：**先重启全部 local-server 实例**，否则 `config/tree-meta.json` 可能被进程内 `metaCache` **整份回写覆盖**（事件 K）。
+> - **R7 迁移脚本已在工作区（未提交）**：`scripts/migrate-founder-inversion-2026-09.mjs`（`git status` = `??` 未入库；`README.md` 已登记用法 `node scripts/migrate-founder-inversion-2026-09.mjs`（dry-run）/ `--apply`，写前自动备份到 `~/jiazu-backups/<日期>-founder-inversion/`）。**本节实测**：`~/jiazu-backups/` 下**尚无** `founder-inversion` 目录 ⇒ **该脚本尚未跑过**（真源 md5 未变，见节末边界）。
+> - **R7 与本批其它动作的关系**：该脚本写**真源**（`migrate-output/**` + 可能 `config/tree-meta.json`）⇒ 属**真源写入**，必须在**备份就位 + 授权**后执行；执行后再按 §29-3 步骤 ② ③ 走「先重传、再删旧详情键」。
+
+#### 29-3-1 裁定追加 **v1.1**：A1 / A2 / A3（Jing · 2026-09-20 **18:35** CST · **只追加 · 不改上列各步 / 清单 / 表头**）
+
+> **性质**：本节 v1.0（17:50 CST）之上的**三条追加裁定**（A1 / A2 / A3），**只登记口径 + 实测现状**——**未改代码、未写真源、未执行脚本**（含 dry-run）。
+> **实现状态列一律为实测**；Kong 是否已跟改**以其实装 report 为准**（本轮**未收到该 report**，故不预填其结论）。
+
+| # | 裁定（v1.1 · 逐条） | 口径 | 实测（Jing · 2026-09-20 18:35 CST） |
+|---|---|---|---|
+| **A1** | **宗谱侧旧详情键：默认删除** + **`--keep-source-detail` 退回** + **删除前备份副本与 md5** | ① 反转完成后，**宗谱侧原真身详情键**（`<宗谱 tree_id>:<handle>`，即上面清单**第 1 / 2 行**）**默认删除**（不再按 v1.0 的「降级为展示副本留档」处理）；② 提供 **`--keep-source-detail`** 作为**退回开关** —— 带该 flag 时**保留**该键（= 原 v1.0 行为），供留痕 / 回滚演练；③ **删除前必须先导出备份副本**（落到备份目录，并在 `summary.json` / `md5-before.txt` 记下**删除前 md5**），**无备份副本不得删**。删除属**云端动作**（`jiazu_person_details` 按 `_id`），与 §29-3 步骤 ③ 同址同序（**先重传、再删旧键**） | 脚本 `scripts/migrate-founder-inversion-2026-09.mjs` 实测：**flag 集 = `--apply` / `--json=<path>`**（`:69` `const KNOWN = new Set(['--apply'])`；`:72` 未知参数 → `exit 2`）⇒ **`--keep-source-detail` 尚未实现**；该脚本对宗谱侧详情**不产生任何删除计划**（`:407` 只**读** `clanDetailPath`；`planFile` 只落 `famDetailPath` / 宗谱树 JSON / `tree-meta`）⇒ **A1 待 Kong 落盘**（口径落本册，本册不执行） |
+| **A2** | **复制档只携带「内容字段」；标识字段一律用本树节点现值** | (b) 复制出的**家族树侧始祖详情**只携带**内容字段**：`events` / `media` / `citations` / `notes` / `attributes`（含 `external_chain_gen`）等；**标识字段取本树节点现值** —— `_id` / `tree_id` / `handle` = 家族树侧落点（不变），**`gramps_id`（及其余编号类标识）= 家族树始祖节点现值**（`ji_23395_01` → **I000209** / `gu_39038_01` → **I000143**），**不得携带宗谱侧真身档的原编号**（`I000163` / `I000139`） | 脚本 `buildFamilyFounderDetail()`（注释 `:217`，函数 `:218`）实测当前 = **「只改写落点 + 其余字段原样携带」**（`:219` `const { _id, tree_id, handle, updated_at, ...body } = src;` ⇒ **`gramps_id` 仍在 `body` 内被携带**）；脚本自身即打印该差异（`:579` 逐字「携带 `gramps_id=${carriedGrampsId}`（宗谱真身档原值），本树节点 `gramps_id=${dataGrampsId}`」+ `:580` 「⚠️ 二者不同源：裁定 (b) 为「其余字段原样携带」→ 脚本按字面执行；**若要求两处一致须另行裁定**」）。**真源实测**两对编号 = 宗谱侧 `migrate-output/details/ji_23395:3c95530f8bd4f84dc0b87edc.json` **`gramps_id=I000163`** / `gu_39038:5ae4c6e505c90d290f71f66b.json` **`I000139`**；家族树侧 `ji_23395_01:10400594c54f5203f61bf4fa4b20.json` **`I000209`** / `gu_39038_01:103f95b87b5a464242933ee319d5.json` **`I000143`** ⇒ **A2 即该「另行裁定」**，**待 Kong 落盘** |
+| **A3** | **`external_founder_created_by` 同批清空** | 反转批次的**同一次写入**里把该字段一并**清空**（**置空串、不删键** —— 与既有 `planFounderDetach()` 同形）；理由：它记的是**当年认祖发起人**，v2 下「家族树始祖 = 真身」、挂载关系由 `external_tree` 链表达 ⇒ 该字段语义不再成立 | 脚本 `MIRROR_FIELDS`（`:136-142`）实测**只含 5 个字段** = `external_tree` / `external_person_handle` / `external_link_type` / `external_mirror` / `external_relation_note` ⇒ **不含 `external_founder_created_by`**。**真源实测**该字段存在于反转涉及的**家族树侧始祖节点**：`migrate-output/trees/ji_23395_01.json` 始祖 `10400594c54f5203f61bf4fa4b20`（I000209 季花）、`gu_39038_01.json` 始祖 `103f95b87b5a464242933ee319d5`（I000143 顾清学），**均为 `16601061656`**（同字段亦见于 `ji_23395` / `gu_39038` / `liu_21016` / `qin_31206` 的**宗谱顶端镜像** —— 那两条链**方向不变、不在 A3 范围**）。**可复用的既有清空写法** = `lib/founder-attach.js:494` `planFounderDetach()` 内的 `external_founder_created_by: ''` ⇒ **A3 待 Kong 落盘** |
+
+> **三条的交付形态**（登记 · 不改实现）：A1 为**脚本 flag + 云端删除步骤**、A2 为**脚本 (b) 的字段掩码**、A3 为**脚本字段清空表**；三者的**验收点**见 §29-4 新增第 15–17 条。本册**不预填**其行号 / 字面（以 Kong 实装为准）。
+
+> **同批校正（Jing · 2026-09-20 **18:40** CST · **取代上表「实测」列**）—— **A1 / A2 / A3 均已由 Kong 落盘**（脚本 mtime 实测 **18:36:08**；上表「实测」列为 **18:35 时点快照**，其「待 Kong 落盘」结论**已作废**）：
+> - **A1 ✅ 已落盘**：`scripts/migrate-founder-inversion-2026-09.mjs` 新增 flag **`--keep-source-detail`**（`:86` `const KNOWN = new Set(['--apply', '--keep-source-detail'])`、`:94` `const KEEP_SOURCE_DETAIL = flag('--keep-source-detail')`、`:80-82` 用法文本），**默认删除**源侧原真身详情（`:672` 注释 / `:702` 运行模式打印「默认删除（连带删源侧详情）」），且 **删除前先落备份副本 + md5**（`:48` / `:64` / `:674` 注释；`:821` `delDir = path.join(bakDir, 'deleted-source-details')`；`:831` 写 `md5.txt` 清单）。
+> - **A2 ✅ 已落盘**：`buildFamilyFounderDetail()`（**`:268`**）改为**只携带内容字段** —— `:172` `const CARRIED_CONTENT_FIELDS = ['events', 'media', 'citations', 'notes', 'attributes'];`，且 `:270-274` 的 `_id` / `tree_id` / `handle` / **`gramps_id`** / `name` 一律**用本树节点现值**（由调用点 `:552` 传入），**不再携带宗谱侧真身档原编号**。
+> - **A3 ✅ 已落盘**：新增 `:165` `const FAMILY_EXTRA_CLEAR_FIELDS = ['external_founder_created_by'];`，并入 (a) 段清空（`:523` 注释「v1.1 A3：含 `external_founder_created_by`」、`:538` 收敛路径、`:546` 幂等确认）。
+> - **⚠️ 未执行**：上述均为**口径已落盘**；**脚本本轮仍未跑过**（`~/jiazu-backups/` 下无 `founder-inversion` 目录）⇒ **真源 md5 未变**（`config/tree-meta.json` = `5c8ca3aee29bd811cd7e2d4b2cbf8d05`，9,648 B；`migrate-output/**` = 318 文件）。**「先重传、再删旧键」的顺序与云端删除动作面（§29-3 步骤 ③）不变。**
+
+### 29-4 部署后冒烟验证（**按序做**）
+
+| # | 验证 | 期望 | 依据 |
+|---|---|---|---|
+| 1 | 家族树始祖节点（`ji_23395_01` / `gu_39038_01`）档案 **改名保存** | **200**（本树 steward / chief 可写；不再 403「始祖节点信息需在本姓祖谱中修改」） | **R2**（`docs/founder-attach.spec.md` §9-3） |
+| 2 | 同上：保存后**详情未被清空**（称号 / 事件保留） | 详情仍在本树可读 | **R2** 第 2 条 |
+| 3 | 未挂载树的始祖位**自填姓名 / 生卒** | **200**（不再返回旧字面 `空白占位始祖节点：请先「认祖」挂载到中华世本后再填写信息`） | **R2b**（§9-4） |
+| 4 | 解除挂载后的始祖节点 | **不再被清成空白**；原真身数据保留 | **R2** 第 3 条 |
+| 5 | 详情回读（反转后） | 新键（家族树侧）**能读回**；旧键（宗谱侧）**不存在**（§29-3 清单第 1 / 2 行） | **R7** |
+| 6 | 宗谱顶端镜像节点（`ji_23395` I000162 / `gu_39038` I000138）改姓名 | **403** + 文案 `始祖节点信息需在中华世本（总谱）中修改`（**方向不变**） | **R1** / 既有 §26-5 文案 |
+| 7 | 宗谱登记镜像（指向家族树始祖）改姓名 | **403** + **新文案（R3 · 逐字）**：`该节点为 <树标题> 始祖的镜像，需在 <树标题> 中修改`（函数 `familyMirrorLockMessage`，`lib/founder-attach.js:161-164`）—— **方向无关只读**（镜像指向层在**下**方时同样只读） | **R3**（§9-5 / §9-10） |
+| 8 | 只改【出生地】/【居住地】（镜像态节点） | **200**（**唯一例外**，契约 v2 C6）；同请求夹带姓名 / 生卒 → **403** | **R3 例外**（C6） |
+| 9 | 族谱支系入口列表 | 宗谱自有段登记镜像**按其 `external_tree` 计入**入口（R4 通用化后，非立支关系同样成立） | **R4**（§16-1） |
+| 10 | 汇宗：源树始祖为**真身** | **200**（不再 400 `该家族树当前始祖不是上层镜像，无法汇宗` —— 该字面在源码中**已 0 命中**）；**真身随真实节点整体迁入**（`handle` / `gramps_id` 不变） | **R5**（§16-2 第 3 条） |
+| 11 | 汇宗：源树始祖为**镜像** | **200**，镜像**丢弃**（现状不变） | **R5** |
+| 12 | 立支后新树始祖 | 仍为 **N 的镜像**（同层指向、只读）；原树始祖**保持真身** | **R5** 第 1 / 2 条 |
+| 13 | 世数（`external_chain_gen` 读法） | 沿 `external_*` 链**下钻真身**后取数（`resolveChainGen`，`lib/founder-attach.js:407`；调用点 `lib/tree-write.js:777`）；**人数（`person_count`）不变**；⚠️ `/tree/rank`（`index.js:549-551`）**本批未接线** | **R6**（§9-6 / §9-10(d)） |
+| 14 | 「世本存宗谱始祖的镜像」反向登记展示 | 真身节点档案列出 `X 家族的始祖节点`；**真身侧无任何写入 / 无反指针** | **R1**（`listAttachedTrees` 读侧推导） |
+| 15 | 宗谱侧**旧详情键**（§29-3 清单第 1 / 2 行） | **默认已删除**：`jiazu_person_details` 中该 `_id` **不存在**；加 `--keep-source-detail` 演练时**保留**，且备份副本 + 删除前 md5（`md5-before.txt` / `summary.json`）就位 | **A1**（§29-3-1） |
+| 16 | 家族树侧始祖详情（反转后） | **`gramps_id` = 本树节点现值**（`ji_23395_01` → `I000209` / `gu_39038_01` → `I000143`），**不是**宗谱侧原编号（`I000163` / `I000139`）；**内容字段保留**（`events` / `notes` / `media` / `citations` / `attributes`（含 `external_chain_gen`）） | **A2**（§29-3-1） |
+| 17 | 反转后的**家族树侧始祖节点** | `external_founder_created_by` = **空串**（**键仍在、值 = `''`**，同 `planFounderDetach()` 形状） | **A3**（§29-3-1） |
+| 18 | **`/tree/rank` 世数**是否已接 `resolveChainGen` | **见 §29-9（A6）** —— 本节实测 = **未接**（`index.js` 本批未改）；该行**待另一个 Kong 的 report 回填**（拿不到即按 §29-9 实测结论） | **A6**（§29-9） |
+| **18-追加** | **`/tree/rank` 世数**（**A6 回退后 · 唯一有效验收口径** · Jing · 2026-09-20 **19:19:00** CST 实测） | **`/tree/rank` 保持原状（不接线 `resolveChainGen`）**：`index.js` 与 **HEAD 字节相同**（md5 **`f1f40096323de98f1f2b3d9188c2bac5`**；`grep -c 'resolveChainGen' cloudfunctions/compat-api/index.js` = **0**；`/tree/rank` 段 `:543`–`:552` 仍是「**只读本树详情**」原循环 `:549-551`）+ **4 棵祖谱 `GET /tree/rank` 读数 = 世数 `2 / 2 / 37 / 4`（gu_39038 / ji_23395 / liu_21016 / qin_31206）且 `over_limit` 全 = `false`**（`explicit` = `false / false / true / false`；`rank_key` = `family_rank / family_rank / lineage_rank / family_rank`）。⚠️ `liu_21016` 的 `explicit=true` 属其**自身 details 本就带 `external_chain_gen`**（实测 54 个 details 文件中 **34** 个带该属性）的**既有行为**，**与本批无关** | **A6 / 裁定 D1**（§29-9 v1.2 块） |
+
+> **§29-4 第 18 条的行内标注（Jing · 2026-09-20 **19:19** CST · 只追加 · 原行逐字保留）**：第 **18** 条原行「**未接**（`index.js` 本批未改）+ **待另一个 Kong 的 report 回填**」的**前半已随裁定 D1 恢复有效**（`/tree/rank` 确为未接线），**后半「待 report 回填」已作废**（不需外部报告：实装「接线 → 回退」两态均已落盘并实测复核）⇒ **验收一律以本表「18-追加」行为准**。
+
+
+> **逐字文案（既有常量 · 部署后必须逐字匹配）**：`始祖节点信息需在中华世本（总谱）中修改`（`lib/founder-attach.js:54`）· `始祖节点信息需在本姓祖谱中修改`（`:56`）· `该节点为上层（中华世本）镜像，需到总谱修改`（`:58`）· **新字面（R2b · 逐字）** `该节点为孤儿镜像（真身不可达）：请先解除登记后在本树重建始祖信息`（`:63`）· **新字面（R3 · 逐字 · 模板）** `该节点为 <树标题> 始祖的镜像，需在 <树标题> 中修改`（`:163`）。⚠️ **旧字面 `空白占位始祖节点：请先「认祖」挂载到中华世本后再填写信息` 已随 R2b 作废**（源码 `grep` 实测 0 命中，`cloudfunctions/compat-api/**` 与 `frontend/src/**` 均为 0）—— **不得**再作为部署验收字面。
+
+### 29-5 本批**不需要**上云的东西
+
+| 项 | 原因 |
+|---|---|
+| CloudBase 集合 / 索引 | **无 schema 变更**（复用既有集合；无新增上传项） |
+| `docs/*.qa.md` | 历史质检证据，**不得回改**、不上云 |
+| `scripts/*` 一次性修复 / 迁移脚本 | 本册惯例：脚本不上云（§6 / §12-7 同口径） |
+| 测试文件 / `npm test` | **只影响本地**（§14-4：`npm test` 跑 `/tmp` 副本，与云端数据无关） |
+| `config/geo-divisions.json` 类静态数据 | 已被 esbuild 内联（§26-6 同口径） |
+
+### 29-6 阻塞点
+
+> **本轮校正（Jing · 2026-09-20 18:35 CST）**：第 1 条由「`npm test` 为红的阻塞登记」**改为明确的前置条件** —— **`npm test` 全绿 = 本批交付门槛**（不是「等问题消失」，而是「不达标不许进下一步」）。其余各行**原文保留**。
+
+| # | 阻塞 | 影响 | 解除条件 |
+|---|---|---|---|
+| 1 | **前置条件（交付门槛 · **不是**阻塞登记）：`npm test` **必须全绿**，未全绿**一律不得**打包 / 部署 / 重传，工作区保持冻结** | 当前实测（**2026-09-20 18:22:53 CST** · Jing 本轮校正复测）：`454 tests / 447 pass / 7 fail / 0 skipped`（**exit 1**）⇒ **门槛未达**。红项 = `not ok 42` `52` `228` `229` `230` `234` `236`（**归另一个 Kong 收尾**：测试端尚未跟改本批新口径，如 `52` 断言的正是 R5 放宽掉的旧文案）。**旧表述「本批实现已在工作区（未提交）· 但 `npm test` 为红」原文保留**（同一事实） | **Kong 交付终态 + `npm test` 全绿（以实测回填，不得推算）** + 冻结工作区 + 本册**追加一行**登记全绿读数（**全绿前不得写成绿**） |
+| 1-追加 | **门槛达成（Jing · 2026-09-20 **18:38:20** CST 实测 · **取代上行「门槛未达」**）** | `cd /Users/kevin/bistro/jiazu && npm test` → **454 tests / 454 pass / 0 fail / 0 skipped**（**exit 0** = **全绿**）⇒ **第 1 条的门槛已达成**；转绿 = Kong 于 **18:31–18:36** 落盘测试端跟改（`lib/founder-attach.test.js` `127 +` / `57 -`、`lib/branch-clan-ops.test.js` `26 +` / `19 -`、`lib/founder-reattach.test.js` `18 +` / `9 -`） | **仍需**：在**冻结时点**再跑一次终校并把读数追加到本册（**代码仍在动 ⇒ 达标状态须随冻结复核**） |
+| **1-追加2** | **门槛复测（Jing · 2026-09-20 **19:18:14–19:18:17** CST 实测 · **取代上两行的 454 基数**）** | `cd /Users/kevin/bistro/jiazu && npm test` → **464 tests / 464 pass / 0 fail / 0 skipped**（TAP 逐字 `1..464` / `# tests 464` / `# pass 464` / `# fail 0` / `# skipped 0`，**exit 0** = **全绿**）⇒ **第 1 条门槛仍达标**（分母由 454 增至 464）。增量成因 = **专测文件 `lib/founder-source-reversal.test.js` 落地并注册**（44,276 B，mtime **19:04**；`scripts.test` 注册数 **28** = 磁盘 `lib/*.test.js` **28**）⇒ **+10 tests** | **仍需**：**A6 回退（裁定 D1）后**的同批冻结终校（见 **§29-9 v1.2 块**）；**以冻结时点的最终一次实测为准** |
+| 2 | **云函数未重打包**（产物 md5 仍 `d61a8aebfb3f3095baae4e1e731fd675`，`personEditLockMessage` / `residence_places` 产物侧 **0**） | 线上仍是旧口径（含 §26 的 F3 / F5） | 执行打包 + 部署授权 |
+| 3 | **前端产物早于本批**（H5 `13:20` / mp `13:21`） | 前端只读态 / 只读文案分支到不了线上 | 重打 + hosting / 上传 |
+| 4 | **`tree-meta` 无乐观锁、可被整份回写**（§28-0 事件 K，机制 `lib/store.js` 的 `metaCache`） | 上传 / 联调 / 页面实操期间可能**抹掉**刚做的元数据改动 | **先重启全部 local-server 实例**（§28-2 第 5 条仍是必需项） |
+| 5 | **R7 存量反转 = 真源写入** | 必须**先备份 + 登记前后 md5**；顺序错（先删后传）会造成详情空窗 | 备份就位 + 按 §29-3 顺序 + 部署授权 |
+
+> **§29-6 与 A6 的关系（Jing · 2026-09-20 **19:19** CST · 只登记）**：本节**原表各行均未引用 A6 / `resolveChainGen` 接线**（实测：本节区段的 `A6` 命中 **0** 处）⇒ **无「A6 接线」表述需要更正**；A6 回退**不改变本节第 1–5 条的阻塞面**（唯一牵连项 = 上行 `1-追加2` 的读数刷新）。
+
+### 29-7 跨册登记（本节与规格册的对应）
+
+| 裁定 | 规格册位置 | 本节 |
+|---|---|---|
+| R1 单一真源 / 反向登记不建节点 | `docs/founder-attach.spec.md` §9-2 | §29-4 第 6 / 14 条 |
+| R2 家族树始祖 = 真身可写 | 同上 §9-3 | §29-4 第 1 / 2 / 4 条 |
+| R2b 取消空白占位锁 | 同上 §9-4 | §29-4 第 3 条 |
+| R3 只读不变量统一（+ C6 例外） | 同上 §9-5 | §29-4 第 7 / 8 条 |
+| R4 宗谱登记镜像通用化 | `docs/branch-clan-ops.spec.md` §16-1 · `docs/clan-tree.spec.md` §11-3 | §29-4 第 9 条 |
+| R5 立支 / 汇宗连带 | `docs/branch-clan-ops.spec.md` §16-2 | §29-4 第 10–12 条 |
+| R6 世数下钻真身 | `docs/founder-attach.spec.md` §9-6 | §29-4 第 13 条 |
+| R7 存量季 / 顾两条链就地反转 | `docs/branch-clan-ops.spec.md` §16-3 | §29-3 清单 + §29-4 第 5 条 |
+| R8 只做本地阶段 | `AGENTS.md` §0 / §8 | **本节即该条的产物**（动作面只登记，不在其它任务里顺手部署） |
+| **A1** 宗谱侧旧详情键默认删除 + `--keep-source-detail` 退回 + 删除前备份副本与 md5 | §29-3-1（v1.1 追加） | §29-4 第 15 条 |
+| **A2** 复制档只携带内容字段 / 标识字段用本树节点现值 | §29-3-1（v1.1 追加） | §29-4 第 16 条 |
+| **A3** `external_founder_created_by` 同批清空 | §29-3-1（v1.1 追加） | §29-4 第 17 条 |
+| **A6** `/tree/rank` 世数是否已接 `resolveChainGen` | **§29-9（v1.1 追加；实测结论 = 未接）** | §29-4 第 18 条 |
+| **A6-追加**（**A6 回退 · 裁定 D1 · 唯一有效行**）`/tree/rank` 世数**不接线** `resolveChainGen`（保持原状） | **§29-9（v1.2 追加；实测结论 = **已评估并回退 / 未接线**）** | **§29-4 第 18-追加 条**（读数 2 / 2 / 37 / 4，`over_limit` 全 false） |
+
+> **上表 A6 原行的处置（Jing · 2026-09-20 **19:19** CST · 只追加 · 原行逐字保留）**：A6 原行「实测结论 = **未接**」**经裁定 D1 后恢复有效**（`/tree/rank` 仍未接线），但该行**未登记回退事实与回退后读数** ⇒ **以「A6-追加」行为准**；`§29-9` 的 v1.1「同批校正（已接线）」块**已作废**，**取代者 = §29-9「v1.2 裁定 D1 校正」块**。**R6 唯一保留落点 = `lib/tree-write.js` `clanSelfGenMap`（`:772` / `:781`，19:19 实测）**。
+
+### 29-8 复现命令（**只读 · 不触发部署**）
+
+```bash
+cd /Users/kevin/bistro/jiazu
+wc -c < cloudfunctions/deploy/compat-api/index.js; md5 -q cloudfunctions/deploy/compat-api/index.js   # 未重打包铁证
+for s in personEditLockMessage residence_places; do printf '%s: ' "$s"; grep -c "$s" cloudfunctions/deploy/compat-api/index.js; done
+ls -ld frontend/dist/build/h5 frontend/dist/build/mp-weixin
+md5 -q config/tree-meta.json; wc -c < config/tree-meta.json
+ls -l migrate-output/details/ji_23395:3c95530f8bd4f84dc0b87edc.json migrate-output/details/gu_39038:5ae4c6e505c90d290f71f66b.json
+npm test 2>&1 | tail -8        # 本节复测：454 tests / 447 pass / 7 fail（exit 1）；同日 17:44 为 454 / 454 / 0
+ps aux | grep -E 'local-server\.js' | grep -v grep     # 上传 / 联调前必须重启全部实例（§28-2 第 5 条）
+```
+
+> **v1.2 读数刷新（Jing · 2026-09-20 **19:18:14–19:18:17** CST 实测 · 取代上列 `npm test` 注释中的 454 / 447 / 7）**：`npm test 2>&1 | tail -8` → **464 tests / 464 pass / 0 fail / 0 skipped**（`1..464` / `# pass 464` / `# fail 0`，**exit 0**）。
+
+**A1 / A2 / A3 / A6 只读复核命令（v1.1 追加 · **只读 · 不触发任何写入 / 部署**）**
+
+```bash
+cd /Users/kevin/bistro/jiazu
+# A1：脚本当前 flag 集（--keep-source-detail 是否已实现 ⇒ 实测未实现）
+grep -n "KNOWN = new Set\|未知参数" scripts/migrate-founder-inversion-2026-09.mjs
+# A1：宗谱侧详情是否被计划删除（实测：只读、不 planFile）
+grep -n "clanDetailPath\|famDetailPath\|planFile(" scripts/migrate-founder-inversion-2026-09.mjs
+# A2：复制档字段面（实测 :219 原样携带 body ⇒ gramps_id 来自宗谱真身档）
+sed -n '217,230p' scripts/migrate-founder-inversion-2026-09.mjs
+grep -o '"gramps_id": "[^"]*"' migrate-output/details/ji_23395:3c95530f8bd4f84dc0b87edc.json   # I000163
+grep -o '"gramps_id": "[^"]*"' migrate-output/details/ji_23395_01:10400594c54f5203f61bf4fa4b20.json  # I000209
+# A3：清空表的字段集合（实测 5 个，不含 external_founder_created_by）
+grep -n -A6 "const MIRROR_FIELDS" scripts/migrate-founder-inversion-2026-09.mjs
+python3 -c "import json;t=json.load(open('migrate-output/trees/ji_23395_01.json'))['people']['10400594c54f5203f61bf4fa4b20'];print('efcb=',repr(t.get('external_founder_created_by')))"
+# A6：/tree/rank 是否接 resolveChainGen（实测 0 命中）+ index.js 本批未改
+grep -c "resolveChainGen" cloudfunctions/compat-api/index.js
+sed -n '543,551p' cloudfunctions/compat-api/index.js
+stat -f '%Sm %N' -t '%Y-%m-%d %H:%M:%S' cloudfunctions/compat-api/index.js
+npm test 2>&1 | tail -8        # v1.1 复测（18:22:53 CST）：454 tests / 447 pass / 7 fail（exit 1）
+```
+
+> **v1.2 追加复核命令（Jing · 2026-09-20 **19:19** CST 实测 · **只读 · 不触发写入 / 部署**）**
+>
+> ```bash
+> cd /Users/kevin/bistro/jiazu
+> # A6 回退：与 HEAD 字节相同（md5 f1f40096323de98f1f2b3d9188c2bac5）+ 无接线命中
+> git diff --numstat -- cloudfunctions/compat-api/index.js      # 实测：空
+> md5 -q cloudfunctions/compat-api/index.js                      # f1f40096323de98f1f2b3d9188c2bac5
+> grep -c "resolveChainGen" cloudfunctions/compat-api/index.js   # 实测 0
+> sed -n '543,552p' cloudfunctions/compat-api/index.js           # 原「只读本树详情」循环（:549-551）
+> # R6 唯一落点保留
+> grep -n "clanSelfGenMap\|resolveChainGen" cloudfunctions/compat-api/lib/tree-write.js   # :772 / :781
+> # 4 棵祖谱读数（COMPAT_OUT_DIR 指向 /tmp 副本 ⇒ 真源零写入）
+> npm test 2>&1 | tail -8        # v1.2 复测（19:18:14 CST）：464 tests / 464 pass / 0 fail（exit 0）
+> ```
+
+### 29-9 裁定追加 **v1.1**（第 4 条）：**A6 —— `/tree/rank` 世数是否已接 `resolveChainGen`**（Jing · 2026-09-20 **18:35** CST · **只登记**）
+
+| 项 | 结论 / 实测 |
+|---|---|
+| **A6 问题** | `/tree/rank` 的世数 Map 是否已改走 **R6 的 `resolveChainGen`**（沿 `external_*` 链下钻真身后取数）？ |
+| **实测结论（Jing · 2026-09-20 18:35 CST · 三条独立证据）** | **未接（尚未接线）**：① `grep -c 'resolveChainGen' cloudfunctions/compat-api/index.js` = **0**；② `index.js:543-551` 的 `/tree/rank` 段实测 = `const details = await getAllDetails(treeId)` → `d.attributes?.find((a) => a.key === 'external_chain_gen')` ⇒ **只读本树详情**；③ `cloudfunctions/compat-api/index.js` **本批未改**（`git status --short` 无该文件；mtime 实测 **2026-09-20 11:57:58**，早于本批落盘 17:51–17:56） |
+| **口径影响（登记 · 不代判）** | 现状读法对「始祖真身在**本树**」的家族树**不构成问题**（其始祖详情本就在本树）；对**镜像态节点**（宗谱登记镜像 / 顶端镜像 / chain 镜像 —— 真身在别树）**仍读本层详情** ⇒ **与 R6「沿链下钻真身」的新口径不一致** = **已知未接线项**（同址登记见 `docs/founder-attach.spec.md` §9-10 (a) 表末行 / (d)）。**是否同改 / 如何改由 Kong 判定**，本册**不预设实现细节** |
+| **另一个 Kong 的报告** | **未获取到**（本轮只做文档校正，**未收到其实装 report**；仓内亦无 report 文件）⇒ **不臆断其结论**。**待回填**：若其报告给出「已接 / 已改 `index.js`」的结论、或给出不同的行号 / 字面，**以该报告为准并回填本表**（本节**不预填**） |
+| **部署判据影响** | **无新增产物判据** —— `resolveChainGen` 的判据串已列在 §29-1-1 **第 8 行**（源码侧 ≥1 / 产物侧期望 ≥1）；A6 只登记「接线与否」这一事实，**不改变 §29-1 的表与读数** |
+
+> **同批校正（Jing · 2026-09-20 **18:40** CST · **取代上表「实测结论」行与「另一个 Kong 的报告」行**）—— **A6 已由 Kong 接线落盘**：
+> - `cloudfunctions/compat-api/index.js` 本批**已改**（`git diff --numstat` = **`9 +` / `0 -`**；mtime 实测 **2026-09-20 18:34:15**）。
+> - `/tree/rank` 段（`:543` 起）实测新增镜像下钻循环 —— **逐字**：`:557` `for (const [handle, person] of Object.entries(tree.people || {})) {` → `:558` `if (gens.has(handle) || !fa.isMirrorMarked(person)) continue;` → **`:559` `const drilled = await fa.resolveChainGen({ treeId, handle });`** → `:560` `if (drilled.gen !== null) gens.set(handle, drilled.gen);`；前置注释 `:552-556` 逐字含「R6 世数（裁定追加 v1.1 · A6）：与 `lib/tree-write.js` 的 `clanSelfGenMap` / 认祖（`attachFounder`）**同一读侧口径**」+「链断 / 真身无该属性 → 不落表（**沿用既有结构推导**，绝不猜一个世数）」。
+> - ⇒ **§29-4 第 18 条的验收期望 = **已接线**（`/tree/rank` 的世数 Map 对镜像节点沿链下钻真身取数）**；上表 18:35 的「**未接**」结论与「报告未获取到 / **待回填**」两项**均已作废**（同一批实装本身即证据，**不再需要外部 report 回填**）。
+> - **仍待办（不因 A6 接线而消失）**：产物**未重打包** ⇒ 该接线**到不了线上**（判据见 §29-1 / §29-1-1 第 8 行产物侧期望 ≥1）。
+
+> **本节边界**：只写文档 —— **未改代码、未写真源**（`config/tree-meta.json` 本节**前 = 后 = `5c8ca3aee29bd811cd7e2d4b2cbf8d05`**；`migrate-output/**` 聚合**前 = 后 = `55f0b1d32ae7f587f9d94eec61df4ba6`**，318 文件）、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**；§25-0～§28-4 历史行**原文保留**。
+> **未采纳声明**：§27 的部署前守卫建议**仍未采纳**；本节的判据 B / 冒烟新增文案**均为待回填位**，**不得**据此认为门槛已生效。**裁定权属 Kevin / Zang**。
+> **跨册登记**：口径全文见 `docs/founder-attach.spec.md` **§9** / `docs/clan-tree.spec.md` **§11** / `docs/branch-clan-ops.spec.md` **§16**；本节**不重述**其数值，只登记动作面与判据。
+> **v1.1 校正边界（Jing · 2026-09-20 18:35 CST · **只追加**）**：本轮回写只改 `docs/**` 与 `AGENTS.md`（**未改代码、未写真源** —— `config/tree-meta.json` md5 **校正前 = 校正后 = `5c8ca3aee29bd811cd7e2d4b2cbf8d05`**（9,648 B）、`migrate-output/**` 文件数 = **318 不变**）；**未执行任何部署 / 打包 / 重传 / 迁移脚本（含 dry-run）/ 提交**；**历史行一律原文保留**（新口径 = 追加行 + 「已作废 / 已取代」标注）。**A1 / A2 / A3 / A6 均为待 Kong 落盘的口径登记，本册不代实现、不代跑。**
+> **上条两点已作废（Jing · 2026-09-20 **18:58** CST · 追加）**：① 「`migrate-output/**` 文件数 = **318 不变**」→ 实测 **319**（成因 = **进程外运行时写入**，见本节头部「真源侧进程外写入」行；**本文档校正自身零写入真源**：`config/tree-meta.json` md5 与 mtime 均未变）；② 「**A1 / A2 / A3 / A6 均为待 Kong 落盘**」→ **四项均已由 Kong 落盘**（A1/A2/A3 = 脚本 mtime **18:36:08**，见 §29-3-1「同批校正」；A6 = `index.js` mtime **18:34:15**，见 §29-9「同批校正」）。**仍未执行者** = 部署 / 打包 / 重传 / 迁移脚本真跑 / 提交（**本节四项动作面判据不变**）。
+
+> **⭐⭐ v1.2 裁定 D1 校正（Jing 制度员 · 2026-09-20 **19:19:00** CST 逐项实测 · 只追加 · **取代** §29-9 的「同批校正（18:40 CST · A6 已由 Kong 接线落盘）」**整块**、`§29-7` 的 A6 行口径、以及 `§29-4` 第 18 条的接线期望）**
+>
+> **裁定 D1（结论）**：**A6 = 已评估并回退**（`/tree/rank` **保持原状、不接线** `resolveChainGen`）。
+>
+> | 项 | 实测（Jing · 2026-09-20 19:19 CST） |
+> |---|---|
+> | **被取代的旧行（18:40 块首句 · 原文保留 · **已作废 / 已取代**）** | 「**同批校正（Jing · 2026-09-20 **18:40** CST · **取代上表「实测结论」行与「另一个 Kong 的报告」行**）—— **A6 已由 Kong 接线落盘**」／其下「`/tree/rank` 段（`:543` 起）实测新增镜像下钻循环 … `:559` `const drilled = await fa.resolveChainGen({ treeId, handle });` …」与「**§29-4 第 18 条的验收期望 = 已接线**」= **整块作废** |
+> | **回退证据 ①（字节 · 铁证）** | `cloudfunctions/compat-api/index.js` 与 **HEAD 字节相同** —— md5 = **`f1f40096323de98f1f2b3d9188c2bac5`**；`git diff --numstat -- cloudfunctions/compat-api/index.js` = **空**；`git status --short` **不再列出该文件**（实测 **19:19:00** CST） |
+> | **回退证据 ②（源码）** | `grep -c 'resolveChainGen' cloudfunctions/compat-api/index.js` = **0**；`/tree/rank` 段实测逐行 = `:543` 路由 → `:547` `const gens = new Map();` → `:548` `const details = await getAllDetails(treeId);` → **`:549-551` 原「只读本树详情」循环**（`:550` `d.attributes?.find((a) => a.key === 'external_chain_gen')`）⇒ 18:40 块所述的 **`:552-556` 注释与 `:557-561` 镜像下钻循环已不存在**（现 `:556-559` 为 `person_count` 口径注释） |
+> | **回退证据 ③（行为）** | 4 棵祖谱 `GET /tree/rank` 前后对照 —— 见下一表 |
+> | **R6 唯一落点（**保留 · 未随回退移除**）** | `lib/tree-write.js` **`clanSelfGenMap` = `:772`**（定义）/ **`:781`** `const drilled = await resolveChainGen({ treeId, handle });`（调用点）—— 19:19 实测 |
+>
+> **4 棵祖谱 `GET /tree/rank` 读数（Jing · 2026-09-20 **19:19:00–19:19:06** CST 实测）**
+>
+> | 树 | 接线时（裁定 D1 登记值 · 端口 **3455** 实测） | **回退后（本次实测 · 复核值）** |
+> |---|---|---|
+> | `gu_39038` | total **78** / `over_limit` **true** / `explicit` **true** | **2 / false / false** |
+> | `ji_23395` | 90 / true / true | **2 / false / false** |
+> | `liu_21016` | 76 / true / true | **37 / false / true** |
+> | `qin_31206` | 78 / true / true | **4 / false / false** |
+>
+> - **本次复核口径（可复现 · **真源零写入**）**：以 `handleRequest` **进程内**调 `GET /tree/rank`（`COMPAT_SOURCE=local`），`COMPAT_OUT_DIR` = `migrate-output/**` 的 `/tmp` **逐字节副本**、`COMPAT_META_FILE` = `config/tree-meta.json` 的 `/tmp` 副本（同本仓测试纪律）；请求头 `X-Tree-Id: <tree>`。⇒ **与 D1 表（自起非占用端口 3455）逐项一致**。**实测期间真源 md5 前后同值** = `config/tree-meta.json` **`5c8ca3aee29bd811cd7e2d4b2cbf8d05`**（9,648 B）**未变**；`index.js` md5 亦同值。
+> - **`rank_key` 同步回落（实测）**：`gu_39038` / `ji_23395` / `qin_31206` = **`family_rank`**、`liu_21016` = **`lineage_rank`**。
+> - ⚠️ **`liu_21016` 回退后 `explicit=true` 非本次引入**：其**自身 details 本就有 `external_chain_gen`**（实测 `migrate-output/details/liu_21016*` 共 **54** 个文件、其中 **34** 个带该属性，值域 4–37）⇒ 属**既有行为**，**与本批 / A6 无关**。
+>
+> **裁定理由（D1 · 逐条）**：① **副作用超出预期** —— 接线后 4 棵祖谱 `over_limit` **全部由 `false` 翻 `true`**、`rank_key` **跳级**；而 A6 的**目标场景**（家族树侧真身始祖带的是**无镜像标记**的登记指针）**无观测量** ⇒ 无法用现有读数证明收益，风险却已实测显现；② 故**按 A6 原文的除外条款回退**（「链断 / 真身无该属性 → 不落表，绝不猜一个世数」——只读本层天然满足该条款）；③ **R6 的唯一落点保留** = `lib/tree-write.js` `clanSelfGenMap`（`:772` / `:781`）。
+>
+> **对 §29-9 上表（18:35 表）的处置**：该表「**实测结论**」行的 ①②（`grep -c` = 0、只读本树详情）**经 D1 后恢复有效**；其 ③ 的 mtime `11:57:58` 与「本批未改」措辞**已陈旧**（现状 = **与 HEAD 字节相同**）。该表「**另一个 Kong 的报告**」行的「**待回填**」**已作废** —— **不需要外部报告**（实装「接线 → 回退」两态均已落盘并实测复核）。
+> **部署判据影响（不变）**：**无新增产物判据** —— `resolveChainGen` 的判据串仍按 §29-1-1 **第 8 行**（源码侧 ≥1 / 产物侧期望 ≥1）登记；**A6 回退只登记事实，不改变 §29-1 的表与读数**（产物仍未重打包，md5 仍 `d61a8aebfb3f3095baae4e1e731fd675`）。
+> **本节（§29）动作面（不变）**：**重打包 / 重打前端 H5+小程序 / 重传树 JSON / 存量季·顾两条链就地反转** 四项判据**均不因 A6 回退而改变**（§29-0 / §29-6 同址）。
+> **本轮（v1.2）文档侧写入账（Jing · 2026-09-20 **19:19–19:24** CST 实测）**：只改 `docs/**`（`docs/PENDING_DEPLOY.md` · `docs/clan-tree.spec.md` · `docs/branch-clan-ops.spec.md` · `docs/founder-attach.spec.md`）；**真源零写入** —— `config/tree-meta.json` md5 **校正前 = 校正后 = `5c8ca3aee29bd811cd7e2d4b2cbf8d05`**（9,648 B，mtime **2026-09-20 13:36:13** 未变）、`migrate-output/**` **文件数 = 319 不变**；**未改代码、未执行部署 / 打包 / 重传 / 迁移脚本（含 dry-run）/ 提交**；**历史行一律原文保留**（新口径 = 追加行 + 「已作废 / 已取代」标注）。
+> **AGENTS.md 状态（只登记 —— Jing **不得**写）**：其逐字待写入文本**已备**，写入**被 protected-file 审批两次拦下**（**非本轮校正之责**）⇒ **待 Kevin 批准后由 Zang 在前台一次批量写入**；`git status --short AGENTS.md` 的 `6 +` / `0 -` 为**先前既存改动**，**非本轮**（本轮未尝试写该文件）。
+
+---
+
+### 29-10 **R7 真源迁移「已执行」登记**（Jing 制度员 · 2026-09-20 **21:31–21:36** CST **现盘实测** · **只追加 · 只标注取代 · 不重写历史行**）
+
+> **取代标注（历史行一律原文保留）**：本块**取代**下列各行「**脚本尚未跑过 / 真源 md5 未变 / 319 不变**」的结论 —— §29-3 末两条（「`~/jiazu-backups/` 下**尚无** `founder-inversion` 目录 ⇒ **该脚本尚未跑过**」）、§29-3-1 末条 ⚠️（「**未执行**：…**脚本本轮仍未跑过**…`migrate-output/**` = 318 文件」）、§29-9 头部「本节边界」（`config/tree-meta.json` **前 = 后 = `5c8ca3aee29bd811cd7e2d4b2cbf8d05`**、`migrate-output/**` 文件数 = **319 不变**）、§29-9「v1.2 裁定 D1 校正」末行「**真源零写入** … **文件数 = 319 不变**」。**这些读数均为 R7 写入前（21:31 前）的快照**；R7 写入后的现值见下表（数值一律以**本节现盘实测**为准）。
+
+**（a）执行命令与存证（实测）**
+
+| 项 | 值 |
+|---|---|
+| 命令 | `node scripts/migrate-founder-inversion-2026-09.mjs --apply`（另带 `--json=/tmp/r7-apply-summary.json`） |
+| 脚本状态 | `scripts/migrate-founder-inversion-2026-09.mjs` = **未入库**（`git status` = `??`） |
+| 模式 | `--apply`（写盘）· A1 源侧详情 = **默认删除**（连带删源侧详情） |
+| 执行时间 | `summary.json` 的 `at` = **2026-09-20T13:31:28.207Z** = **21:31:28 CST** |
+| 真源根 | 树 `migrate-output/trees` · 详情 `migrate-output/details` · meta `config/tree-meta.json`（`summary.json` 的 `targets` 实测 `is_copy=false` / `is_meta_copy=false` ⇒ **确为真源、非副本演练**） |
+| stdout 存证 | 首次 `--apply` = `/tmp/r7-apply.txt`（**13,193 B**）· 幂等二次 `--apply` = `/tmp/r7-apply2.txt`（**4,011 B**）· 写前基线 `/tmp/r7-before.txt`（**11,494 B**，记 **319** 文件）/ 写后 `/tmp/r7-after.txt`（**309 B**，记 **317** 文件） |
+| 汇总 | `/Users/kevin/jiazu-backups/2026-09-20-founder-inversion/summary.json`（**15,563 B**） |
+
+**（b）7 改（前 → 后 md5 · 后值 = 本节现盘复取）**
+
+| # | 文件 | 前 md5（备份副本 / `/tmp/r7-before.txt`） | **后 md5（本节实测）** | 前 B → 后 B | 脚本自校验 |
+|---|---|---|---|---|---|
+| 1 | `config/tree-meta.json`（meta） | `5c8ca3aee29bd811cd7e2d4b2cbf8d05` | **`13616a89db2782256c3f33260aa32470`** | 9,648 → 9,814 | ✅ 与预算同值 |
+| 2 | `migrate-output/trees/ji_23395_01.json` | `c60f5f87d9a9d3b90f1536b77bdddb76` | **`9af25c1b7a7811cad536b128fe268ab2`** | 47,657 → 47,585 | ✅ |
+| 3 | `migrate-output/trees/ji_23395.json` | `30404dc54f06bfaefd709ce45997363b` | **`ba4124c36fd4672b3d94fb16b3102028`** | 1,848 → 2,009 | ✅ |
+| 4 | `migrate-output/trees/gu_39038_01.json` | `2a29eae5db70be88c2f0476f4e696dfa` | **`91af5cb06d8715274e7d0c8abef55f4c`** | 18,100 → 18,025 | ✅ |
+| 5 | `migrate-output/trees/gu_39038.json` | `e10c60334c76206cbad4fc8a23cfcc06` | **`1efbffeefc0136aaf59f372e3579a279`** | 1,834 → 1,992 | ✅ |
+| 6 | `migrate-output/details/ji_23395_01:10400594c54f5203f61bf4fa4b20.json` | `0334905b03b135eaefde3b21ddae24cf` | **`f0153ea08aa568f867d4fd96c4f52512`** | 333 → 333 | ✅ |
+| 7 | `migrate-output/details/gu_39038_01:103f95b87b5a464242933ee319d5.json` | `8369addfa752bce0393a2b95ba7fa9b6` | **`81e7c545c89cbe0c92e958e735ed58a1`** | 336 → 336 | ✅ |
+
+> - 与 Kong 流转值的一致性：7 行**逐行相符**（含此前流转中写作 `1efbff4e…` 的第 5 行 —— **完整值 = `1efbffeefc0136aaf59f372e3579a279`**，本节以此为准）。
+> - 第 6 / 7 行**字节数不变**（实测 333 B / 336 B 前后同值）：内容相等，仅刷新 `updated_at`（脚本 `reason` 逐字「迁移轮刷新 `updated_at`（内容已等于 A2 目标）」）⇒ **md5 变、字节数不变**。
+
+**（c）2 删（A1 · 源侧旧详情键 · 删前先备份）**
+
+| # | 被删键（宗谱侧原真身详情） | 删除前 md5 | 备份副本 md5（本节复取） | 现盘 |
+|---|---|---|---|---|
+| 1 | `migrate-output/details/ji_23395:3c95530f8bd4f84dc0b87edc.json`（季花，273 B） | `6eef4a753ba55a8d7e78fe40bfef5cd1` | **`6eef4a753ba55a8d7e78fe40bfef5cd1`**（一致） | **不存在**（实测 `ABSENT`） |
+| 2 | `migrate-output/details/gu_39038:5ae4c6e505c90d290f71f66b.json`（顾清学，276 B） | `66938016d817ce8b12f02686a7323dba` | **`66938016d817ce8b12f02686a7323dba`**（一致） | **不存在**（实测 `ABSENT`） |
+
+**（d）幂等（二次 `--apply` · 实测逐字）**
+
+> `合计：2 条链 / 改动项 0 / 复核失败链 0 / 待写文件 0 / 待删文件 0` ＋ `✅ 无需写入、无需删除（两条链均已就位：真身在本树 + 源侧详情已按 A1 清理）—— 全部文件一个字节不改。`
+> 两条链状态均 = **已反转**（`kept-existing` / 幂等确认 6 项 ✅）；**清单 diff 为空**（二次运行未产生任何写入 / 删除项）⇒ 二次运行后真源 md5 与上表 (b) **同值**（本节实测复取）。
+
+**（e）备份内容与回滚命令（9 条）**
+
+| 备份路径 | 内容（实测） |
+|---|---|
+| `/Users/kevin/jiazu-backups/2026-09-20-founder-inversion/config/tree-meta.json` | 改前副本（**9,648 B**） |
+| `…/migrate-output/trees/` | 改前副本 4 个（`ji_23395_01.json` 47,657 B · `ji_23395.json` 1,848 B · `gu_39038_01.json` 18,100 B · `gu_39038.json` 1,834 B） |
+| `…/migrate-output/details/` | 改前副本 2 个（`ji_23395_01:10400594…` 333 B · `gu_39038_01:103f95b8…` 336 B） |
+| `…/md5-before.txt` | **544 B**（7 个改前 md5 逐行） |
+| `…/summary.json` | **15,563 B**（含 `md5.files[]` 的 `before` / `after_expected` / `after_actual`、`deleted_source_details[]`、两条链的 `changes[]` / `observed`） |
+| `…/deleted-source-details/` | 被删的 2 个源侧详情副本（273 B / 276 B）＋ `md5.txt`（**416 B**） |
+
+> **回滚命令 = 9 条（7 恢复 + 2 复删/复现）** —— 由脚本 stdout 一次性打印（存证 `/tmp/r7-apply.txt` 末段「回滚（逐条）：」）：7 条 `cp <备份副本> <真源路径>`；2 条 `cp <deleted-source-details/键.json> <migrate-output/details/键.json>   # 恢复被删的源侧详情`。⚠️ **备份目录内不含任何 `.sh` 回滚脚本**（本节实测 `find` 无 `*rollback*` / `*.sh`）⇒ **命令文本以 `/tmp/r7-apply.txt` 与本节为准**（会话间易失，务请一并留档）。
+
+**（f）文件数：`migrate-output/**` = 319 → 317**
+
+> 实测 `find migrate-output -type f | wc -l` = **317**（写前基线 `/tmp/r7-before.txt` = **319**；净减 = A1 删除 2 个源侧详情）。**取代** §29-3-1 末条与 §29-9 各处的「318 / 319 不变」读数。
+
+**（g）⚠️ `config/tree-meta.json` 是「被 Git 跟踪」的真源文件（与 `migrate-output/**` 不同）**
+
+| 项 | 实测 |
+|---|---|
+| 忽略规则 | `.gitignore` **第 12 行** = `migrate-output/` ⇒ **树 JSON / 详情不可见**；`config/tree-meta.json` **不在忽略之列 = tracked** |
+| `git status` | ` M config/tree-meta.json`（R7 写入**会出现在待提交清单里**） |
+| `git diff --numstat` | **`4 0`**（**0 删除行**，2 个 hunk：`@@ -9,6 +9,8 @@` 与 `@@ -29,6 +31,8 @@`，两棵家族树各 `+2` 行 = `clan_tree_id` / `clan_handle`） |
+| 行数 / 字节 | **276 → 280 行**；**9,648 → 9,814 B** |
+| 与 HEAD 比对 | `git show HEAD:config/tree-meta.json` 的 md5 = **`5c8ca3aee29bd811cd7e2d4b2cbf8d05`** = **迁移前值** ⇒ 该 diff **恰为 R7 的 4 行插入**，无其它夹带 |
+| 流转值校正 | 此前流转的「**前 24 行 / 后 25 行**」**未能在现盘复现**（实测 = 276 / 280 行、numstat = `4 0`）⇒ **以本节实测为准** |
+
+> **处置要求**：`config/tree-meta.json` 的这 4 行为**真源数据变更**，提交 / 审阅时必须与本批代码一并评估（**本册不执行提交** —— 登记事实而已）。
+
+**（h）云端动作清单「回填」（§29-3 步骤 ②③ · 按 R7 实测收口）**
+
+| 步骤 | 回填内容（R7 实测） | 状态 |
+|---|---|---|
+| ② 重传 | `node scripts/upload-migrated-to-cloudbase.mjs`（树 JSON + `tree-meta` + `storage_files`） | **未执行**（云端仍为旧态） |
+| ②前 前置 | **先重启 compat-api 实例**（否则 `metaCache` 整份回写覆盖，且读侧仍返旧树快照 —— 见 (i)）；同 §28-2 第 5 条 | **未执行** |
+| ③ 删旧详情键（云端 `jiazu_person_details` 按 `_id` 精确删） | **`ji_23395:3c95530f8bd4f84dc0b87edc`**、**`gu_39038:5ae4c6e505c90d290f71f66b`**（本地真源**已删**，**云端副本仍在** ⇒ 删除动作**待做**） | **未执行**（顺序仍 = **先重传、再删旧键**） |
+| ③ 新增 / 变更键（须在重传后可见） | **7 个** = 上表 (b) 的 7 行（`config/tree-meta.json` + 4 棵树 JSON + 2 个家族树侧始祖详情键 `ji_23395_01:10400594c54f5203f61bf4fa4b20` / `gu_39038_01:103f95b87b5a464242933ee319d5`） | **未执行** |
+| ④ 回读验证 | 见 §29-4 冒烟第 5 条 | **未执行** |
+
+**（i）⚠️ 运维口径（必须遵守）：树 JSON 无磁盘指纹 ⇒ 改真源后必须重启 compat-api**
+
+> **实测结论**：`lib/store.js` 对 **`config/tree-meta.json` 有磁盘指纹**（`:272` `function statMetaFile()` / `:282` `function sameMetaStamp(a, b)`（`mtimeMs` / `size` / `ctimeMs` 三元组）/ `:313` `const stamp = statMetaFile();` / `:315` `if (!stamp || sameMetaStamp(stamp, metaStamp)) return metaCache;`）⇒ **外部改 meta，长驻实例会自动重读**；而 **树 JSON 没有任何磁盘指纹** —— `:356` 注释「`// ---- 树 JSON（结构真源） ----`」、`:358-374` `getTree()` 实测 **`:359` `if (treeCache.has(treeId)) return treeCache.get(treeId);`** ⇒ **命中进程内 `treeCache` 即返回，不做 stat / 不做 mtime 比对**。
+> **⇒ 口径**：**任何外部改树 JSON 的动作（R7 迁移 / 手工改 / 从备份恢复 / 换数据目录）之后，必须重启 compat-api**，否则读侧（`/people`、`/tree/rank`、树图、搜索）持续返回**旧快照**；写侧更会**把旧快照整份回写**（与 §28-2 第 5 条 `metaCache` 的整份回写风险同源）。
+> **本节实测回读证据（长驻实例：端口 3100 · PID 88224 · **未重启** · 2026-09-20 21:34 CST）**：`GET /tree-meta` → `ji_23395_01` 的 `clan_tree_id=ji_23395` / `clan_handle=3c95530f8bd4f84dc0b87edc` = **已是新值**（meta 有指纹 ✅）；`GET /people/10400594c54f5203f61bf4fa4b20`（`X-Tree-Id: ji_23395_01`）的 `attribute_list` **仍是旧的 4 条** `external_*`（`external_tree=ji_23395` / `external_person_handle=3c95530f8bd4f84dc0b87edc` / `external_link_type=founder` / `external_mirror=true`），而**现盘** `migrate-output/trees/ji_23395_01.json` 该节点的 6 个 `external_*`（含 `external_founder_created_by`）**全为空串**（实测）⇒ **差异即旧 `treeCache`，重启后消失**。
+> **完整口径 / 代码锚点 / 复现命令** = `docs/founder-attach.spec.md` **§9-11**（同址）。
+
+**（j）E1 / E2 裁定登记（摘要 · 全文见跨册）**
+
+| 裁定 | 结论（Zang · 2026-09-20） | 本册登记 |
+|---|---|---|
+| **E1** | 「口径 A（点镜像节点 = 打开真身档案）」下，正常点击流 / 深链会把镜像坐标 `replaceState` **收敛到真身** ⇒ **镜像自身的只读档案在正常点击流不可达**；只读判据（`founder-lock` / `founder-hint`）只在内层弹窗 / 不可收敛分支可见。**裁定：不算缺陷** —— ① 与 R1 单一真源同向；② R3 仍是后端防线 + 不可收敛态兜底；③ **R7 后家族树始祖变真身、不再触发收敛** | 口径行见 `docs/founder-attach.spec.md` **§9-11** / `docs/clan-tree.spec.md` **§11-6** / `docs/branch-clan-ops.spec.md` **§16-7** |
+| **E2** | 证据由 `PersonDetailModal.open(treeId, handle)`（**公开 API**）取得、**非真实鼠标点击** = **次优取证路径，已获接受**，但**必须写明理据**，避免后续会话误读为「正常路径可达」 | 同上（本节**如实登记**：Jing 本轮**尝试**真实点击流复现**未成** —— 浏览器后端被 `chrome … profile's Login Data … write lock` 拦下 ⇒ **未补证**） |
+
+**（k）本节边界（Jing · 2026-09-20 21:31–21:36 CST 实测）**：本轮**只改 `docs/**`**（本册 + `docs/founder-attach.spec.md` + `docs/clan-tree.spec.md` + `docs/branch-clan-ops.spec.md`）；**未跑迁移脚本（含 dry-run / 二次 `--apply`）、未改代码、未重传、未部署、未打包、未提交、未尝试写 `AGENTS.md`**。真源现值 = 上表 (b)（`config/tree-meta.json` = **`13616a89db2782256c3f33260aa32470`**、`migrate-output/**` = **317 文件**）；**历史行一律原文保留**（新口径 = 追加行 + 「已作废 / 已取代」标注）。**R7 的云端动作（重传 / 删旧键）与本批「云函数重打包 / 前端 H5+小程序重打」四项判据（§29-0 / §29-6）均仍未执行。**

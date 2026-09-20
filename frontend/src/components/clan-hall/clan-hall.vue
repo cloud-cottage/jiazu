@@ -46,17 +46,17 @@
       <view class="segment">
         <view class="seg-head">
           <text class="seg-title">世系链（世本镜像段 · 只读）</text>
-          <text class="seg-count">{{ mirrors.length }} 节点</text>
+          <text class="seg-count">{{ upstreamMirrors.length }} 节点</text>
         </view>
         <text class="seg-hint">
           镜像自中华世本（总谱），以真身为准；本层内不可修改，要改请到真身所在层。
         </text>
-        <view v-if="!mirrors.length" class="seg-empty">
+        <view v-if="!upstreamMirrors.length" class="seg-empty">
           该祖谱未认祖世本：请在本祖谱始祖节点发起「认祖（挂到中华世本）」。
         </view>
         <view v-else class="mirror-list">
           <view
-            v-for="m in mirrors"
+            v-for="m in upstreamMirrors"
             :key="m.handle"
             class="mirror-row"
             @click="openUpperPerson(m)"
@@ -84,7 +84,7 @@
       <view class="segment">
         <view class="seg-head">
           <text class="seg-title">本宗自有世代</text>
-          <text class="seg-count">自有 {{ ownCount }} 人 · 镜像 {{ mirrors.length }} · 合计 {{ totalCount }}</text>
+          <text class="seg-count">自有 {{ ownCount }} 人 · 镜像 {{ allMirrors.length }} · 合计 {{ totalCount }}</text>
         </view>
         <text class="seg-hint">
           自有世代是本宗真实数据（可编辑、可续编、可被普通家族树认祖）；祖谱人数不计入世本统计。
@@ -108,10 +108,14 @@
       <view class="segment">
         <view class="seg-head">
           <text class="seg-title">支系入口列表</text>
-          <text class="seg-count">{{ branches.length }} 支</text>
+          <text class="seg-count">
+            {{ branches.length }} 支<template v-if="registrationMirrors.length"> · 登记镜像 {{ registrationMirrors.length }}</template>
+          </text>
         </view>
-        <text class="seg-hint">认本祖谱为祖的普通家族树；各支人数不计入本祖谱。</text>
-        <view v-if="!branches.length" class="seg-empty">暂无家族树认本祖谱为祖。</view>
+        <text class="seg-hint">
+          认本祖谱为祖的普通家族树；各支人数不计入本祖谱。宗谱自有段的只读登记镜像（R4）随支系列出，点开为真身档案。
+        </text>
+        <view v-if="!branches.length && !registrationMirrors.length" class="seg-empty">暂无家族树认本祖谱为祖。</view>
         <view
           v-for="b in branches"
           :key="b.tree_id"
@@ -122,6 +126,24 @@
             <text class="branch-name">{{ b.tree_title }}</text>
             <text class="branch-sub">
               {{ b.tree_id }} · {{ b.person_count }} 人<template v-if="b.founder_name"> · 始祖 {{ b.founder_name }}</template>
+            </text>
+          </view>
+          <text class="branch-arrow">›</text>
+        </view>
+        <!-- 宗谱登记镜像（R4）：宗谱自有段里指向家族树始祖（真身）的只读登记 → 只读呈现、点开真身档案 -->
+        <view
+          v-for="m in registrationMirrors"
+          :key="`reg-${m.handle}`"
+          class="branch-row"
+          @click="openUpperPerson(m)"
+        >
+          <view class="branch-body">
+            <view class="branch-name-line">
+              <text class="branch-name">{{ m.name }}</text>
+              <t-tag theme="default" variant="light" size="small">登记镜像·只读</t-tag>
+            </view>
+            <text class="branch-sub">
+              真身在 {{ treeTitleOf(m.upper_tree_id) }}（{{ m.upper_tree_id }}）· 编号：{{ personIdDisplay(m.gramps_id) }}
             </text>
           </view>
           <text class="branch-arrow">›</text>
@@ -186,14 +208,15 @@
 <script setup lang="ts">
 /**
  * 祖谱首页（docs/clan-tree.spec.md §3-5 / §7 P4）：三段版式
- *   ① 顶端「世系链（世本镜像段 · 只读）」—— link_type='founder'/'chain'，真身在中华世本
+ *   ① 顶端「世系链（世本镜像段 · 只读）」—— **指向上层**的镜像（founder / chain，真身在世本 / 祖谱）
  *   ② 中部「本宗自有世代」—— 真实数据，可编辑/续编（树图复用 TreePedigree）
- *   ③ 底部「支系入口列表」—— 认本祖谱为祖的普通家族树，可点进
+ *   ③ 底部「支系入口列表」—— 认本祖谱为祖的普通家族树 + **宗谱登记镜像**
+ *      （R4：`link_type='founder'` 且真身树 `kind='family'` 的只读登记镜像，「登记镜像·只读」，点开真身档案）
  * 路由：/z/<tree_id>（App.vue 解析）；数据：GET /admin/clan-info
- * 统计口径：祖谱人数不计入世本；普通树人数不计入祖谱。
+ * 统计口径：祖谱人数不计入世本；普通树人数不计入祖谱。镜像分流判据 = `isRegistrationMirror`。
  */
 import { computed, onMounted, ref, watch } from 'vue';
-import { fetchClanInfo, openTreeHome, updateTreeMeta, fetchTreeMetaRemote, fetchMyAnchor, fetchPerson } from '@/business';
+import { fetchClanInfo, openTreeHome, updateTreeMeta, fetchTreeMetaRemote, fetchMyAnchor, fetchPerson, treeKindOf } from '@/business';
 import type { ClanInfo, ClanMirrorNode } from '@/business/api';
 import type { TreeEntry, SetTreeOriginResult } from '@/business/types';
 import { authState, isAuthenticated, getAuthToken } from '@/business/auth';
@@ -220,6 +243,11 @@ const canManageTree = ref(false);
 const isAdmin = computed(() => isAuthenticated() && authState.role === 'chief_editor');
 /** 本祖谱 tree-meta 条目（编辑表单回填） */
 const clanEntry = ref<TreeEntry | null>(null);
+/**
+ * tree-meta 树索引（R4 分流判据用；与 `clanEntry` 同批取自 `load()`）。
+ * 取不到（请求失败）→ 空对象 ⇒ **不分流**：全部镜像回退「世系链段」（保持最简现字段行为）。
+ */
+const treeMetaByTree = ref<Record<string, TreeEntry>>({});
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
@@ -293,10 +321,37 @@ async function saveEdit() {
   }
 }
 
-const mirrors = computed(() => info.value?.mirrors || []);
+/** 镜像段全部节点（后端 `clanInfo.mirrors`；含同名错位的宗谱登记镜像） */
+const allMirrors = computed(() => info.value?.mirrors || []);
+
+/** 树展示名（tree-meta；取不到 → tree_id 原样） */
+function treeTitleOf(treeId: string): string {
+  const id = String(treeId || '').trim();
+  return treeMetaByTree.value[id]?.display_title || id;
+}
+
+/**
+ * **宗谱登记镜像**（R4；docs/branch-clan-ops.spec.md §16-1 / docs/clan-tree.spec.md §11-3）：
+ * `link_type='founder'` 且**真身所在树 `kind='family'`** —— 宗谱自有段持 1 条指向家族树始祖（真身）的
+ * 只读镜像，仅在「支系入口列表」段呈现。
+ * ⚠️ 目标树不在 tree-meta（含 meta 整个取不到）→ 一律**不分流**（回退「世系链段」）；
+ * 层级的唯一判据 = tree-meta 的 `kind`（同 `treeKindOf` 口径），前端**不得**按后端字段错位另加过滤。
+ */
+function isRegistrationMirror(m: ClanMirrorNode): boolean {
+  const target = String(m.upper_tree_id || '').trim();
+  const entry = treeMetaByTree.value[target];
+  if (!target || !entry) return false;
+  if (String(m.link_type || '').trim() !== 'founder') return false;
+  return treeKindOf(entry) === 'family';
+}
+/** 登记镜像（支系入口列表段；`登记镜像·只读`） */
+const registrationMirrors = computed(() => allMirrors.value.filter(isRegistrationMirror));
+/** 世系链段镜像（指向上层：世本 / 祖谱；含未分流的回退项） */
+const upstreamMirrors = computed(() => allMirrors.value.filter((m) => !isRegistrationMirror(m)));
+
 const branches = computed(() => info.value?.branches || []);
 const ownCount = computed(() => info.value?.own_count ?? 0);
-const totalCount = computed(() => ownCount.value + mirrors.value.length);
+const totalCount = computed(() => ownCount.value + allMirrors.value.length);
 
 async function load() {
   if (!props.treeId) {
@@ -314,8 +369,11 @@ async function load() {
     // 祖谱 tree-meta 条目（编辑表单回填；读不到就以 clan-info 为准）
     try {
       const m = await fetchTreeMetaRemote();
-      clanEntry.value = (Object.values(m.trees) as TreeEntry[]).find((t) => t.tree_id === props.treeId) || null;
+      const trees = Object.values(m.trees) as TreeEntry[];
+      treeMetaByTree.value = Object.fromEntries(trees.map((t) => [t.tree_id, t]));
+      clanEntry.value = trees.find((t) => t.tree_id === props.treeId) || null;
     } catch {
+      treeMetaByTree.value = {};
       clanEntry.value = null;
     }
   } catch (e: any) {
@@ -326,7 +384,8 @@ async function load() {
 }
 
 /**
- * 镜像节点 → 打开真身档案（真身在中华世本；本层只读，修改须到真身所在层）。
+ * 镜像节点 → 打开真身档案（**方向无关**：世系链段真身在世本 / 祖谱；宗谱登记镜像真身在家族树）。
+ * 本层只读，修改须到真身所在层（R3）。三段的镜像行共用本入口。
  * 口径 A：镜像指针齐备（external_mirror='true' + upper_handle + upper_tree_id）→ 传镜像指针给弹窗，
  * 由弹窗统一按 external_tree / external_person_handle 口径解析真身并加顶部标注（第 3/5 条）。
  */
@@ -488,6 +547,7 @@ watch(
 }
 .branch-row:last-child { border-bottom: none; }
 .branch-body { flex: 1; min-width: 0; }
+.branch-name-line { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .branch-name { font-size: 14px; font-weight: bold; color: #3E2723; display: block; }
 .branch-sub { font-size: 11px; color: #A1887F; display: block; margin-top: 4px; }
 .branch-arrow { font-size: 16px; color: #C7B299; }

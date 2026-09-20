@@ -89,6 +89,10 @@ node scripts/fix-person-names.mjs --apply
 
 # 迁移产物上传云端（树 JSON → 云存储；详情/集合 → CloudBase）
 CB_ENV=<envId> CB_KEY=<jwt-api-key> node scripts/upload-migrated-to-cloudbase.mjs
+
+# 始祖真源反转 · 存量就地迁移（季 ji_23395_01←ji_23395 / 顾 gu_39038_01←gu_39038；裁定书 v1 + 追加 v1.1 A1/A2/A3）
+node scripts/migrate-founder-inversion-2026-09.mjs           # dry-run（打印计划 + 零写入/零删除自检）
+node scripts/migrate-founder-inversion-2026-09.mjs --apply   # 写 7 文件，默认连带删源侧旧详情（先备份到 ~/jiazu-backups/<日期>-founder-inversion{,-copy}/deleted-source-details/）；--keep-source-detail 退回保留
 ```
 
 > 一次性修复脚本都支持 `COMPAT_OUT_DIR=<dir>` 指向数据副本，先在副本上演练再动真源。

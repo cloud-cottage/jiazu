@@ -85,11 +85,13 @@
         <t-tag theme="warning" variant="light">在世</t-tag>
       </view>
 
-      <!-- 始祖节点只读态（镜像 / 空白占位）：整节点只读，信息需在中华世本修改 -->
-      <view v-if="founderLocked" class="info-row founder-lock">
-        <t-tag theme="warning" variant="light">{{ founderMirror ? '始祖节点 · 中华世本镜像' : '始祖节点 · 空白占位' }}</t-tag>
+      <!-- 只读镜像态（R3 方向无关；徽标与提示一律取自 business 的 mirrorReadonlyViewOf，页面不自拼）：
+           真身始祖 / 自建始祖 / 普通节点 → 零提示；孤儿镜像 → 孤儿提示。
+           R2b：「空白占位锁」已作废 —— 未登记始祖的树可直接在本树填写姓名 / 生卒等信息。 -->
+      <view v-if="readonlyView.tag" class="info-row founder-lock">
+        <t-tag theme="warning" variant="light">{{ readonlyView.tag }}</t-tag>
       </view>
-      <text v-if="founderLocked" class="founder-hint">{{ founderLockHint }}</text>
+      <text v-if="readonlyView.note" class="founder-hint">{{ readonlyView.note }}</text>
 
       <view class="info-card">
         <t-cell-group :bordered="false">
@@ -305,7 +307,7 @@
         :child-surname-default="childSurnameDefault"
         :tree-kind="treeKind"
         :is-founder="isFounderNode"
-        :is-mirror="isExternalMirror || founderMirror"
+        :is-mirror="isExternalMirror"
         :is-chain-mirror="isChainMirror"
         @tree-changed="onManageTreeChanged"
       />
@@ -328,6 +330,10 @@
         <text class="edit-inline-close" @click="cancelEdit">✕</text>
       </view>
       <view class="edit-inline-body">
+        <!-- 只读镜像（R3 唯一例外 · 契约 v2 C6）：身份 / 生卒 / 健在 / 称号 / 事件以真身为准，
+             本层只保留出生地 / 居住地两个可提交字段 -->
+        <text v-if="readonlyMode" class="field-hint">{{ readonlyView.note }}</text>
+        <template v-if="!readonlyMode">
         <!-- 基本信息：姓 → 名 → 性别（顺序与卡片人物名称一致） -->
         <text class="field-label">基本信息</text>
           <t-input :value="editForm.surname" placeholder="姓" class="field" 
@@ -377,6 +383,7 @@
           <t-input :value="editForm.birth_date" placeholder="1957 或 1957-12-04" class="field"
           @update:value="(v: any) => editForm.birth_date = v"
           />
+        </template>
 
           <!-- 出生地（契约 v2）：结构化三级行政区划真源（只提交 origin_code）+ 备注；
                展示串由后端按码反查生成，前端只在选择器内做即时预览 -->
@@ -390,6 +397,7 @@
           @update:value="(v: any) => editForm.birth_place.note = v"
           />
 
+        <template v-if="!readonlyMode">
           <text class="field-label">是否健在</text>
           <!-- 总谱（中华世本）与祖谱节点一律已故：字段锁死，仅展示不可改（普通家族树仍可编辑） -->
           <view v-if="livingLocked" class="living-locked">
@@ -408,6 +416,7 @@
             @update:value="(v: any) => editForm.death_date = v"
             />
           </view>
+        </template>
 
           <!-- 居住地（契约 v2）：多条，**最多 9 条**，顺序即展示顺序；空条目（无码也无备注）保存时丢弃 -->
           <text class="field-label">居住地（最多 {{ MAX_RESIDENCE_PLACES }} 条，可增删）</text>
@@ -427,6 +436,7 @@
           <t-button size="small" variant="outline" :disabled="residenceFull" @click="addResidence">＋ 添加居住地</t-button>
           <text class="field-hint">{{ residenceHint }}</text>
 
+        <template v-if="!readonlyMode">
           <!-- 生平事件 -->
           <text class="field-label">生平事件</text>
           <view v-for="(evt, i) in editForm.events" :key="i" class="event-edit-row">
@@ -442,6 +452,7 @@
             <t-button size="small" variant="outline" theme="danger" @click="removeEvent(i)">删除</t-button>
           </view>
           <t-button size="small" variant="outline" @click="addEvent">＋ 添加事件</t-button>
+        </template>
         </view>
 
         <view v-if="editError" class="edit-error">{{ editError }}</view>
@@ -682,7 +693,7 @@
           <text class="identity-text">
             将本树始祖节点「{{ person?.name }}」认祖挂到 {{ founderTargetName }} 的
             「{{ selectedFounderTarget.name }}」（{{ personIdDisplay(selectedFounderTarget.gramps_id) }}）。
-            提交后由该层总编审批，通过即建立镜像挂载（始祖节点转只读）。
+            {{ founderRequestEffectHint }}
           </text>
         </view>
 
@@ -771,10 +782,10 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
-import { fetchPerson, fetchPersonForEdit, savePerson, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, searchMarriageCandidates, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan, mirrorNoteText, treeDisplayTitleOf, MAX_RESIDENCE_PLACES, emptyPlaceInput, normalizePlace, prunePlaces, placesDirty, placeDisplayOf } from '@/business';
+import { fetchPerson, fetchPersonForEdit, savePerson, savePersonPlaces, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, searchMarriageCandidates, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, treeKindOf, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan, mirrorNoteText, mirrorReadonlyViewOf, treeDisplayTitleOf, MAX_RESIDENCE_PLACES, emptyPlaceInput, normalizePlace, prunePlaces, placesDirty, placeDisplayOf } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { PersonDetail, PersonSummary } from '@/business/types';
-import type { MirrorFields, MirrorTarget, MarriageCandidate, PersonPlaceInput } from '@/business';
+import type { MirrorFields, MirrorReadonlyView, MirrorTarget, MarriageCandidate, PersonPlaceInput } from '@/business';
 import type { ClanSummary, FeeInfo, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
 import {
   personIdDisplay,
@@ -914,31 +925,69 @@ const isFounderNode = computed(() => {
   // （无始祖的树由 founderMissing 逻辑允许在任意节点发起认祖）
   return !!gid && (person.value as any)?.gramps_id === gid;
 });
-/** 始祖镜像态：指向中华世本真身（整节点只读） */
-const founderMirror = computed(() => {
-  const m = attrMapOf((person.value as any)?.attributes);
-  return m['external_link_type'] === 'founder';
+/**
+ * 本节点的 external_* 指针字段（镜像判据入参；flat 形状与 `@/business` 的 `MirrorFields` 一致）。
+ * ⚠️ 真身自身也带 external_*（认祖登记指针 / 婚姻登记）→ **绝不能用「有 external_*」当镜像判据**。
+ */
+const mirrorFields = computed<MirrorFields>(() => {
+  const m = attrMapOf(person.value?.attributes);
+  return {
+    external_mirror: m['external_mirror'] || '',
+    external_tree: m['external_tree'] || '',
+    external_person_handle: m['external_person_handle'] || '',
+    external_link_type: m['external_link_type'] || '',
+  };
 });
+/**
+ * R3 只读视图（**唯一入口**：徽标与只读提示一律取自 `mirrorReadonlyViewOf`，页面不得自拼文案）：
+ * **方向无关** —— 家族树 ← 祖谱 / 世本（向上镜像）与祖谱 ← 家族树始祖的登记镜像（向下镜像）都只读；
+ * 孤儿镜像（镜像标记在、真身不可达）同样只读（R2b）。
+ * 真身（家族树始祖 / 祖谱自有段 / 自建始祖）→ `readonly:false`，本树内不再有只读徽标 / 禁用态（R2）。
+ */
+const readonlyView = ref<MirrorReadonlyView>({ readonly: false, tag: '', note: '', targetKind: '' });
+watch(
+  [() => person.value?.attributes, () => treeId.value],
+  async () => {
+    readonlyView.value = await mirrorReadonlyViewOf(mirrorFields.value, treeId.value);
+  },
+  { immediate: true },
+);
+/** 本层是否整节点只读（R3）；唯一例外 = 出生地 / 居住地仍可提交（契约 v2 C6） */
+const readonlyMode = computed(() => readonlyView.value.readonly);
+/** 外树镜像节点（任意 link_type 的 `external_mirror === 'true'`）→ 不可立支 / 删除须到真身所在家族树 */
+const isExternalMirror = computed(() => mirrorFields.value.external_mirror === 'true');
 /** 顶端世系链镜像态（external_link_type='chain'）：真身在中华世本，本层只读 → 不可作批量父节点 */
-const isChainMirror = computed(() => attrMapOf(person.value?.attributes)['external_link_type'] === 'chain');
-/** 空白占位始祖（未挂载 / 已解除） */
-const founderLocked = computed(() => isFounderNode.value && (founderMirror.value || !founderMirror.value));
-const founderLockHint = computed(() =>
-  founderMirror.value
-    ? '始祖节点信息以中华世本（总谱）为准，本家族树内不可修改；如需修改请到总谱对应节点编辑。'
-    : '该始祖节点为空白占位：本树内不可编辑，请先「认祖」挂到中华世本。');
+const isChainMirror = computed(() => mirrorFields.value.external_link_type === 'chain');
+/**
+ * 始祖登记指针（R4）：`external_link_type === 'founder'` 且 `external_tree` 非空 ——
+ * 本树始祖已登记到上层树（家族树 → 祖谱；祖谱 → 中华世本）。一树一挂载（后端 `assertOneAttachPerTree`）
+ * → 已登记不可再认祖；**与镜像互斥**（真身仍在本树，本树可编辑；R2）。
+ */
+const founderAttached = computed(
+  () =>
+    mirrorFields.value.external_link_type === 'founder' &&
+    !!String(mirrorFields.value.external_tree || '').trim(),
+);
 /** 本树尚未指定始祖（tree-meta.founder_state === 'none'） */
 const founderMissing = computed(() => founderMeta.value?.founder_state === 'none');
-/** 无始祖的树：任意节点都可发起认祖（由管理员手动选择始祖节点）；有始祖的树仅在始祖节点上出现 */
-const canFounderAttach = computed(
-  () => canEdit.value && !founderMirror.value && (isFounderNode.value || founderMissing.value),
-);
-const canFounderDetach = computed(() => isFounderNode.value && founderMirror.value && canEdit.value);
 /**
- * 重置始祖（本人是始祖节点 + 非镜像 + 有编辑权）：
- * 清空本树始祖登记 → 本树回到「无始祖」态（可重新认祖）；镜像态须先「解除挂载」。
+ * 认祖入口（与后端 `canInitiateAttach` + 一树一挂载同口径）：
+ * 无始祖态（重置后）→ 任意节点均可发起（语义 = 指定始祖）；否则仅始祖位节点；已登记 → 不再显示。
+ * R2b：未登记的始祖是真身（可编辑）→ 不再有「空白占位 / 需先认祖才能编辑」的旧口径。
  */
-const canFounderReset = computed(() => isFounderNode.value && !founderMirror.value && canEdit.value);
+const canFounderAttach = computed(
+  () => canEdit.value && !founderAttached.value && (isFounderNode.value || founderMissing.value),
+);
+/** 解除登记入口（R2：只清指针，始祖**真身数据保留**在本树，可继续编辑 / 重新认祖） */
+const canFounderDetach = computed(() => isFounderNode.value && founderAttached.value && canEdit.value);
+/**
+ * 重置始祖（本人是始祖位 + 未登记 + 非镜像 + 有编辑权）：
+ * 清空本树始祖登记 → 本树回到「无始祖」态（可重新认祖）；已登记 / 镜像须先「解除挂载」
+ * （与后端 `assertFounderResettable` 同判据）。
+ */
+const canFounderReset = computed(
+  () => isFounderNode.value && !founderAttached.value && !isExternalMirror.value && canEdit.value,
+);
 
 /** 真身侧：本节点被哪些家族树 / 祖谱认作始祖（读侧推导，无反指针） */
 const attachedTrees = ref<any[]>([]);
@@ -958,16 +1007,26 @@ loadFounderMeta();
 
 // ---- 认祖目标选择器（docs/founder-attach.spec.md 方式 A / docs/clan-tree.spec.md §5）----
 /**
- * 本树层级（tree-meta.kind；旧数据缺省 family）：
+ * 本树层级（tree-meta；与后端 `treeKindOf` 同口径：显式 kind 优先，缺省按 family，`is_master` → master）：
  * - clan（祖谱）→ 认祖目标只能是中华世本
  * - family（普通树）→ 认祖目标只能是祖谱（硬口径 2：不得直挂世本）
  */
-const treeKind = computed(() => (founderMeta.value?.kind as string) || 'family');
+const treeKind = computed(() => treeKindOf(founderMeta.value));
 const founderTargetKindLabel = computed(() => (treeKind.value === 'clan' ? '中华世本' : '祖谱'));
 const founderPickerHint = computed(() =>
   treeKind.value === 'clan'
     ? '祖谱只能认祖到中华世本（总谱）：先选目标，再在世本中搜索始祖节点，提交后待总编审批。'
     : '普通家族树须先认祖到本姓祖谱（不得直挂世本）：选择祖谱 → 搜索祖谱中的始祖节点 → 提交，待该祖谱总编审批。',
+);
+/**
+ * 认祖通过后的效果说明（**不得再写「始祖节点转只读」的旧口径**）：
+ * - family（普通家族树）→ 始祖真身仍在本树（本树可继续编辑），祖谱侧生成登记镜像（R2 / R4）；
+ * - clan（祖谱）→ 本谱顶端出现世本镜像段，镜像节点只读（真身在中华世本）。
+ */
+const founderRequestEffectHint = computed(() =>
+  treeKind.value === 'clan'
+    ? '提交后由该层总编审批；通过后本谱顶端出现世本镜像段（镜像节点只读，真身在中华世本）。'
+    : '提交后由该祖谱总编审批；通过后本树始祖登记到该祖谱（始祖真身仍在本树，可继续编辑）。',
 );
 
 interface FounderTargetOption { tree_id: string; label: string; kind?: string }
@@ -1133,13 +1192,20 @@ async function doAttachFounder() {
   attachSubmitting.value = true;
   attachError.value = '';
   try {
-    await attachFounder(
+    const res = await attachFounder(
       props.treeId,
       { master_handle: handle.value, tree_id: attachTargetId.value, target_tree_id: props.treeId },
       token,
     );
     showAttachPicker.value = false;
-    uni.showToast({ title: '已挂载，该祖谱进入只读镜像', icon: 'success' });
+    // 文案统一取后端 message（「已认祖：… 始祖登记至…（本树始祖仍可编辑）」）：
+    // 真源反转后不得再自拼「该祖谱进入只读镜像」的旧口径（R2）。
+    uni.showModal({
+      title: '挂载成功',
+      content: res?.message || '已挂载',
+      showCancel: false,
+      confirmText: '知道了',
+    });
     await loadAttachedTrees();
     emit('tree-changed');
   } catch (e: any) {
@@ -1148,22 +1214,31 @@ async function doAttachFounder() {
     attachSubmitting.value = false;
   }
 }
-/** 解除挂载：双方均可，无需申请；始祖回到空白占位态 */
+/**
+ * 解除始祖登记（双方均可，无需申请，立即生效；R2）：只清登记指针 ——
+ * 始祖**真身数据保留**在本树（可继续编辑，也可重新认祖）。
+ */
 function detachFounderHere(att?: any) {
   uni.showModal({
-    title: '解除挂载',
+    title: '解除始祖挂载',
     content: att
-      ? `确定解除「${att.tree_title || att.tree_id}」的始祖挂载？该树始祖将变为空白占位节点。`
-      : '确定解除本树与中华世本的挂载？始祖节点将变为空白占位节点。',
+      ? `确定解除「${att.tree_title || att.tree_id}」的始祖登记？解除后该树始祖真身数据保留（可继续编辑，也可重新认祖）。`
+      : '确定解除本树的始祖登记？解除后始祖真身数据保留（可继续编辑，也可重新认祖）。',
     success: async (r: any) => {
       if (!r.confirm) return;
       try {
-        await detachFounder(
+        const res = await detachFounder(
           props.treeId,
           att ? { attached_tree_id: att.tree_id, master_handle: handle.value } : { person_handle: handle.value },
           getAuthToken(),
         );
-        uni.showToast({ title: '已解除挂载', icon: 'success' });
+        // 文案统一取后端 message（「已解除始祖登记：… 始祖真身数据保留…」）
+        uni.showModal({
+          title: '已解除始祖登记',
+          content: res?.message || '已解除挂载',
+          showCancel: false,
+          confirmText: '知道了',
+        });
         if (att) await loadAttachedTrees();
         emit('tree-changed');
       } catch (e: any) {
@@ -1205,16 +1280,14 @@ function resetFounderHere() {
 // ===== 汇宗（本树整体并入他树；docs/branch-clan-ops.spec.md §6-2 / §9-1 / §9-2 / §8-2）=====
 
 /**
- * 汇宗入口可见性（§9-1 显示条件）：**仅 chief_editor**（与上方「⛩ 认祖 / 挂载祖谱」的
- * `canAttachFounder` 同一写法：直取 `authState.role`），且本节点为始祖位、其始祖是宗谱节点镜像。
- * 另按 §6-2-2 校验口径限定**源树为普通家族树**（总谱 / 祖谱一律 400，不显示注定失败的入口）。
+ * 汇宗入口可见性（§9-1 显示条件 / R5 放宽口径）：**仅 chief_editor**（与上方「⛩ 认祖 / 挂载祖谱」的
+ * `canAttachFounder` 同一写法：直取 `authState.role`），且本节点为始祖位、**源树是普通家族树**
+ * （总谱 / 祖谱一律 400，不显示注定失败的入口）。
+ * R5：源树始祖是镜像或**真身**都放行（后端已放宽 —— 真身在家族树即真源，作为真实节点整体迁入），
+ * 故不再要求「始祖为镜像」。
  */
 const canConvergeClan = computed(
-  () =>
-    authState.role === 'chief_editor' &&
-    isFounderNode.value &&
-    founderMirror.value &&
-    treeKind.value === 'family',
+  () => authState.role === 'chief_editor' && isFounderNode.value && treeKind.value === 'family',
 );
 
 /**
@@ -1408,8 +1481,16 @@ async function startConvergeClan() {
 }
 
 // ===== 删除节点（危险区；总谱 / 始祖 / 镜像不可删；跨树引用一律拒绝，不级联改对方树）=====
-/** 外树镜像节点（嫁娶/认祖生成的「对方在本树的代表」）→ 删除须到真身所在树 */
-const isExternalMirror = computed(() => attrMapOf(person.value?.attributes)['external_mirror'] === 'true');
+/**
+ * 指向世本（总谱）的始祖指针（历史数据）：`external_link_type='founder'` 且 `external_tree === 世本`。
+ * 后端 `assertNotFounderMirror`（结构写路径）与删除路径同一判据 → 前端删除闸门必须同口径，
+ * 不得只靠 `isFounderNode`（登记指针指向别树的始祖节点也要拦住）。
+ */
+const isFounderPointerToMaster = computed(
+  () =>
+    mirrorFields.value.external_link_type === 'founder' &&
+    String(mirrorFields.value.external_tree || '').trim() === 'zhonghua',
+);
 /** 祖谱（tree-meta.kind='clan'）：自有支系常是多棵普通家族树的认祖落点，删除风险高 */
 const isClanTree = computed(() => treeKind.value === 'clan');
 /**
@@ -1426,7 +1507,7 @@ const canDeleteNode = computed(
     canEdit.value &&
     treeId.value !== 'zhonghua' &&
     !isFounderNode.value &&
-    !founderMirror.value &&
+    !isFounderPointerToMaster.value &&
     !isExternalMirror.value &&
     // 祖谱：删支系节点风险较高（下级树的认祖落点）→ 仅总编可见；普通家族树维持 canEdit 口径
     (!isClanTree.value || authState.role === 'chief_editor'),
@@ -2100,6 +2181,33 @@ async function doSave() {
     const residenceRows = prunePlaces(editForm.value.residence_places);
     if (residenceRows.length > MAX_RESIDENCE_PLACES) {
       editError.value = `居住地最多 ${MAX_RESIDENCE_PLACES} 条，请先删除多余的条目`;
+      return;
+    }
+    // ①′ 只读镜像（R3 唯一例外 · 契约 v2 C6）：本层只提交出生地 + 居住地 ——
+    //     `savePersonPlaces` 的请求体**只含**这两项（后端只读闸门 `isPlaceFieldsOnly` 据此放行）；
+    //     夹带姓名 / 生卒 / 健在等锁字段仍 403，故绝不夹带身份字段（也绝不走改父）。
+    if (readonlyMode.value) {
+      const placesChanged =
+        placesDirty([editForm.value.birth_place], [editBaseline.value?.birth_place]) ||
+        placesDirty(residenceRows, editBaseline.value?.residence_places);
+      if (!placesChanged) {
+        uni.showToast({ title: '未做修改', icon: 'none' });
+        return;
+      }
+      const saved = await savePersonPlaces(
+        treeId.value,
+        handle.value,
+        { birth_place: normalizePlace(editForm.value.birth_place), residence_places: residenceRows },
+        token,
+      );
+      const placesFee = feeText(saved?.fee);
+      uni.showToast({
+        title: `已保存${placesFee ? `（${placesFee}）` : ''}`,
+        icon: 'none',
+        duration: 3200,
+      });
+      showEdit.value = false;
+      person.value = await fetchPerson(treeId.value, handle.value);
       return;
     }
     if (!formDirty && !parentDirty) {

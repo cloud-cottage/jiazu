@@ -285,25 +285,34 @@ test('无始祖家族树（gu_39038_01 形状）从任意节点认祖成功：�
   assert.equal(entry.kind, 'family');
   assert.notEqual(metaCopyMd5(), metaBefore, 'meta 副本应发生登记变化');
 
-  // ② 树 JSON：被指定节点成为始祖镜像；没有凭空造出 I0001
+  // ② 树 JSON：被指定节点成为始祖**真身**（R2：不覆盖身份字段、不写镜像标记）；没有凭空造出 I0001
   const after = readTree('gu_family');
   assert.equal(after.people.h70.external_tree, 'gu_clan');
   assert.equal(after.people.h70.external_person_handle, 'own_gu');
   assert.equal(after.people.h70.external_link_type, 'founder');
-  assert.equal(after.people.h70.external_mirror, 'true');
-  assert.equal(after.people.h70.name, '顾清学', '姓名以真身为准（展示副本）');
+  assert.equal(after.people.h70.external_mirror, '', 'R2：本树始祖是登记指针，不是镜像（写了就被 R3 只读锁死）');
+  assert.equal(after.people.h70.name, '顾清学', '姓名原样保留（真身不被上层覆盖）');
   assert.equal(after.people.h70.gramps_id, 'I0070', '被指定节点原位不动（不是 I0001）');
   assert.equal(hasI0001(after), false, '树内不得凭空出现 I0001');
   assert.equal(after.tree_id, 'gu_family');
   assert.notEqual(treeFileMd5('gu_family'), treeBefore);
 
-  // ③ 上层两棵树不得被改写
+  // ③ 世本树不得被改写；祖谱树 JSON **只多出 R4 登记镜像**（被登记的家族树在宗谱自有段留 1 条只读副本）
   assert.equal(treeFileMd5('zhonghua'), masterBefore, '总谱树 JSON 不得被改写');
-  assert.equal(treeFileMd5('gu_clan'), clanBefore, '认祖目标的祖谱树 JSON 不得被改写');
+  assert.notEqual(treeFileMd5('gu_clan'), clanBefore, 'R4：宗谱侧新增 1 条登记镜像');
+  const clanTree = readTree('gu_clan');
+  const registration = fa.clanRegistrationOf(clanTree, 'gu_family', 'gu_clan');
+  assert.ok(registration, 'R4：宗谱自有段出现指向 gu_family 的登记镜像');
+  assert.equal(registration.external_person_handle, 'h70');
+  assert.equal(registration.external_mirror, 'true', '登记镜像 = 只读展示副本');
+  assert.equal(registration.external_relation_note, '顾清学（顾氏家族 · 始祖）');
+  assert.equal(registration.external_prev_clan_founder_handle, 'own_gu', 'R4：登记前的宗谱始祖落点留痕');
+  assert.ok(clanTree.people.own_gu, '宗谱自有段保留');
+  assert.equal(readMetaCopy().trees.gu_clan.founder_handle, 'own_gu', '宗谱已有始祖登记 → 不被登记镜像顶掉（A4 收窄口径）');
 
-  // ④ 始祖详情（称号等）随认祖清空（真身为准）
+  // ④ 始祖详情（称号等）**原样保留**（R2：真身在本树，详情不再随认祖清空）
   const d = readDetailDoc('gu_family', 'h70');
-  assert.deepEqual(d.attributes, []);
+  assert.deepEqual(d.attributes, [{ key: '封号', value: '某某公' }], '真身详情 attributes 不得被清空');
   assert.equal(d.name, '顾清学');
 
   // ⑤ 登记后：该树不再是「无始祖」态，且一树一挂载生效
@@ -414,7 +423,7 @@ test('路由 /admin/founder-request：无始祖树任意节点 200；有始祖�
   const entry = readMetaCopy().trees.gu_family_r;
   assert.equal(entry.founder_handle, 'h74');
   assert.equal(entry.founder_gramps_id, 'I0074');
-  assert.equal(entry.founder_name, '顾清学', '回写取认祖后的始祖节点（镜像展示副本以真身为准）');
+  assert.equal(entry.founder_name, '顾承祖', 'R2：回写取**本树始祖真身**的名字（不再被上层真身覆盖）');
   assert.equal('founder_state' in entry, false);
   assert.equal(fa.isFounderMissing(entry), false);
   const tree = readTree('gu_family_r');

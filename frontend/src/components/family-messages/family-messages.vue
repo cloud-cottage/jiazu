@@ -88,6 +88,27 @@ function marriageText(r: any): string {
   return r.kind || '合离申请';
 }
 
+/**
+ * 认祖目标层级（`target_kind`；旧数据回退口径 = `master_tree_id='zhonghua'` → master，否则 clan）。
+ * 只用于文案分档，不影响权限口径与数据源。
+ */
+function founderTargetKind(f: any): 'master' | 'clan' {
+  const k = String(f?.target_kind ?? '').trim();
+  if (k === 'master' || k === 'clan') return k;
+  return f?.master_tree_id === 'zhonghua' ? 'master' : 'clan';
+}
+
+/**
+ * 认祖审批通过后的落盘形态（R5 始祖真源反转；docs/founder-attach.spec.md §9）：
+ * - `master`（祖谱 → 世本）：祖谱顶端镜像段已建立（只读），真身在中华世本；
+ * - `clan`（家族树 → 祖谱）：已在本谱自有段建立只读登记镜像（原家族树始祖仍可编辑）。
+ */
+function founderEffectText(kind: 'master' | 'clan'): string {
+  return kind === 'master'
+    ? '祖谱顶端镜像段已建立（只读），真身在中华世本'
+    : '已在本谱自有段建立只读登记镜像（原家族树始祖仍可编辑）';
+}
+
 async function load() {
   const token = getAuthToken();
   if (!token) {
@@ -153,11 +174,12 @@ async function load() {
         actionable: false,
       });
     }
-    // 认祖申请（docs/founder-attach.spec.md）：目标上层树的 chief_editor 就地通过/驳回
-    // 通过 → 建立镜像挂载（祖谱→世本 / 普通树→祖谱）；驳回 → 只写理由，不改数据
+    // 认祖申请（docs/founder-attach.spec.md §9 / docs/clan-tree.spec.md §11）：目标上层树的 chief_editor 就地通过/驳回
+    // 通过（R5 始祖真源反转）→ 建立**只读镜像**：目标 master = 祖谱顶端镜像段（真身在世本）；
+    // 目标 clan = 本谱自有段只读登记镜像（原家族树始祖仍为真身、可编辑）。驳回 → 只写理由，不改数据
     const founderCanApproveAll = !!founders.can_approve_all;
     for (const f of (founders.list || []).filter((x: any) => x.status === 'pending')) {
-      const targetKind = f.target_kind || (f.master_tree_id === 'zhonghua' ? 'master' : 'clan');
+      const targetKind = founderTargetKind(f);
       out.push({
         key: `f:${f._id}`,
         type: 'founder',
@@ -166,7 +188,8 @@ async function load() {
         title: `${f.founder_name || f.founder_gramps_id || f.tree_id} ⛩ ${f.master_name || f.master_handle}`,
         desc:
           `${f.tree_id} 的始祖认祖到${treeKindLabel(targetKind)}「${f.master_tree_id}」` +
-          (` · ${f.requested_by || ''} 于 ${(f.created_at || '').slice(0, 10)}`),
+          ` · 通过后：${founderEffectText(targetKind)}` +
+          ` · ${f.requested_by || ''} 于 ${(f.created_at || '').slice(0, 10)}`,
         note: f.note || '',
         actionable: founderCanApproveAll || (!!founders.my_tree && founders.my_tree === f.master_tree_id),
         request: f,
@@ -208,7 +231,12 @@ async function decide(it: any, approve: boolean) {
     if (it.type === 'founder') {
       const targetTree = it.request.master_tree_id || props.treeId;
       await decideFounderRequest(targetTree, it.request._id, approve, token, approve ? '' : '管理员驳回');
-      uni.showToast({ title: approve ? '已通过，始祖挂载已建立' : '已驳回', icon: approve ? 'success' : 'none' });
+      // 通过文案按目标层级分档（R5）：master = 祖谱顶端只读镜像段；clan = 本谱自有段只读登记镜像
+      const targetKind = founderTargetKind(it.request);
+      uni.showToast({
+        title: approve ? `已通过，${founderEffectText(targetKind)}` : '已驳回',
+        icon: approve ? 'success' : 'none',
+      });
     } else if (it.type === 'clan') {
       await decideClanRequest(it.request._id, approve, token, approve ? '' : '管理员驳回');
       uni.showToast({ title: approve ? '已通过，祖谱已建立' : '已驳回', icon: approve ? 'success' : 'none' });
