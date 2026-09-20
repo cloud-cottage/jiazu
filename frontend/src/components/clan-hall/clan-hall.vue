@@ -223,12 +223,13 @@ const clanEntry = ref<TreeEntry | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
-const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', description: '' });
+const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', description: '' });
 
 /**
  * 打开编辑弹窗（字段：祖谱名称/谱名/文献地址/祠堂名/简介；**发源地不在本表单内** —— 由弹窗内的
- * `OriginPicker` 走 `POST /admin/set-tree-origin` 单独指定，契约 v2 C8′）。
- * `origin` 仅作 legacy 软冗余原样回传（`PUT /tree-meta` 兼容分支），界面不再让用户直接编辑。
+ * `OriginPicker` 走 `POST /admin/set-tree-origin` 单独指定并即时落库，契约 v2 C8′）。
+ * 表单**不含 `origin` / `origin_code`**：回传旧显示串会被 `PUT /tree-meta` 的 legacy 直写分支
+ * 覆盖掉刚指定的发源地。
  */
 function openEdit() {
   const e: any = clanEntry.value || {};
@@ -237,7 +238,6 @@ function openEdit() {
     genealogy_name: e.genealogy_name || info.value?.genealogy_name || '',
     archive_url: e.archive_url || '',
     hall_name: e.hall_name || '',
-    origin: e.origin || '',
     description: e.description || '',
   };
   editError.value = '';
@@ -245,8 +245,8 @@ function openEdit() {
 }
 
 /**
- * 发源地指定成功（`OriginPicker` 内部已重拉候选）→ 就地刷新本地祖谱元条目
- * （弹窗回显与后续 `updateTreeMeta` 提交取的都是新值）。本页 hero 原不展示发源地，故无展示改动。
+ * 发源地指定成功（`OriginPicker` 内部已重拉候选）→ 就地刷新本地祖谱元条目。
+ * 后端已即时落库；本表单**不回传**发源地，故此处只作展示缓存。本页 hero 原不展示发源地，无展示改动。
  */
 function onOriginUpdated(r: SetTreeOriginResult) {
   if (clanEntry.value) {

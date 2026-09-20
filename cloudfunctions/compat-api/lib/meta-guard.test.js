@@ -344,6 +344,85 @@ test('静态护栏：凡直接跑路由/写路径的测试文件都必须把数�
   assert.deepEqual(offenders, [], `这些测试文件未设置 COMPAT_OUT_DIR / COMPAT_META_FILE：${offenders.join(', ')}`);
 });
 
+// ---- ⑤ meta 外部变更检测（local 模式读路径）----
+/**
+ * 事故根因（2026-09-20 真实数据丢失）：tree-meta 是**唯一没有乐观锁的全量落盘文件**
+ * （trees 有 version 乐观锁、collections/details 各有护栏），而 metaCache 是**进程级**、
+ * 原先只由 saveMeta 更新 ⇒ 「修正前就已启动」的长驻实例会用过期内存整份回写，抹掉外部
+ * （人 / 脚本）的写入。以下断言：磁盘指纹（mtimeMs/size/ctimeMs）变了就必须重读；
+ * 没变才允许走缓存；拿不到 stat 时沿用缓存（不新增失败面）。
+ */
+test('外部变更检测：预热缓存后外部改写 meta 副本 → getMeta 读到新值（不再吐过期内存）', async () => {
+  writeMetaCopy({ _schema: '1.1', trees: { ext_a: { tree_id: 'ext_a', kind: 'family', display_title: '外部改写前' } } });
+  const warm = await store.getMeta();
+  assert.equal(warm.trees.ext_a.display_title, '外部改写前', '首次读 = 磁盘当前值');
+  assert.equal(await store.getMeta(), warm, '磁盘没变 → 命中缓存（同一对象，不得每次都重读）');
+
+  // 「外部」改写（模拟修正脚本 / 人工编辑）：内容变了；mtime 显式推进（同一毫秒内落盘也要能检测到）
+  writeMetaCopy({
+    _schema: '1.1',
+    trees: {
+      ext_a: { tree_id: 'ext_a', kind: 'family', display_title: '外部改写后' },
+      ext_b: { tree_id: 'ext_b', kind: 'family' },
+    },
+  });
+  const bump = new Date(Date.now() + 2000);
+  fs.utimesSync(metaFile, bump, bump);
+  const fresh = await store.getMeta();
+  assert.equal(fresh.trees.ext_a.display_title, '外部改写后', '★ 外部变更必须被检测到并重读（改动前会一直吐过期缓存）');
+  assert.ok(fresh.trees.ext_b, '外部新增的条目同样要看到');
+  assert.notEqual(fresh, warm, '应为重读后的新对象');
+
+  // 同尺寸改写 + 只推进 mtime：size 相同不是漏检理由
+  const rawNow = fs.readFileSync(metaFile, 'utf8');
+  const sameSizeRaw = rawNow.replace('外部改写后', '同尺寸改写'); // 等长替换 → size 不变
+  assert.equal(Buffer.byteLength(sameSizeRaw), Buffer.byteLength(rawNow), '先自证两版字节数相同');
+  fs.writeFileSync(metaFile, sameSizeRaw);
+  const bump2 = new Date(Date.now() + 4000);
+  fs.utimesSync(metaFile, bump2, bump2);
+  assert.equal((await store.getMeta()).trees.ext_a.display_title, '同尺寸改写', 'size 相同但 mtime 变 → 一样要重读');
+
+  // 拿不到 stat（文件被删）→ 沿用缓存，**不抛新错**（与改动前「缓存命中直接返回」一致）
+  fs.unlinkSync(metaFile);
+  const kept = await store.getMeta();
+  assert.equal(kept.trees.ext_a.display_title, '同尺寸改写', 'stat 失败时沿用缓存（不新增抛错）');
+
+  // 文件重新出现（指纹 null → 非 null）→ 立即重读，不再吃旧缓存
+  writeMetaCopy({ _schema: '1.1', trees: { ext_c: { tree_id: 'ext_c', kind: 'family' } } });
+  const bump3 = new Date(Date.now() + 6000);
+  fs.utimesSync(metaFile, bump3, bump3);
+  const back = await store.getMeta();
+  assert.ok(back.trees.ext_c, '副本重新出现 → 重读');
+  assert.equal(back.trees.ext_a, undefined, '重读后不得残留旧条目');
+});
+
+test('指纹自洽：saveMeta 刚落盘后 getMeta 不把自己写的文件误判成「外部变更」', async () => {
+  const m = { _schema: '1.1', trees: { ext_w: { tree_id: 'ext_w', kind: 'family' } } };
+  await store.saveMeta(m);
+  assert.equal(await store.getMeta(), m, 'saveMeta 已对齐指纹 → 仍命中缓存（不产生多余重读）');
+  // 之后外部再改，照样能被检测到（指纹对齐不吞掉后续外部变更）
+  fs.writeFileSync(metaFile, JSON.stringify({ _schema: '1.1', trees: { ext_w2: { tree_id: 'ext_w2', kind: 'family' } } }, null, 2) + '\n');
+  const bump = new Date(Date.now() + 8000);
+  fs.utimesSync(metaFile, bump, bump);
+  assert.ok((await store.getMeta()).trees.ext_w2, '外部再改 → 仍重读');
+});
+
+test('静态守卫：cloud 分支保持「缓存命中即返回」，不得引入每次远程拉取（外部变更检测只在 local 生效）', () => {
+  const src = fs.readFileSync(path.join(LIB, 'store.js'), 'utf8');
+  const body = src.slice(src.indexOf('export async function getMeta()'), src.indexOf('export async function saveMeta('));
+  const firstSdkCall = body.indexOf('sdkCall(');
+  const cloudPart = body.slice(0, firstSdkCall);
+  assert.ok(firstSdkCall > 0, 'getMeta 内应只有 cloud 分支走 sdkCall');
+  assert.ok(cloudPart.includes("if (SOURCE !== 'local')"), 'cloud 分支必须先按 SOURCE 分流');
+  assert.equal(
+    /if \(metaCache\) return metaCache;/.test(cloudPart),
+    true,
+    'cloud 分支必须缓存命中即返回（改动不得让云端每调一次就拉一次）',
+  );
+  assert.equal(/statMetaFile\(\)/.test(cloudPart), false, 'cloud 分支不得做磁盘指纹检测');
+  assert.equal(/META_FILE/.test(cloudPart), false, 'cloud 分支不得触碰 local 的 meta 文件');
+});
+
 // ---- 收尾：整轮跑完真源必须一模一样 ----
 
 test('本文件全程未写真实数据：config/tree-meta.json 与 migrate-output/ 的 md5 逐字节一致', () => {

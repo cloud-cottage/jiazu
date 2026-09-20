@@ -22,7 +22,13 @@
  *   F5    显式 `null` 一律等同未提供：写路径不写、不清空、不计入变更判定（同批改其他字段照收 1 片，
  *         但地点字段原值必须不变）；置空一律由合法空值完成（`{origin_code:'',note:''}` / `[]`）
  *   只读预检  祖谱镜像 / 世本镜像 / chain 镜像夹带锁字段 → 403 且**资产流水零新增**（预检先于扣费）
- *   收尾  真源零写入：`config/tree-meta.json` md5 == c9112e40760839bc8d2132d6300b838b（契约冻结值）
+ *   收尾  真源零写入：`config/tree-meta.json` 的 md5 **测试前后自比**（开局读一次 → 收尾再读一次，
+ *         断言两者相同），用例标题里打印当时读到的指纹。**不锁绝对值** —— 真源被**经授权**的
+ *         人类 / 脚本写入（如 scripts/fix-tree-origin-display.mjs --apply）合法更新时，
+ *         这条断言不该长期飘红；它真正要守的意图是「**本测试文件对真源零写入**」。
+ *   收尾  真源一致性：所有带 `origin_code` 的树必须满足 `origin == resolveOrigin(origin_code).display`
+ *         （口径同 scripts/fix-tree-origin-display.mjs --check，只读复用 lib/geo.js 的 resolveOrigin /
+ *         isKnownOriginCode）；不一致 → 列出**全部**不一致项并失败（守「外部修正被过期内存整份回写抹掉」那类事故）。
  *
  * 数据安全：COMPAT_OUT_DIR / COMPAT_META_FILE 一律指向 /tmp 副本（同 founder-attach.test.js 模式），
  * 对 `migrate-output/`（trees + details + collections）与 `config/tree-meta.json` 零写入。
@@ -53,13 +59,16 @@ const md5 = (p) => crypto.createHash('md5').update(fs.readFileSync(p)).digest('h
 const dirBaseline = (dir) =>
   new Map((fs.existsSync(dir) ? fs.readdirSync(dir) : []).map((f) => [f, md5(path.join(dir, f))]));
 
-/** 真源基线（测试结束必须一模一样；tree-meta 另有契约冻结值逐字断言） */
+/**
+ * 真源基线（测试结束必须一模一样）。
+ * tree-meta 用**前后自比**（开局读 → 收尾读 → 断言相同）而不是冻结绝对 md5：
+ * 真源会被经授权的写入（人类手改 / 修正脚本）合法更新，锁死绝对值只会让这条断言永久飘红，
+ * 而它真正要守的意图是「本文件对真源零写入」。
+ */
 const realMetaMd5 = md5(REAL_META);
 const realTreeBaseline = dirBaseline(REAL_TREES);
 const realDetailBaseline = dirBaseline(REAL_DETAILS);
 const realColBaseline = dirBaseline(REAL_COLLECTIONS);
-/** 契约冻结的 tree-meta 指纹（docs/person-places.spec.md 冻结值） */
-const FROZEN_META_MD5 = 'c9112e40760839bc8d2132d6300b838b';
 
 // ---- /tmp 副本：tree-meta 夹具（每棵树只由一个用例使用 —— store 有进程内树缓存） ----
 
@@ -109,6 +118,7 @@ const fa = await import('./founder-attach.js');
 const cw = await import('./child-write.js');
 const { handleRequest } = await import('../index.js');
 const { signJwt } = await import('./auth.js');
+const { resolveOrigin, isKnownOriginCode } = await import('./geo.js');
 
 // ---- 磁盘夹具工具 ----
 
@@ -975,11 +985,58 @@ test('只读预检先于扣费：祖谱镜像 / 世本镜像 / chain 镜像夹�
   assert.deepEqual(readTree('mp_lockclan').people.lc_f.birth_place, { origin_code: '371325', note: '祖居' });
 });
 
-// ==================== 真源零写入 ====================
+// ==================== 真源零写入 / 真源一致性 ====================
 
-test('真源零写入：config/tree-meta.json md5 == c9112e40760839bc8d2132d6300b838b，且 migrate-output 逐字节未变', () => {
-  assert.equal(md5(REAL_META), FROZEN_META_MD5, 'config/tree-meta.json 指纹被改动');
-  assert.equal(md5(REAL_META), realMetaMd5, 'config/tree-meta.json 在本文件运行期间被改动');
+/**
+ * 「码 == 显示串」不一致项判据（**只读**，不写任何文件）。
+ * 口径 = `scripts/fix-tree-origin-display.mjs --check`，复用 `lib/geo.js` 的同一套反查：
+ *   · 无 `origin_code` 的树 = 契约外（legacy 自由文本合法）→ **不判**；
+ *   · 有码且已知码 → 必须 `origin === resolveOrigin(code).display`；
+ *   · **未知码**（名称表查不到，反查为空）→ 一并计入不一致，交人工裁定（不许把码吃成空串蒙混）。
+ * @returns {Array<{tree_id:string,origin_code:string,origin:string,expected:string,reason:string}>} 不一致项（空 = 全部一致）
+ */
+function originDisplayMismatches(meta) {
+  const out = [];
+  for (const [key, entry] of Object.entries(meta?.trees || {})) {
+    const code = String(entry?.origin_code ?? '').trim();
+    if (!code) continue;
+    const origin = String(entry?.origin ?? '');
+    const expected = resolveOrigin(code).display;
+    const known = isKnownOriginCode(code);
+    if (!known || origin !== expected) {
+      out.push({
+        tree_id: entry?.tree_id || key,
+        origin_code: code,
+        origin: origin,
+        expected: expected,
+        reason: known ? 'display-mismatch' : 'unknown-code',
+      });
+    }
+  }
+  return out;
+}
+
+/** 断言「全部有码树一致」；不一致 → 逐条列出**全部**不一致项并失败（只读，不代改真源） */
+function assertOriginDisplayConsistent(meta, label) {
+  const bad = originDisplayMismatches(meta);
+  assert.deepEqual(
+    bad,
+    [],
+    `${label}：${bad.length} 棵树的 origin != resolveOrigin(origin_code).display\n` +
+      bad
+        .map(
+          (b) =>
+            `   MISMATCH tree=${b.tree_id} code=${b.origin_code} origin=${JSON.stringify(b.origin)} ` +
+            `expected=${JSON.stringify(b.expected)} (${b.reason})`,
+        )
+        .join('\n') +
+      '\n   修复命令：node scripts/fix-tree-origin-display.mjs --apply（本测试只读，不代改）',
+  );
+}
+
+test(`真源零写入：config/tree-meta.json 前后自比（开局指纹 ${realMetaMd5}）且 migrate-output 逐字节未变`, () => {
+  const nowMd5 = md5(REAL_META);
+  assert.equal(nowMd5, realMetaMd5, `config/tree-meta.json 在本文件运行期间被改动（开局 ${realMetaMd5} → 收尾 ${nowMd5}）`);
   const nowTree = dirBaseline(REAL_TREES);
   const nowDetail = dirBaseline(REAL_DETAILS);
   const nowCol = dirBaseline(REAL_COLLECTIONS);
@@ -989,4 +1046,55 @@ test('真源零写入：config/tree-meta.json md5 == c9112e40760839bc8d2132d6300
   for (const [f, h] of realTreeBaseline) assert.equal(nowTree.get(f), h, `migrate-output/trees/${f} 被改`);
   for (const [f, h] of realDetailBaseline) assert.equal(nowDetail.get(f), h, `migrate-output/details/${f} 被改`);
   for (const [f, h] of realColBaseline) assert.equal(nowCol.get(f), h, `migrate-output/collections/${f} 被改`);
+});
+
+/**
+ * 一致性守卫：守 2026-09-20 事故那一类（真源里「发源地显示串」被过期内存整份回写抹掉，
+ * `origin` 与结构化真源 `origin_code` 脱钩）。
+ * 本用例**只读真源**、不一致时列出全部不一致项并失败；修复动作在 `scripts/fix-tree-origin-display.mjs --apply`。
+ */
+test(`真源一致性：所有带 origin_code 的树 origin == resolveOrigin(code).display（真源指纹 ${realMetaMd5}）`, () => {
+  const meta = JSON.parse(fs.readFileSync(REAL_META, 'utf8'));
+  assertOriginDisplayConsistent(meta, '真源 config/tree-meta.json');
+});
+
+test('一致性判据自检（/tmp 副本）：一致 → 通过；不一致 → 逐条列出全部不一致项并失败', () => {
+  const dir = path.join(TMP, 'coherence-probe');
+  fs.mkdirSync(dir, { recursive: true });
+  const copy = path.join(dir, 'tree-meta.json');
+
+  // ① 一致态（含一棵无码树：契约外，不判）
+  const okTree = { tree_id: 'ok_code', kind: 'family', origin_code: '230305', origin: resolveOrigin('230305').display };
+  const consistent = { _schema: '1.1', trees: { ok_code: okTree, no_code: { tree_id: 'no_code', kind: 'family', origin: '老文本（契约外）' } } };
+  fs.writeFileSync(copy, JSON.stringify(consistent, null, 2) + '\n');
+  assert.deepEqual(originDisplayMismatches(JSON.parse(fs.readFileSync(copy, 'utf8'))), [], '一致态：零不一致项');
+  assert.doesNotThrow(() => assertOriginDisplayConsistent(consistent, '一致副本'));
+
+  // ② 不一致态（码对不上 + 未知码）→ 全部列出 + 失败
+  const broken = {
+    _schema: '1.1',
+    trees: {
+      ok_code: okTree,
+      bad_a: { tree_id: 'bad_a', kind: 'family', origin_code: '230305', origin: '山东省临沂市' }, // 码对不上
+      bad_b: { tree_id: 'bad_b', kind: 'family', origin_code: '999998', origin: '幽灵地' }, // 未知码
+      no_code: consistent.trees.no_code,
+    },
+  };
+  fs.writeFileSync(copy, JSON.stringify(broken, null, 2) + '\n');
+  const bad = originDisplayMismatches(JSON.parse(fs.readFileSync(copy, 'utf8')));
+  assert.deepEqual(bad.map((b) => b.tree_id), ['bad_a', 'bad_b'], '不一致项必须**全部**列出（不早退、不只报第一条）');
+  assert.deepEqual(bad.map((b) => b.reason), ['display-mismatch', 'unknown-code']);
+  assert.equal(bad[0].expected, resolveOrigin('230305').display, '同时给出期望串，便于事后对账 / 修复');
+  assert.throws(
+    () => assertOriginDisplayConsistent(broken, '不一致副本'),
+    (e) =>
+      /不一致副本：2 棵树的 origin != resolveOrigin\(origin_code\)\.display/.test(e.message) &&
+      /MISMATCH tree=bad_a/.test(e.message) &&
+      /MISMATCH tree=bad_b/.test(e.message) &&
+      /fix-tree-origin-display\.mjs --apply/.test(e.message),
+    '不一致 → 失败，且消息里带全部不一致项与修复命令',
+  );
+
+  // ③ 判据对真源只读：跑完再读一次真源，指纹不变
+  assert.equal(md5(REAL_META), realMetaMd5, '一致性判据不得写真源');
 });

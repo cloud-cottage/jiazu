@@ -89,6 +89,8 @@ export const PATHS = {
 
 let app = null;
 let metaCache = null;
+/** local 模式：`metaCache` 对应的磁盘指纹（mtimeMs/size/ctimeMs）；null = 快照时拿不到 stat */
+let metaStamp = null;
 const treeCache = new Map(); // tree_id -> tree JSON
 const eventIndexCache = new Map(); // tree_id -> Map(event_handle -> event)
 const colCache = new Map(); // col -> Map(_id -> doc)
@@ -263,23 +265,74 @@ export async function colWhere(col, predicate) {
 
 // ---- tree-meta ----
 
+/**
+ * meta 文件的磁盘指纹（**local 模式「外部变更检测」**的比对基准）。
+ * 拿不到 stat（文件不存在 / 无权限）→ null：调用方沿用现有缓存，**绝不因此新增抛错**。
+ */
+function statMetaFile() {
+  try {
+    const st = fs.statSync(META_FILE);
+    return { mtimeMs: st.mtimeMs, size: st.size, ctimeMs: st.ctimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/** 两个指纹是否同一快照；任一侧为 null（拿不到 stat）一律判「不可比」→ 由调用方决定沿用还是重读 */
+function sameMetaStamp(a, b) {
+  return !!a && !!b && a.mtimeMs === b.mtimeMs && a.size === b.size && a.ctimeMs === b.ctimeMs;
+}
+
+/**
+ * 读 meta（local = 副本 / 真源文件；cloud = `jiazu_tree_meta/global` 文档）。
+ *
+ * ★ 为什么 local 模式要做「外部变更检测」（真实数据丢失事故的根因修复）：
+ *   tree-meta 是**唯一没有乐观锁的全量落盘文件**。对比其它真源：
+ *   · trees/*.json 有 `version` 乐观锁 —— 冲突**抛错**，不会静默覆盖；
+ *   · collections 走「先落盘、成功后换缓存」，且写前基于磁盘读改写；
+ *   · details 是一人一文件，不存在整份覆盖。
+ *   只有 meta 是「进程内整份对象 → `saveMeta` 整文件覆盖」，而 `metaCache` 又是**进程级**的、
+ *   原先只由 `saveMeta` 更新 ⇒ 任何长驻实例（本地 3100 服务）在外部（人 / 脚本）改过盘之后，
+ *   都会用自己**过期**的内存副本整文件回写，把别人的写入静默抹掉
+ *   （2026-09-20 事故：修正脚本改好的 `origin` 被「修正前就已启动」的实例整份回写抹回）。
+ *   对策：每次读都先 `stat` 一次，与缓存快照比对 mtimeMs + size + ctimeMs，
+ *   **任一变化即重读并刷新缓存**，把「过期内存」的窗口从「实例寿命」压到「一次 stat」。
+ *   ⚠️ 残留窗口：`getMeta()` → `saveMeta()` 之间仍有 TOCTOU（本函数只解决**读侧陈旧**，
+ *      不引入写锁 —— 写侧的整份覆盖语义不在本次改动范围内）。
+ */
 export async function getMeta() {
-  if (metaCache) return metaCache;
-  if (SOURCE === 'local') {
-    try {
-      metaCache = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
-    } catch (e) {
-      // 沙箱副本还没建：只读回退到真源作基线（写仍落副本，由 saveMeta 保证）
-      if (SANDBOX && !samePath(META_FILE, REAL_META_FILE) && fs.existsSync(REAL_META_FILE)) {
-        metaCache = JSON.parse(fs.readFileSync(REAL_META_FILE, 'utf8'));
-      } else {
-        throw e;
-      }
-    }
-  } else {
+  if (SOURCE !== 'local') {
+    // cloud：行为与改动前一致（缓存命中即返回，绝不每调一次就远程拉取）
+    if (metaCache) return metaCache;
     const r = await sdkCall(() => getApp().database().collection('jiazu_tree_meta').doc('global').get());
     const d = r?.data;
     metaCache = Array.isArray(d) ? d[0] || null : d || null;
+    return metaCache;
+  }
+  if (metaCache) {
+    const stamp = statMetaFile();
+    // 拿不到 stat（文件被删 / 无权限）→ 沿用缓存（与改动前「缓存命中直接返回」一致，不改变失败面）
+    if (!stamp || sameMetaStamp(stamp, metaStamp)) return metaCache;
+    // 磁盘被外部改过 → 落到下面重读（缓存已过期，绝不能继续拿它整份回写）
+  }
+  try {
+    metaCache = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
+    metaStamp = statMetaFile();
+  } catch (e) {
+    if (metaCache) {
+      // 已检测到外部变更但重读失败（写到一半 / 坏 JSON）：沿用旧缓存，**不抛新错**
+      // —— 改动前「缓存命中」时根本不做 IO、也就不会抛错，这里同样不改变失败面。
+      // 同时记下新指纹 → 同一次外部写入不反复重读；文件再次变化（下一次写入落定）时会再重读。
+      metaStamp = statMetaFile();
+      return metaCache;
+    }
+    // 沙箱副本还没建：只读回退到真源作基线（写仍落副本，由 saveMeta 保证）
+    if (SANDBOX && !samePath(META_FILE, REAL_META_FILE) && fs.existsSync(REAL_META_FILE)) {
+      metaCache = JSON.parse(fs.readFileSync(REAL_META_FILE, 'utf8'));
+      metaStamp = statMetaFile(); // 副本尚不存在 → null；副本一旦出现（指纹变非 null）即触发重读
+    } else {
+      throw e;
+    }
   }
   return metaCache;
 }
@@ -290,8 +343,10 @@ export async function saveMeta(meta) {
     const target = assertWriteAllowed(META_FILE);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, JSON.stringify(meta, null, 2) + '\n');
-    // 先落盘、成功后才更新缓存（失败时 metaCache 保持旧值，不留幻影 meta）
+    // 先落盘、成功后才更新缓存（失败时 metaCache 保持旧值，不留幻影 meta）；
+    // 指纹一并对齐 —— 否则下一次 getMeta 会把自己刚写的文件误判成「外部变更」而多读一次
     metaCache = meta;
+    metaStamp = statMetaFile();
     return;
   }
   await sdkCall(() => getApp().database().collection('jiazu_tree_meta').doc('global').set(meta));

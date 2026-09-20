@@ -3066,3 +3066,118 @@ git status --short AGENTS.md; md5 -q AGENTS.md
 
 > **本节边界**：只写文档 —— **未改代码、未写真源**（`config/tree-meta.json` 前后 md5 均 `c9112e40760839bc8d2132d6300b838b`；`migrate-output/**` 聚合前后均 `684ceb0bd03d31ef9c08104e3eb6ac41`）、**未改 `AGENTS.md`**（前后均 `M AGENTS.md` / md5 `e4c089818fbf7a3a7218e567e7b409ee`）、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**；§25-0～§25-11 历史行原文保留。
 > **跨册登记**：口径与证据全文见 `docs/person-places.spec.md` **§15 / §16**；判据终稿见 `docs/person-places.qa.md`（84 = 81 PASS / 1 待裁定）。
+
+---
+
+## 27. 追补：**部署前先跑 `node scripts/fix-tree-origin-display.mjs --check`**（**建议性质 · 待 Kevin 拍板 · 尚未采纳**）（Jing 制度员 · 2026-09-20 · **只追加 · 不改 §25-0～§26-9 历史行**）
+
+> **性质**：本节由 **Jing（制度员）** 追加 —— **只写文档**：未改代码、**未写真源**（`config/tree-meta.json` md5 本节**前 = 后 = `35b08517791c11be68fb3d7b2f4d9820`**；`migrate-output/**` 零写入）、**未改 `AGENTS.md`**、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**。
+> **⚠️ 未采纳声明**：本节登记的是**建议**，**不是**已批准的动作面；**不得**据本节认为该门槛已生效。**裁定权属 Kevin**。
+
+### 27-0 建议内容
+
+- 在本批（§25 / §26）的**部署批次执行前**，**先跑**：
+
+```bash
+cd /Users/kevin/bistro/jiazu
+node scripts/fix-tree-origin-display.mjs --check; echo "check_exit=$?"   # 期望 exit 0
+```
+
+- **门槛口径（建议）**：`--check` **exit 1 ⇒ 阻断部署** —— 有码树的 `origin` 显示串与 `resolveOrigin(origin_code).display` 不一致时，上线即**把错的显示串搬上云**。
+- **为何需要**：缺陷 **J**（弹窗 legacy 直写覆盖发源地显示串）会**静默**把显示串改回旧文本 —— **码对、显示串错**，接口 schema 与肉眼**都看不出**（全文见规格册 **§17**）。
+- **可选（建议 · 未采纳）**：把该守卫纳入 `npm test`（现基线 449 项**全为后端**、**无**此项）。
+
+### 27-1 建议的时效（**关键**：按此口径当前即「阻断」）
+
+| 项 | 实测（本册只读 · 本节时点） |
+|---|---|
+| 守卫脚本 | `scripts/fix-tree-origin-display.mjs` · **14,026 B** · mtime 2026-09-20 13:06:11 · `git status` = `??`（未入库） |
+| **`--check` 结果** | **exit 1**（1 棵不一致：`shen_27784_01` —— current『山东省临沂市』/ expected『黑龙江省鸡西市梨树区』）；17 棵：有码 **9**（一致 **8** / 待修正 **1**）/ 无码 **8**（不碰）/ 未知码 **0** |
+| **⇒ 结论（逐字）** | **按本节建议的口径，当前状态即为「阻断部署」** —— 须先闭合真源（处置建议见规格册 **§17-4.1**：**先停掉修复前启动的 local-server 进程**，再 `--apply`，再 `--check` 复验） |
+| 真源 md5 | **`35b08517791c11be68fb3d7b2f4d9820`**（9,636 B · mtime **2026-09-20 13:08:00**）**≠** 契约冻结值 `5963106e1a3d21272565f5ed2a884413`（`cloudfunctions/compat-api/lib/person-places.test.js`） |
+| `npm test` | **449 / 448 / 1**（唯一红 = 「真源零写入」冻结值用例）⇒ **打包前的回归门槛目前为红** |
+
+### 27-2 与既有批量阻塞点的关系（**本节不回改 §26-7 表**）
+
+1. **真源显示串未一致**（`--check` **exit 1**）⇒ 阻断「树 JSON 重传 / 云函数重打包 / 前端重打」三必登项的**前置条件**。
+2. **`npm test` 现为 449 / 448 / 1（红）**⇒ 打包含**回归门槛未绿**，须先闭合真源再重跑。
+3. **`metaCache` 陈旧整份回写**（`cloudfunctions/compat-api/lib/store.js:91` / `:294` / `:298`）⇒ 部署 / 联调前**必须重启 local-server**（否则刚做的修正可能**再次被整份回写覆盖**；本册实测存活：pid **25692** = `:3410` 启动 **08:55** · pid **35229** = `:3100` 启动 **13:16**）。
+- **§26-4 的「`tree-meta` 不因本批迁移上传」口径不变**；但**若**决定随批上传，**必须先** `--check` = **exit 0**。
+
+### 27-3 复现命令（**只读 · 不触发部署**）
+
+```bash
+cd /Users/kevin/bistro/jiazu
+node scripts/fix-tree-origin-display.mjs --check; echo "check_exit=$?"    # 本节实测：exit 1
+md5 -q config/tree-meta.json; wc -c < config/tree-meta.json              # 本节：35b08517791c11be68fb3d7b2f4d9820 / 9636
+npm test | tail -8                                                      # 本节：449 / 448 / 1
+grep -n 'metaCache' cloudfunctions/compat-api/lib/store.js
+ps aux | grep -E 'local-server\.js' | grep -v grep
+git status --short AGENTS.md; md5 -q AGENTS.md
+```
+
+> **本节边界**：只写文档 —— **未改代码、未写真源**（`config/tree-meta.json` 前后均 `35b08517791c11be68fb3d7b2f4d9820`；`migrate-output/**` 零写入）、**未改 `AGENTS.md`**（前 = 后 = 空）、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**；§25-0～§26-9 历史行**原文保留**。
+> **跨册登记**：缺陷 J 全文见 `docs/person-places.spec.md` **§17**；本册 16 处作废标注的质检册侧见 `docs/person-places.qa.md`「**追补（Jing · 第二）**」。
+
+---
+
+## 28. 追补二：**「13:08 修正被回退」—— 部署门槛仍为红**（真源 `35b08517…` · 守卫仍 **exit 1** · `npm test` **449 / 448 / 1** · 机制**已定位** · 修复**已派 · 进行中 · 未落盘** · **部署 / 联调前必须重启 local-server**）（Jing 制度员 · 2026-09-20 · **只追加 · 不改 §25-0～§27-3 历史行**）
+
+> **性质**：本节由 **Jing（制度员）** 追加 —— **只写文档**：**未改代码**、**未写真源**（`config/tree-meta.json` md5 本节**前 = 后 = `35b08517791c11be68fb3d7b2f4d9820`**；`migrate-output/**` 零写入）、**未改 `AGENTS.md`**、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**。
+> **与 §27 的关系**：§27 的「部署前先跑 `--check`」**仍为建议性质、仍未采纳**（**本节不写成已采纳**）；本节**只做事件登记 + 现行状态刷新**。§27-1 表的读数（`35b08517…` / **exit 1** / `449 / 448 / 1`）与现值**一致 ⇒ 原文保留有效**。
+
+### 28-0 事件（全文见规格册 §18）
+
+- **事件 K「13:08 修正被回退」**：规格册 §17 登记的显示串修正（`shen_27784_01`）在 **13:08:00** 被一次元数据写入**整体抹掉** —— 成因 = **一个「修正前就已启动」的长驻 local-server 实例**响应该写入时，把**其过期进程内存副本整份回写**到真源。
+- **机制（已定位 · 逐字引用见规格册 §18-3）**：`cloudfunctions/compat-api/lib/store.js` 的 `metaCache`（**`:91`** 进程级缓存；仅由 `saveMeta` 更新、**不检测磁盘外部变更**）+ `getMeta()`（**`:266-285`**，**仅在缓存为空时读盘**）+ `saveMeta()`（**`:287-299`**，local 非沙箱下**整份** `JSON.stringify` 落盘）⇒ **`config/tree-meta.json` 是本仓唯一「无乐观锁的全量落盘文件」**。
+- **⇒ 对部署的直接影响（逐字）**：**只要「部署 / 联调 / 页面实操」期间有修正前启动的实例存活，任何一次元数据写入（改 `display_title`、指定发源地）都可能把真源整份回写、抹掉修正**。
+
+### 28-1 现行状态（**本册实测 · 本节时点**）
+
+| 项 | 值 |
+|---|---|
+| 真源 md5 | **`35b08517791c11be68fb3d7b2f4d9820`**（9,636 B · mtime **2026-09-20 13:08:00**）**≠** 契约冻结值 `5963106e1a3d21272565f5ed2a884413` |
+| 守卫 `node scripts/fix-tree-origin-display.mjs --check` | **exit 1**（1 棵不一致：`shen_27784_01` code=`230305` current『山东省临沂市』/ expected『黑龙江省鸡西市梨树区』）；17 棵：有码 **9**（一致 **8** / 待修正 **1**）/ 无码 **8** / 未知码 **0** |
+| `npm test` | **449 / 448 / 1**（唯一红 = `not ok 391` 冻结 md5 断言）⇒ **打包前回归门槛为红** |
+| `li_26446_02` | `origin` = 『黑龙江省牡丹江市穆棱市』（**修正保留**）· `display_title` = **『李氏穆棱家族』**（Kevin 手工） |
+| 存活 local-server（实测） | pid **25692** = `local-server.js 3410`（启动 **08:55**，**修正前启动 ⇒ 覆盖风险源**）· pid **35229** = `local-server.js 3100`（启动 **13:16**） |
+| 修复 / 口径 | 加固（`getMeta()` 外部变更检测 + 冻值断言改自比）**已派 · 进行中 · 未落盘**；**Zang 已定**：①修正**即将重放** ②冻值断言口径改「自比 + 打印当时指纹」。**仍待 Kevin 拍板**（**未采纳**）：守卫纳入 `npm test` / 部署前检查、`PUT /tree-meta` legacy 直写加固 |
+
+### 28-2 对部署动作面的影响（**§26-0～§26-3 的必登项不变，本节不回改**）
+
+- **必登三项仍全部未执行**（云函数重打包 / 12 棵树 JSON 重传 / 前端 H5+小程序重打）—— 本节**不改变**其清单与顺序（§26-1 / §26-2 / §26-3）。
+- **新增前置条件（按序执行 · 缺一不可）**：
+  1. **先落加固**（§18-4 ①②落地并复跑验证）；
+  2. **重放修正**（Zang 已定 ①：重跑 `node scripts/fix-tree-origin-display.mjs --apply`，恢复 `shen_27784_01`）；
+  3. **守卫复验** `--check` **必须 exit 0**（§27 建议口径下当前为**阻断**）；
+  4. **`npm test` 必须回到全绿**（冻值断言按新口径落地 → 449 / 449 / 0 或换口径后的新基线，**须实测回填，不得推算**）；
+  5. **★ 部署 / 联调 / 页面实操前，重启所有 local-server 实例**（含启动于修正前的 pid 25692）—— 否则真源**可能再次被整份回写覆盖**（事件 K 复现）；
+  6. 若每次元数据写入后仍出现 `--check` 由 0 变 1 ⇒ **立即停手、登记事件、不得继续打包**。
+- **§26-4 的「`tree-meta` 不因本批迁移上传」口径不变**；但**若**决定随批上传，**必须先** `--check` = **exit 0 且 `npm test` 全绿**。
+- **§26-9 复现命令内的注释行**（`# 449 / 449 / 0` 等）为 **12:32 时点读数**；**现值 = 449 / 448 / 1**（**代码块内，本节不回改**）。
+
+### 28-3 复现命令（**只读 · 不触发部署**）
+
+```bash
+cd /Users/kevin/bistro/jiazu
+node scripts/fix-tree-origin-display.mjs --check | tail -3      # 本节：exit 1（MISMATCH shen_27784_01）
+md5 -q config/tree-meta.json; wc -c < config/tree-meta.json     # 本节：35b08517791c11be68fb3d7b2f4d9820 / 9636
+npm test 2>&1 | tail -8                                        # 本节：449 / 448 / 1
+grep -n 'statSync\|mtime' cloudfunctions/compat-api/lib/store.js          # 本节：0 命中 ⇒ 加固未落盘
+grep -n 'metaCache' cloudfunctions/compat-api/lib/store.js
+ps aux | grep -E 'local-server\.js' | grep -v grep              # 本节：:3410（08:55 启动，风险源）/ :3100（13:16）
+git diff --stat config/tree-meta.json                           # 本节：仅 li_26446_02，4+ / 3-，未提交
+git status --short AGENTS.md; md5 -q AGENTS.md
+```
+
+> **本节边界**：只写文档 —— **未改代码、未写真源**（`config/tree-meta.json` 前后均 `35b08517791c11be68fb3d7b2f4d9820`；`migrate-output/**` 零写入）、**未改 `AGENTS.md`**（前 = 后 = 空）、**未执行任何部署 / 打包 / 重传 / 迁移 / 提交**；§25-0～§27-3 历史行**原文保留**。
+> **未采纳声明**：§27 的建议门槛与 §18-6 两项**均未采纳**，**不得**据本节认为门槛已生效；**裁定权属 Kevin**。
+> **不得写「已修」**：加固**未落盘**、口径**未落地**、修正**未重放** ⇒ 本册**不得**据此认为风险已闭合。
+> **跨册登记**：事件 K 全文见 `docs/person-places.spec.md` **§18**；质检册侧见 `docs/person-places.qa.md`「**追补（Jing · 第三）**」。
+
+### 28-4 追加（复核时点 **2026-09-20 13:32:06 CST**）：加固 ① **已落盘（未提交）**，**规程不变**
+
+- **状态变更**：§28-1 表「修复 / 口径」行的「**未落盘**」**仅在本节初稿时点成立** —— 复核时点 `cloudfunctions/compat-api/lib/store.js` 的**外部变更检测已落盘**（`git diff --stat` = `1 file changed, 69 insertions(+), 14 deletions(-)`，**工作区未提交**：新增 `metaStamp` 指纹 + `statMetaFile()` / `sameMetaStamp()`，`getMeta()` 改为「先 stat 比对 `mtimeMs + size + ctimeMs`，变化即重读」，`saveMeta()` 写后对齐指纹）。**② 冻值断言改造仍未落盘**。
+- **★ 部署规程不变（关键）**：加固 ① **只对「改动落盘之后启动」的实例生效** —— **pid 25692（:3410，启动 08:55）仍在运行改动前的代码** ⇒ **仍是活跃的覆盖风险源**。故 **§28-2 第 5 条「部署 / 联调 / 页面实操前重启所有 local-server 实例」仍是必需项**，**不得**因加固落地而省略。
+- **复测读数（未变）**：真源 md5 **`35b08517791c11be68fb3d7b2f4d9820`** · 守卫 **exit 1** · `npm test` **449 / 448 / 1**（`not ok 391`）· `git status --short AGENTS.md` **空**。
+- **口径**：**①已落盘 ≠ 门槛转绿**（**未提交、②未落盘、修正未重放、无专项复跑证据**）⇒ 本册**不写「已修」**；逐字引用与残留 TOCTOU 窗口见规格册 **§18-11**。

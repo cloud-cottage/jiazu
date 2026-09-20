@@ -366,7 +366,7 @@ const archiveModal = ref<InstanceType<typeof PersonDetailModal> | null>(null);
 const showEdit = ref(false);
 const saving = ref(false);
 const editError = ref('');
-const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', origin: '', description: '' });
+const editForm = ref({ display_title: '', genealogy_name: '', archive_url: '', hall_name: '', description: '' });
 
 // 视图切换：血脉图示（默认） / 版式文档 / 家族消息（审批入口，仅管理权限）
 const view = ref<'pedigree' | 'doc' | 'msg'>('pedigree');
@@ -768,8 +768,9 @@ function goSpirit() {
 
 /**
  * 打开编辑弹窗（字段：名称/谱名/文献地址/堂号/简介；**发源地不在本表单内** —— 由弹窗内的
- * `OriginPicker` 走 `POST /admin/set-tree-origin` 单独指定，契约 v2 C8′）。
- * `origin` 仅作 legacy 软冗余原样回传（`PUT /tree-meta` 兼容分支），界面不再让用户直接编辑。
+ * `OriginPicker` 走 `POST /admin/set-tree-origin` 单独指定并即时落库，契约 v2 C8′）。
+ * 表单**不含 `origin` / `origin_code`**：若把弹窗打开时的旧显示串回传给 `PUT /tree-meta`，
+ * 其 legacy 直写分支会覆盖刚指定好的 `origin`（显示串被盖回旧文本）。
  */
 function openEdit() {
   if (!hallInfo.value) return;
@@ -778,7 +779,6 @@ function openEdit() {
     genealogy_name: hallInfo.value.genealogy_name || '',
     archive_url: hallInfo.value.archive_url || '',
     hall_name: hallInfo.value.hall_name || '',
-    origin: hallInfo.value.origin || '',
     description: hallInfo.value.description || '',
   };
   editError.value = '';
@@ -787,7 +787,7 @@ function openEdit() {
 
 /**
  * 发源地指定成功（`OriginPicker` 内部已重拉候选）→ 就地把 hero 的「发源地」换成后端返回的
- * 展示串与码，不必整页重拉 tree-meta。
+ * 展示串与码，不必整页重拉 tree-meta。表单不回传发源地 → 后续「保存」不会把它盖回去。
  */
 function onOriginUpdated(r: SetTreeOriginResult) {
   if (hallInfo.value) {
