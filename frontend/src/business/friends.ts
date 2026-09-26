@@ -15,6 +15,7 @@
 import { API_BASE } from './api';
 import { getAuthToken } from './auth';
 import { SCROLL_LOCK_TEXT } from './asset-text';
+import type { ScrollLot } from './types';
 
 // ==================== 出参形状（逐字对齐 cloudfunctions/compat-api 实测字段） ====================
 
@@ -460,4 +461,41 @@ export interface ScrollDecomposeResult {
 export async function postDecomposeScroll(count: number): Promise<ScrollDecomposeResult> {
   const { data } = await friendRequest('/assets/scroll/decompose', 'POST', { count });
   return data as unknown as ScrollDecomposeResult;
+}
+
+// ==================== 请求：兰帖残页【手动合成】（`POST /assets/scroll/synthesize`） ====================
+
+/**
+ * `POST /assets/scroll/synthesize` 出参（= 账本 `synthesizeScroll` 的投影，`{count?}` 入参、**缺省 1**）。
+ *
+ * ⚠️ **本路由与好友域同注册段**（`cloudfunctions/compat-api/index.js` 的前缀判据逐字含
+ * `pathname === '/assets/scroll/synthesize'`；与相邻 `/assets/scroll/decompose` 同一段、同一出参壳）
+ * ⇒ **沿用本模块 `friendRequest`**（未登录同回 401 `FRIEND_UNAUTHORIZED`；失败按 `error.message`
+ * 原文上抛），**不另起一套请求封装**。
+ * ⚠️ 落点说明（本单）：本函数**命名与语义对偶 `postDecomposeScroll`**，故与它同落在本模块
+ * （`business/api.ts` 的 `assetPostJson` 按 `err.error` 取**字符串**文案，遇上本段的
+ * `error:{code,status,message}` **对象**会退化成 `[object Object]` ⇒ 那条路不适用于本路由）。
+ * 由 `business/index.ts` 对外转出（供行囊组件引用）。
+ *
+ * `count` 的单位 = **成品兰帖张数**（1 张 = 100 片残页；一次恰好消耗 `count × 100` 片、余数保留）；
+ * 残页不足 ⇒ 后端 **409 整单拒绝**（一字节不写：标量 / 批次 / 流水全不动）；**免费**（不扣竹片）。
+ */
+export interface ScrollSynthesizeResult {
+  /** 本次合成的成品兰帖张数（= 请求的 `count`） */
+  synthesized: number;
+  /** 本次消耗的兰帖残页片数（= `synthesized × 100`） */
+  pieces: number;
+  /** 合成后的兰帖残页总量（余数保留） */
+  scroll_fragments: number;
+  /** 新入账的兰帖批次（每张一个新批次，`expires_at` 恒 `null` = 永久） */
+  scroll_lots: ScrollLot[];
+}
+
+/**
+ * 兰帖残页【手动合成】：消耗 `count × 100` 片残页，合成 `count` 张成品兰帖（不足 ⇒ 409，零写入）。
+ * 入口 = 行囊残页格属性提示层【合成】按钮（一次 1 张），**唯一合成入口**（自动合成已取消）。
+ */
+export async function synthesizeScrollRemote(count: number): Promise<ScrollSynthesizeResult> {
+  const { data } = await friendRequest('/assets/scroll/synthesize', 'POST', { count });
+  return data as unknown as ScrollSynthesizeResult;
 }

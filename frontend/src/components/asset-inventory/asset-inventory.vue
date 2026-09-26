@@ -127,6 +127,27 @@
         <text v-if="!canDecomposeScroll" class="inv-tip-note">{{ scrollDisabledNote }}</text>
       </view>
       <!--
+        兰帖残页格【合成】（后端 `POST /assets/scroll/synthesize` `{count}`，一次 1 张 = 恰好消耗 100 片
+        残页、余数保留；2026-09-26 裁定：自动合成已取消 ⇒ 本按钮是**唯一**合成入口）：
+        不足 100 片 ⇒ 按钮置灰 + **层内明写原因** + 点按直出同一句 toast（三态可见，**不静默**）；
+        达标 ⇒ 打开自绘二次确认框（1030/1031，恒在本层 1010 之上）。
+      -->
+      <view v-else-if="tipCell.kind === 'scrollFragment'" class="inv-tip-acts">
+        <view
+          class="inv-tip-btn"
+          :class="{ 'inv-tip-btn-off': !canSynthesizeScrollFragment || busy, 'is-busy': busy, 'sheen-once': sheenOnce,
+                    'is-hover': btnHover === 'synthScrollFragment', 'is-press': btnPress === 'synthScrollFragment' }"
+          :style="btnShake"
+          @click.stop="onScrollSynthTap"
+        >
+          <view class="btn-fx" />
+          <view class="btn-sheen-clip"><view class="btn-sheen" /><view class="btn-vein" /></view>
+          <view class="btn-busy" />
+          <text class="inv-tip-btn-text">合成</text>
+        </view>
+        <text v-if="!canSynthesizeScrollFragment" class="inv-tip-note">{{ scrollSynthDisabledNote }}</text>
+      </view>
+      <!--
         道具诗句：**单一来源** = `business/asset-text.ts` 的 `ASSET_POEMS`（组件内零诗句字面）。
         展示位置 = 本属性提示层内（Kevin 已定）；长句**自动换行**（`.inv-tip-poem` 恒 `width: 100%` +
         `overflow-wrap`），层高由实测包围盒收尾 ⇒ **不撑破本层**（估算项见 `estimatePoemHeight`）。
@@ -203,6 +224,9 @@
  *   玉格 → 【分解】（免费 / 固定返还 999 颗 / 统一 365 天）；**兰帖格 → 【分解】**
  *   （`POST /assets/scroll/decompose` 按**张**：1 张 = 100 片 ⇒ 返还 99 片、每张留 1 片损耗；
  *   **余数格**（不足 1 张）与被续约申请**锁定**的张数 ⇒ 按钮置灰 + 层内明写原因 + 点按直出同一句）；
+ *   **兰帖残页格 → 【合成】**（`POST /assets/scroll/synthesize` 按**张**：一次 1 张 = 恰好消耗 100 片
+ *   残页、余数保留；2026-09-26 裁定：残页自动合成已取消 ⇒ 本按钮是**唯一**合成入口；
+ *   不足 100 片 ⇒ 按钮置灰 + 层内明写原因 + 点按直出同一句；免费、不扣竹片）；
  *   二次确认 = **自绘确认框**
  *   （遮罩 1030 / 面板 1031），文案逐字取 `business/jade-ops.ts`、计费与回执口径沿用 `business/asset-guide.ts`
  *   （不另建文案）。**不再调 `uni.showModal`**：`.uni-modal`（999）低于本层（1010）⇒ 旧的「先 `closeTip()`
@@ -237,18 +261,23 @@
 import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import type { AssetsSummary } from '@/business/api';
 import type { ScrollLockView } from '@/business/friends';
-import { postDecomposeScroll } from '@/business/friends';
+import { postDecomposeScroll, synthesizeScrollRemote } from '@/business/friends';
 import { postDecomposeJade, postSynthesizeJade } from '@/business/api';
 import {
   assetPoem,
   formatAssetDate,
   SCROLL_DECOMPOSE_TITLE,
   SCROLL_FRAGMENT_NAME,
+  SCROLL_SYNTH_OK_TEXT,
+  SCROLL_SYNTH_TITLE,
   scrollCaliberLine,
   scrollDecomposeConfirmLines,
   scrollDecomposeHintLine,
   scrollLockedReasonLine,
   scrollRemainderReasonLine,
+  scrollSynthConfirmLines,
+  scrollSynthFailText,
+  scrollSynthShortReasonLine,
 } from '@/business/asset-text';
 import { isAssetInsufficientError, showAssetInsufficientGuide } from '@/business/asset-guide';
 import { ICON } from '@/business/icons';
@@ -352,11 +381,12 @@ const tipStyle = ref('');
 const tipCell = computed<InventoryItem | null>(() =>
   tipIndex.value >= 0 ? ordered.value[tipIndex.value] || null : null,
 );
-/** 本层是否带操作按钮（籽格【合成】/ 玉格【分解】/ 兰帖格【分解】）—— 只影响高度估算与触摸命中守卫 */
+/** 本层是否带操作按钮（籽格【合成】/ 玉格【分解】/ 兰帖格【分解】/ 兰帖残页格【合成】）—— 只影响高度估算与触摸命中守卫 */
 const tipHasActions = computed<boolean>(() => {
   const cell = tipCell.value;
   if (!cell) return false;
-  return cell.kind === 'seed' || cell.kind === 'scroll' || (cell.kind === 'jade' && !!cell.jadeId);
+  return cell.kind === 'seed' || cell.kind === 'scroll' || cell.kind === 'scrollFragment' ||
+    (cell.kind === 'jade' && !!cell.jadeId);
 });
 
 /**
@@ -377,8 +407,8 @@ const busy = ref(false);
 // ============ 兰帖（分解 · §14-13 两口径；比例 / 文案单点 = `business/asset-text.ts`） ============
 //
 // 兰帖与玉 / 籽的**关键差异**：分解入参单位 = **成品（整）兰帖张数**（1 张 = 100 片），返还每张 **99** 片
-// （后端 `SCROLL_DECOMPOSE_REFUND`，留 1 片损耗 ⇒ 避免「返还即触发满 100 自动合成」的空操作回环；
-// 口径见 `docs/friend-domain.spec.md` §17-7 / §17-8）。因此：
+// （后端 `SCROLL_DECOMPOSE_REFUND`，留 1 片损耗 —— 该取值 2026-09-26 一字未改；旧理由「返 100 会触发
+// 满 100 自动合成 ⇒ 分解成空操作」随**取消自动合成**已不成立，仅为保留既有产出比例）。因此：
 // - 【分解】只在**整堆格**（每格恒 100 片）可用；**余数格**（不足 1 张）不可分解；
 // - 被续约申请锁定的张数（`scrollLockOf` 投影）不可分解（否则待对方确认时会 409）；
 // - 未达标一律「按钮置灰 + 层内明写原因 + 点按直出同一句」⇒ **三态可见、不静默**。
@@ -420,6 +450,22 @@ const scrollHintText = computed<string>(() => scrollDecomposeHintLine(SCROLL_PIE
 const scrollCaliberText = computed<string>(() =>
   scrollCaliberLine(scrollCellCount.value, scrollItemCount.value, SCROLL_PIECES));
 
+// ============ 兰帖残页【手动合成】（2026-09-26 裁定；文案单点 = `business/asset-text.ts`） ============
+//
+// 自动合成已取消 ⇒ 本按钮是**唯一**合成入口：一次 1 张 = 恰好消耗 100 片残页、余数保留（后端零写入的
+// 409 整单拒绝语义不变）。门槛判定只用页面传入的 `summary`（组件不二次取数）；未达标一律
+// 「按钮置灰 + 层内明写原因 + 点按直出同一句」⇒ **三态可见、不静默**。
+/** 本人兰帖残页片数（`summary.scroll_fragments`；标量，后端不截断） */
+const scrollFragmentPieces = computed(() =>
+  Math.max(0, Number((props.summary as InventorySummary | null)?.scroll_fragments) || 0));
+/** 是否够手动合成 1 张（`SCROLL_FRAGMENTS_PER_ITEM` = 100 片；不足 → 按钮置灰 + 原因行） */
+const canSynthesizeScrollFragment = computed<boolean>(
+  () => scrollFragmentPieces.value >= SCROLL_FRAGMENTS_PER_ITEM,
+);
+/** 不足原因行（**必须显示**；文案单点 = `asset-text.ts`） */
+const scrollSynthDisabledNote = computed<string>(() =>
+  scrollSynthShortReasonLine(scrollFragmentPieces.value, SCROLL_FRAGMENTS_PER_ITEM));
+
 // ============ 提示层按钮的指针态（H5 悬停 / 全端按下） ============
 //
 // 由来：`.inv-tip-btn.is-hover`（外发光 + 玉纹循环 `inv-fx-vein`）与 `.inv-tip-btn.is-press`（凹陷回弹）
@@ -436,17 +482,20 @@ const scrollCaliberText = computed<string>(() =>
 //   `inTipLayer` 早退 ⇒ 层不闪关；拖曳 / 确认框打开期间本状态机一律不介入（不抢焦）。
 // - **零布局**：两个类只改 `box-shadow` / `transform` / 叠加层 `opacity`，按钮 layout box 恒 52 × 26px。
 /**
- * 提示层内按钮标识（同一时刻层内只剩一颗：籽格【合成】/ 玉格【分解】/ 兰帖格【分解】；'' = 无按钮）。
- * `decomposeScroll` 与 `decompose` **分开**：分属两条不同后端路由（`/assets/decompose-jade` /
- * `/assets/scroll/decompose`），指针态与分支各归各，**不共用同一个键**。
+ * 提示层内按钮标识（同一时刻层内只剩一颗：籽格【合成】/ 玉格【分解】/ 兰帖格【分解】/
+ * 兰帖残页格【合成】；'' = 无按钮）。
+ * `decomposeScroll` / `synthScrollFragment` / `decompose` **各自分开**：分属三条不同后端路由
+ * （`/assets/decompose-jade` / `/assets/scroll/decompose` / `/assets/scroll/synthesize`），
+ * 指针态与分支各归各，**不共用同一个键**。
  */
-type TipBtnKind = '' | 'synth' | 'decompose' | 'decomposeScroll';
+type TipBtnKind = '' | 'synth' | 'decompose' | 'decomposeScroll' | 'synthScrollFragment';
 const tipBtnKind = computed<TipBtnKind>(() => {
   const cell = tipCell.value;
   if (!cell) return '';
   if (cell.kind === 'seed') return 'synth';
   if (cell.kind === 'jade' && cell.jadeId) return 'decompose';
   if (cell.kind === 'scroll') return 'decomposeScroll';
+  if (cell.kind === 'scrollFragment') return 'synthScrollFragment';
   return '';
 });
 /** 悬停态承载（每颗按钮各自的态；仅 H5 置位） */
@@ -824,10 +873,10 @@ function fxDecomp(src: number): void {
 /**
  * 目标格收束（数据重拉 + 重建之后才能定位新格）：
  * 合成 → 玉胚成形（罩层 + 高光扫过 + 落定回弹）；分解 → 籽格显形（涟漪 + 罩层 + 回弹 + 角标跳动）；
- * 兰帖分解 → **兰帖碎片格显形**（同「带角标」体例，角标跳动）。
- * 目标格口径同设计源 = **该类型的第一格**（默认序：玉 / 籽 / 兰帖碎片 均在竹简之后，确定可复现）。
+ * 兰帖分解 → **兰帖残页格显形**；兰帖残页【手动合成】→ **兰帖格显形**（同「带角标」体例，角标跳动）。
+ * 目标格口径同设计源 = **该类型的第一格**（默认序：玉 / 籽 / 兰帖 / 兰帖残页 均在竹简之后，确定可复现）。
  */
-function fxRevealTarget(kind: 'jade' | 'seed' | 'scrollFragment'): void {
+function fxRevealTarget(kind: 'jade' | 'seed' | 'scrollFragment' | 'scroll'): void {
   const index = ordered.value.findIndex((it) => it.kind === kind);
   if (index < 0) return;
   if (kind === 'jade') {
@@ -842,7 +891,7 @@ function fxRevealTarget(kind: 'jade' | 'seed' | 'scrollFragment'): void {
   }
 }
 /** 等重建落地（DOM + 一帧）再补播目标格收束，保证目标格已在场 */
-async function runReveal(kind: 'jade' | 'seed' | 'scrollFragment'): Promise<void> {
+async function runReveal(kind: 'jade' | 'seed' | 'scrollFragment' | 'scroll'): Promise<void> {
   await nextTick();
   await fxFrame();
   fxRevealTarget(kind);
@@ -865,29 +914,35 @@ async function failFeedback(floatText: string): Promise<void> {
   failFxRunning = false;
 }
 
-/** 待补播的收束标记（操作成功 → 页面重拉 summary → `rebuild` 后按新格位补播；`scrollFragment` = 兰帖分解返还） */
-let pendingReveal: { kind: 'jade' | 'seed' | 'scrollFragment'; at: number } | null = null;
+/** 待补播的收束标记（操作成功 → 页面重拉 summary → `rebuild` 后按新格位补播；`scrollFragment` = 兰帖分解返还，`scroll` = 残页手动合成产出的兰帖） */
+let pendingReveal: { kind: 'jade' | 'seed' | 'scrollFragment' | 'scroll'; at: number } | null = null;
 /** 打开确认框时的源格位序号（特效承载格；确认框打开期间提示层保持不动，故与 `tipIndex` 同步取值） */
 let confirmSrc = FX_NO_SLOT;
 
 /**
  * 自绘二次确认框状态（`null` = 关闭）。
- * 文案 / 按钮文案：合成与玉分解逐字取 `business/jade-ops.ts`；**兰帖分解**逐字取
- * `business/asset-text.ts`（1 张 = 100 片 ⇒ 返还 99 片）。三者共用同一个确认框（1030/1031）。
+ * 文案 / 按钮文案：合成与玉分解逐字取 `business/jade-ops.ts`；**兰帖分解 / 兰帖残页合成**逐字取
+ * `business/asset-text.ts`（1 张 = 100 片 ⇒ 分解返还 99 片、合成消耗 100 片）。四者共用同一个确认框（1030/1031）。
  */
-const confirmKind = ref<'synth' | 'decompose' | 'scroll' | null>(null);
+const confirmKind = ref<'synth' | 'decompose' | 'scroll' | 'synthScroll' | null>(null);
 const confirmJadeId = ref('');
 const confirmOpen = computed<boolean>(() => confirmKind.value !== null);
 const confirmTitle = computed<string>(() => {
   if (confirmKind.value === 'scroll') return SCROLL_DECOMPOSE_TITLE;
+  if (confirmKind.value === 'synthScroll') return SCROLL_SYNTH_TITLE;
   return (confirmKind.value === 'synth' ? SYNTH_CONFIRM_TITLE : DECOMPOSE_CONFIRM_TITLE);
 });
 const confirmLines = computed<string[]>(() => {
   // 兰帖分解：每次 1 张（100 片 ⇒ 返还 99 片）—— 张数口径，非格数
   if (confirmKind.value === 'scroll') return scrollDecomposeConfirmLines(1, SCROLL_PIECES, SCROLL_REFUND_PER_ITEM);
+  // 兰帖残页合成：每次 1 张（消耗 100 片，余数保留）—— 文案逐字取文案单点（含当前持有 / 合成后剩余）
+  if (confirmKind.value === 'synthScroll') {
+    return scrollSynthConfirmLines(SCROLL_FRAGMENTS_PER_ITEM, scrollFragmentPieces.value);
+  }
   return (confirmKind.value === 'synth' ? SYNTH_CONFIRM_BODY : DECOMPOSE_CONFIRM_BODY).split('\n');
 });
-const confirmOkText = computed<string>(() => (confirmKind.value === 'synth' ? '确认合成' : '确认分解'));
+const confirmOkText = computed<string>(() =>
+  (confirmKind.value === 'synth' || confirmKind.value === 'synthScroll' ? '确认合成' : '确认分解'));
 
 /** 结果提示层 / 失败态的渲染状态（`badgePopIndex` = 角标跳动承载格；`sheenOnce` = 一次性玉纹扫光） */
 const badgePopIndex = ref(-1);
@@ -922,9 +977,10 @@ watch(confirmKind, async (kind) => {
 /**
  * 打开自绘确认框（本层保持打开：确认框 **1030/1031** 恒在提示层 **1010** 之上 ⇒ 旧「先 `closeTip()`
  * 再弹框」的绕法**已不需要**；同时**不使用 `uni.showModal`** —— 其 `.uni-modal` 999 会被本层压住）。
- * 三个动作共用：`synth`（籽）/ `decompose`（玉，带 `jadeId`）/ `scroll`（兰帖，按**张**分解）。
+ * 四个动作共用：`synth`（籽【合成】）/ `decompose`（玉【分解】，带 `jadeId`）/
+ * `scroll`（兰帖，按**张**分解）/ `synthScroll`（兰帖残页，按**张**合成，一次 1 张）。
  */
-function openConfirm(kind: 'synth' | 'decompose' | 'scroll', jadeId = ''): void {
+function openConfirm(kind: 'synth' | 'decompose' | 'scroll' | 'synthScroll', jadeId = ''): void {
   if (busy.value) return;
   confirmSrc = tipIndex.value;
   confirmJadeId.value = jadeId;
@@ -942,6 +998,7 @@ function submitConfirm(): void {
   if (kind === 'synth') void doSynthesize();
   else if (kind === 'decompose' && jadeId) void doDecompose(jadeId);
   else if (kind === 'scroll') void doDecomposeScroll();
+  else if (kind === 'synthScroll') void doSynthesizeScrollFragment();
 }
 
 /** 提示层打开：一次性玉纹高光扫过（触屏端无 hover ⇒ 用 transition 播同一条扫光，跨端同效） */
@@ -1458,6 +1515,10 @@ function onScrollDecomposeTap(): void {
  * → 总时长 680ms 收尾（清特效层 + 数量摘要浮字 + toast）。
  * 失败（409 片数不足 = 整单拒绝 / 400 `INVALID_COUNT` / 401 等）：先失败反馈（520ms），再直出后端 `error.message`。
  */
+/**
+ * 【兰帖分解】后收尾：`synthesized` 已恒 0（自动合成 2026-09-26 取消）⇒ 回执里**不再出现任何自动合成措辞**，
+ * 只出「分解张数 / 扣减片数 / 返还片数 / 现余片数」四项，全部取后端原文。
+ */
 async function doDecomposeScroll(): Promise<void> {
   if (busy.value) return;
   busy.value = true;
@@ -1467,11 +1528,9 @@ async function doDecomposeScroll(): Promise<void> {
     const res = await postDecomposeScroll(1);
     const back = Number(res?.refunded) || SCROLL_REFUND_PER_ITEM;
     const pieces = Number(res?.pieces) || SCROLL_PIECES;
-    const synth = Number(res?.synthesized) || 0;
-    const rest = typeof res?.scroll_fragments === 'number' ? `，现余 ${res.scroll_fragments} 个` : '';
+    const rest = typeof res?.scroll_fragments === 'number' ? `，现余 ${res.scroll_fragments} 片` : '';
     // 道具名取 `business/asset-text.ts` 单点（**显示名更名后不得再硬编码旧名**）；量词与比例仍沿用既有口径
-    const msg = `已分解 ${Number(res?.decomposed) || 1} 张兰帖（${pieces} 片），返还 ${back} 片${SCROLL_FRAGMENT_NAME}` +
-      (synth > 0 ? `，满 ${SCROLL_FRAGMENTS_PER_ITEM} 片已自动合成 ${synth} 张兰帖` : '') + rest;
+    const msg = `已分解 ${Number(res?.decomposed) || 1} 张兰帖（${pieces} 片），返还 ${back} 片${SCROLL_FRAGMENT_NAME}` + rest;
     await fxWait(FX_REVEAL_DECOMP_MS - (Date.now() - startedAt));
     pendingReveal = { kind: 'scrollFragment', at: Date.now() };
     emit('refresh');
@@ -1483,6 +1542,57 @@ async function doDecomposeScroll(): Promise<void> {
   } catch (e) {
     await failFeedback('');
     uni.showToast({ title: (e as Error)?.message || '兰帖分解失败', icon: 'none', duration: 4000 });
+  } finally {
+    busy.value = false;
+  }
+}
+
+/**
+ * 【兰帖残页合成】：不足 100 片 ⇒ **直出层内同一句原因**（toast + 失败反馈，抖动 / 层泛红 / 结果浮字沿用原文），
+ * **绝不静默**；达标 ⇒ 打开自绘二次确认框（`synthScroll`，1030/1031）。本层保持打开（确认框恒在本层之上）。
+ * 三态可见：按钮置灰（`canSynthesizeScrollFragment`）+ 层内原因行（`scrollSynthDisabledNote`）+ 点按同一句 toast。
+ */
+function onScrollSynthTap(): void {
+  if (busy.value) return;
+  const cell = tipCell.value;
+  if (!cell || cell.kind !== 'scrollFragment') return;
+  if (!canSynthesizeScrollFragment.value) {
+    const reason = scrollSynthDisabledNote.value || '当前不可合成';
+    uni.showToast({ title: reason, icon: 'none', duration: 3000 });
+    void failFeedback(reason);
+    return;
+  }
+  openConfirm('synthScroll');
+}
+
+/**
+ * 兰帖残页【手动合成】：**按张**调 `POST /assets/scroll/synthesize`（`count = 1`；一次恰好消耗 100 片残页、
+ * 余数保留）。自动合成已取消（`synthesized` 恒 0）⇒ 本路径是**唯一**产出兰帖的入口。
+ * 成功后就地重拉 summary（`refresh`）；回执 toast 逐字 = `SCROLL_SYNTH_OK_TEXT`（单点 = `asset-text.ts`）。
+ * 特效（V3）：t = 0 起合成特效 → 收束相位（560ms）重拉 summary（**兰帖格**显形 + 角标跳动，`pendingReveal`
+ * 在重建后补播）→ 总时长 780ms 收尾（清特效层 + 数量摘要浮字 + toast）。
+ * 失败（409 残页不足 = 整单拒绝零写入 / 400 `INVALID_COUNT` / 401 等）：先失败反馈（520ms），
+ * 再直出 `合成失败：` + **后端 `error.message` 原文**（不吞、不自造；量词单点已含于后端文案）。
+ */
+async function doSynthesizeScrollFragment(): Promise<void> {
+  if (busy.value) return;
+  busy.value = true;
+  const startedAt = Date.now();
+  fxSynth(confirmSrc);
+  try {
+    const res = await synthesizeScrollRemote(1);
+    const made = Number(res?.synthesized) || 1;
+    await fxWait(FX_REVEAL_SYNTH_MS - (Date.now() - startedAt));
+    pendingReveal = { kind: 'scroll', at: Date.now() };
+    emit('refresh');
+    await fxWait(FX_SYNTH_MS - (Date.now() - startedAt));
+    clearFx();
+    // 结果浮字 = 数量摘要（产出量 = 后端 `synthesized` 张兰帖；量词 / 道具名取 `inventory.ts` 装配产物）
+    fxFloat(fxQtySummary('scroll', made));
+    uni.showToast({ title: SCROLL_SYNTH_OK_TEXT, icon: 'none', duration: 4000 });
+  } catch (e) {
+    await failFeedback('');
+    uni.showToast({ title: scrollSynthFailText((e as Error)?.message || '未知错误'), icon: 'none', duration: 4000 });
   } finally {
     busy.value = false;
   }

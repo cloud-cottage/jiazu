@@ -82,8 +82,9 @@ export const SCROLL_LOCK_TEXT = '续约待确认 · 锁定中';
 
 /**
  * 兰帖【分解】相关文案（**单点**）—— 口径真源 = `docs/friend-domain.spec.md` §17-7 / §17-8（R-7）：
- * **1 张成品兰帖 = 100 片，分解返还 99 片**（每张留 1 片损耗；返 100 会在返还瞬间触发「满 100 自动合成」
- * ⇒ 分解成为空操作）。数值由调用方传入（`inventory.ts` 的常量），**本模块不复制比例常量**
+ * **1 张成品兰帖 = 100 片，分解返还 99 片**（每张留 1 片损耗；历史上「返 100 会在返还瞬间触发
+ * 「满 100 自动合成」⇒ 分解成为空操作」的理由，在 2026-09-26 取消自动合成后已不成立，
+ * 但 **99 片返还的取值一字未改**）。数值由调用方传入（`inventory.ts` 的常量），**本模块不复制比例常量**
  * （避免两模块互相 import 成环）。
  */
 
@@ -105,7 +106,7 @@ export function scrollDecomposeConfirmLines(
   return [
     `本次将分解 ${n} 张${SCROLL_NAME}（每张 ${piecesPerItem} 片），共扣减 ${pieces} 片。`,
     `分解返还 ${n * refundPerItem} 片${SCROLL_FRAGMENT_NAME}（每张留 ${perLoss} 片损耗，共损耗 ${n * perLoss} 片）。`,
-    `返还的${SCROLL_FRAGMENT_NAME}满 ${piecesPerItem} 片由后端自动合成 1 张${SCROLL_NAME}。`,
+    `返还的${SCROLL_FRAGMENT_NAME}满 ${piecesPerItem} 片可手动合成 1 张${SCROLL_NAME}。`,
     '是否确认分解？',
   ];
 }
@@ -137,12 +138,50 @@ export function scrollLockedReasonLine(): string {
 }
 
 /**
- * 兰帖碎片的状态行：满 `perItem` 片由**后端**自动合成 1 张兰帖（前端只展示、不做合成）。
- * 逐字 = `满 <perItem> 自动合成 1 张兰帖`；`perItem` 由 `business/inventory.ts` 的常量传入
+ * 兰帖残页的状态行：满 `perItem` 片**可手动**合成 1 张兰帖（2026-09-26 裁定：自动合成已取消，
+ * 合成由用户在行囊残页格属性提示层点【合成】触发）。`perItem` 由 `business/inventory.ts` 的常量传入
  * （避免两模块互相 import 成环）。
  */
 export function scrollFragmentSynthLine(perItem: number): string {
-  return `满 ${perItem} 自动合成 1 张${SCROLL_NAME}`;
+  return `满 ${perItem} 片可手动合成 1 张${SCROLL_NAME}`;
+}
+
+// ============ 兰帖残页【手动合成】文案单点（2026-09-26 裁定 · 逐字） ============
+/**
+ * 手动合成相关文案（**单点**）：入口 = 行囊（`asset-inventory`）残页格属性提示层的【合成】按钮
+ * —— 与既有兰帖格【分解】对偶；一次恰好消耗 `perItem`（= 100）片残页、合成 1 张，余数保留。
+ * 文案逐字（Kevin 2026-09-26 给定，一字不改）；比例数值由调用方传入（本模块不复制常量）。
+ */
+
+/** 合成确认层标题（自绘确认层用，与 `SCROLL_DECOMPOSE_TITLE` 同体例） */
+export const SCROLL_SYNTH_TITLE = '⚠️ 合成兰帖确认';
+
+/**
+ * 合成确认正文（逐行渲染，不合并、不改标点）：
+ * `perItem` = 每张所需片数（= 100）、`pieces` = 当前持有片数（合成后剩余 = `pieces − perItem`）。
+ */
+export function scrollSynthConfirmLines(perItem: number, pieces: number): string[] {
+  return [
+    `本次将消耗 ${perItem} 片${SCROLL_FRAGMENT_NAME}，合成 1 张${SCROLL_NAME}。`,
+    `当前持有 ${pieces} 片${SCROLL_FRAGMENT_NAME}，合成后剩余 ${pieces - perItem} 片。`,
+    '是否确认合成？',
+  ];
+}
+
+/** 残页不足 1 张 ⇒【合成】未达标原因行（**必须显示出来，不得静默**） */
+export function scrollSynthShortReasonLine(pieces: number, perItem: number): string {
+  return `当前 ${pieces} 片${SCROLL_FRAGMENT_NAME}，不足 ${perItem} 片，无法合成`;
+}
+
+/** 合成成功 toast 原文（逐字） */
+export const SCROLL_SYNTH_OK_TEXT = `已合成 1 张${SCROLL_NAME}`;
+
+/**
+ * 合成失败 toast 原文（逐字：`合成失败：` + **后端 error 原文**）——
+ * 后端文案一律原样透出，**绝不吞掉、绝不改写为自造提示**。
+ */
+export function scrollSynthFailText(backendMessage: string): string {
+  return `合成失败：${backendMessage}`;
 }
 
 // ============ 道具诗句（Kevin 2026-09-25 逐字给定 · **唯一真源**） ============

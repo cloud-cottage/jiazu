@@ -10,8 +10,9 @@
  *   （口径：已镶嵌玉不属于用户了）⇒ 玉格数 / 占格数 / 溢出**一律只按未镶嵌玉计**；
  * - **余数格**：竹简 / 籽 / 兰帖 `% 每格量 > 0` 时**另加 1 格**，角标显示**实际余量**（如 37 片 / 5925 颗）；
  * - **碎片格**：`fragments > 0` 即占 1 格（1–9 片均占 1 格，0 片不占），角标显示**实际个数**（如 3）；
- *   **兰帖碎片（`scroll_fragments`）同口径**：`> 0` 即占 1 格、角标 = **实际个数**（1–99 片仍占 1 格，上限 99、
- *   满 100 由后端自动合成 1 张兰帖 ⇒ 前端只展示、不判合成）；
+ *   **兰帖残页（`scroll_fragments`）**：**每 999 片占 1 格**（`ceil(片数 / 999)` 格，0 片不占；
+ *   整格角标 = 999、余数格角标 = 余数 —— 沿用既有余数格体例），后端**不设拒绝阈值、不截断**；
+ *   满 100 片**由用户手动**点【合成】合成 1 张兰帖（前端只提供入口与门槛判定，记账一律在后端）；
  *   **v2 的「碎片恒 0 格」与「零头行」已彻底废弃**（模板 / 样式 / 数据字段 / 逻辑一并删除，不留死代码）；
  * - **兰帖永久有效**（`ScrollLot.expires_at` 恒 `null`）⇒ 兰帖格 `expiresAtMs = Infinity`，
  *   **不排入到期排序、不渲染任何「最近到期 / 有效期至」行**（与玉的永久批次同体例）；
@@ -21,8 +22,8 @@
  *   空格在 N+1..36；
  * - **溢出**：占格需求 = 标题「N / 36 格」的 N，> `SLOT_COUNT` 时前 36 格按默认序填充，
  *   **超出的道具不占格**，改为按类型汇总的溢出提示行（玉 → 「背包空间不足，无法合成」；
- *   籽 / 竹简 / 碎片 / **兰帖 / 兰帖碎片** → 「空间不足，无法持有」；玉行恒在最前，
- *   其余各类按默认序：竹简 → 兰帖 → 籽 → 兰帖碎片 → 石榴籽碎片）；
+ *   籽 / 竹简 / 碎片 / **兰帖 / 兰帖残页** → 「空间不足，无法持有」；玉行恒在最前，
+ *   其余各类按默认序：竹简 → 兰帖 → 籽 → 兰帖残页 → 石榴籽碎片）；
  * - **重排**：`moveItem` = 插入式（口径同 `docs/sibling-order.spec.md` §9 的拖曳），只在已占用格
  *   之间生效；本模块不持有任何状态 ⇒ 显示顺序由调用方（组件内存）决定，刷新即回默认序。
  */
@@ -51,8 +52,16 @@ export const SCROLL_PIECES_PER_ITEM = 100;
 /** 石榴籽碎片：10 片 = 1 颗石榴籽（服务端 `fragment_cap = 9` ⇒ 实测 1–9 片，仍占 1 格） */
 export const FRAGMENTS_PER_ITEM = 10;
 /**
- * 兰帖碎片：100 片 = 1 张兰帖（服务端 `scroll_fragment_cap = 99` ⇒ 实测 1–99 片仍占 1 格；
- * 满 100 由**后端**自动合成 1 张兰帖，前端只展示）。与石榴籽碎片各自持有常量，**不得共用**。
+ * 兰帖残页：**每 999 片占 1 格**（**单格容纳上限 = 展示层口径**，2026-09-26 裁定；
+ * 服务端 `scroll_fragment_cap = 999` 同值 ⇒ 超出部分**另起一格**，占格数 = `ceil(片数 / 本值)`；
+ * 后端**不拒绝、不截断**，前端只展示、不判上限）。本常量是 `999` 的**唯一字面**。
+ * 与石榴籽碎片各自持有常量，**不得共用**。
+ */
+export const SCROLL_FRAGMENT_PIECES_PER_CELL = 999;
+/**
+ * 兰帖残页**手动合成门槛**：100 片 = 1 张兰帖（服务端 `SCROLL_FRAGMENT_SYNTH_THRESHOLD = 100`）。
+ * 2026-09-26 裁定：自动合成已取消 ⇒ 满此数由**用户**在残页格提示层点【合成】手动合成 1 张，
+ * 前端只提供入口与门槛判定，**实际记账一律由后端完成**。与石榴籽碎片各自持有常量，**不得共用**。
  */
 export const SCROLL_FRAGMENTS_PER_ITEM = 100;
 /** 道具栏位总数：6 × 6 = 36 */
@@ -152,7 +161,7 @@ const KIND_CONVERT: Record<InventoryKind, string> = {
   scroll: `1 张 = ${SCROLL_PIECES_PER_ITEM} 片${SCROLL_NAME}`,
   jade: `1 枚石榴籽玉 = ${JADES_PER_ITEM} 格`,
   seed: `1 格 = ${SEEDS_PER_ITEM} 颗石榴籽`,
-  scrollFragment: `1 格 = ${SCROLL_FRAGMENTS_PER_ITEM} 片${SCROLL_FRAGMENT_NAME}`,
+  scrollFragment: `1 格 = ${SCROLL_FRAGMENT_PIECES_PER_CELL} 片${SCROLL_FRAGMENT_NAME}`,
   fragment: `1 格 = ${FRAGMENTS_PER_ITEM} 片石榴籽碎片`,
 };
 
@@ -312,27 +321,43 @@ function scrollItems(lots: ScrollLot[]): InventoryItem[] {
 }
 
 /**
- * 兰帖碎片：`scroll_fragments > 0` 即占 1 格（1–99 片均 1 格，0 片不占），角标 = **实际个数**；
- * 无到期概念（标量，永久）。上限由**后端**裁定（`scroll_fragment_cap = 99`：满 100 立即自动合成），
- * 前端只展示、不判合成、不重算上限。
+ * 兰帖残页：**每 999 片占 1 格**（`ceil(片数 / SCROLL_FRAGMENT_PIECES_PER_CELL)` 格；0 片不占格），
+ * 整格角标 = **999**、余数格角标 = **余数**（沿用既有余数格体例，`slotKind = 'remainder'`）；
+ * 无到期概念（标量，永久）。**后端不设拒绝阈值 / 不截断**（2026-09-26 裁定）⇒ 前端只展示、
+ * 不判上限、不重算上限；合成由**用户手动**触发（门槛 = 100 片，见 `SCROLL_FRAGMENTS_PER_ITEM`）。
  */
 function scrollFragmentItems(fragments: number): InventoryItem[] {
-  const count = Math.max(0, Math.floor(Number(fragments) || 0));
-  if (count <= 0) return [];
-  return [{
-    id: 'scrollFragment:0',
+  const total = Math.max(0, Math.floor(Number(fragments) || 0));
+  if (total <= 0) return [];
+  const cells = Math.ceil(total / SCROLL_FRAGMENT_PIECES_PER_CELL);
+  const rest = total % SCROLL_FRAGMENT_PIECES_PER_CELL;
+  const make = (id: string, slotKind: InventorySlotKind, count: number): InventoryItem => ({
+    id,
     kind: 'scrollFragment' as InventoryKind,
-    slotKind: 'fragment' as InventorySlotKind,
+    slotKind,
     name: KIND_NAME.scrollFragment,
     count,
     badge: true,
     tooltipLines: [
       `${count} ${KIND_QTY_UNIT.scrollFragment}`,
+      ...(slotKind === 'remainder' ? [`本格为余数（${count} ${KIND_QTY_UNIT.scrollFragment}），不足 1 格`] : []),
       scrollFragmentSynthLine(SCROLL_FRAGMENTS_PER_ITEM),
       KIND_CONVERT.scrollFragment,
     ],
     expiresAtMs: Infinity,
-  }];
+  });
+  const items: InventoryItem[] = [];
+  for (let k = 0; k < cells; k += 1) {
+    // 末格为余数格（`rest > 0` 时其角标 = 余数；`rest === 0` 时全是整格 ⇒ 每格恒 999）
+    const isLast = k === cells - 1;
+    const isRemainder = isLast && rest > 0;
+    items.push(make(
+      isLast && !isRemainder ? 'scrollFragment:last' : `scrollFragment:${k}`,
+      isRemainder ? 'remainder' : 'stack',
+      isRemainder ? rest : SCROLL_FRAGMENT_PIECES_PER_CELL,
+    ));
+  }
+  return items;
 }
 
 /**

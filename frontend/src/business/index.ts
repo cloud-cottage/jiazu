@@ -12,6 +12,9 @@ export type { EstablishBranchResult, ConvergeSpiritTransfer, ConvergeClanResult 
 export { fetchMarketListings, fetchMyListings, postMarketList, postMarketCancel, postMarketBuy, postOfficialBuy } from './api';
 export type { MarketListing, MarketListingStatus, MarketOfficial, MarketListingsResult, MarketMyResult, MarketMyAssets, MarketListResult, MarketBuyResult, OfficialBuyResult } from './api';
 export { fetchMessages, postMessagesRead, postAdminAssetsGrant, fetchAdminAssetsLogs, fetchAdminAssetsUser, deleteAccount, jadeListOf, jadeCountOf } from './api';
+// 兰帖残页【手动合成】（2026-09-26 裁定：手动合成为唯一合成入口；与 `postDecomposeScroll` 对偶）
+export { synthesizeScrollRemote } from './friends';
+export type { ScrollSynthesizeResult } from './friends';
 export type { MessageItem, MessageType, MessagesResult, MessagesReadResult, OpsLog, OpsLogFilters, GrantPayload, GrantSummary, GrantResult, AdminAssetSnapshot, DeleteAccountResult } from './api';
 export { isLiving, sanitizePerson } from './privacy';
 export {
