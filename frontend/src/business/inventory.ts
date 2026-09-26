@@ -29,6 +29,7 @@
 import type { AssetsSummary, BambooLot, Jade, SeedLot } from './api';
 import {
   SCROLL_FRAGMENT_NAME,
+  SCROLL_ITEM_UNIT,
   SCROLL_NAME,
   SCROLL_PIECES_UNIT,
   SCROLL_STATUS_PERMANENT,
@@ -125,7 +126,7 @@ const KIND_NAME: Record<InventoryKind, string> = {
  */
 const KIND_QTY_UNIT: Record<InventoryKind, string> = {
   bamboo: '片',
-  scroll: '张',
+  scroll: SCROLL_ITEM_UNIT,
   jade: '枚',
   seed: '颗',
   scrollFragment: '片',
@@ -138,7 +139,7 @@ const KIND_QTY_UNIT: Record<InventoryKind, string> = {
  */
 const KIND_ITEM_UNIT: Record<InventoryKind, string> = {
   bamboo: '个',
-  scroll: '张',
+  scroll: SCROLL_ITEM_UNIT,
   jade: '枚',
   seed: '个',
   scrollFragment: '片',

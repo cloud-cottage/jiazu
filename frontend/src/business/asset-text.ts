@@ -194,7 +194,11 @@ export const SCROLL_PIECES_UNIT = '片';
 /**
  * 兰帖整道具（张）的量词（**恒「张」**；1 张 = 100 片）。
  * 单点：数字为**整道具数**（张）时经本常量拼装；数字为**片数**时一律用 `SCROLL_PIECES_UNIT`。
- * 注：`business/inventory.ts` 的 `KIND_QTY_UNIT.scroll = '张'` 是行囊角标自有字面（本批未并，登记为后续收敛）。
+ * 本常量是「张」的**唯一字面**，三处同源（无一例外，勿再抄一遍）：
+ * ① 本常量 `asset-text.ts` 的 `SCROLL_ITEM_UNIT`；
+ * ② `business/inventory.ts` 的 `KIND_QTY_UNIT.scroll`（行囊角标 / 余数格提示 / 换算依据行）；
+ * ③ `business/inventory.ts` 的 `KIND_ITEM_UNIT.scroll`（溢出行的道具计数）。
+ * ②③ 现均**引用本常量**（`inventory.ts` 已从本模块导入；方向与 `SCROLL_NAME` / `SCROLL_FRAGMENT_NAME` 一致，不成环）。
  */
 export const SCROLL_ITEM_UNIT = '张';
 
