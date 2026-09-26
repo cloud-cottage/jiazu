@@ -158,7 +158,7 @@
       <t-cell-group :bordered="false">
         <t-cell
           title="🚪 注销账号"
-          description="清空碎片 / 石榴籽 / 竹片 / 玉 · 不可恢复"
+          description="清空碎片 / 石榴籽 / 竹片 / 玉 / 兰帖 / 兰帖残页 · 不可恢复"
           arrow
           @click="openDeleteAccount"
         />

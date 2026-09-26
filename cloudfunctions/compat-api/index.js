@@ -23,7 +23,7 @@
  *      —— 任务枚举逐字 `signin`（签到）/ `invite`（邀请新用户注册）/ `write`（平台写操作）
  *   GET  /messages | POST /messages/read（站内信中心：四类预警惰性生成 + 已读，docs/economy-ops.spec.md §4）
  *   POST /admin/assets/grant | GET /admin/assets/logs | /admin/assets/user（资产运维 · 仅 chief_editor，§5）
- *   POST /account/delete（账号注销：注销前置挂单检查 → 清空四类资产 + account_clear 流水，§7 / K10）
+ *   POST /account/delete（账号注销：注销前置挂单检查 → 清空六类资产（四类 + 兰帖 / 兰帖残页；`scrolls` 以片计）+ account_clear 流水，§7 / K10）
  *   PUT  /admin/wallet-fee | /tree-meta
  *   GET  /admin/users | /admin/get-anchor | /admin/leave-requests
  *   POST /admin/set-role | /admin/set-anchor | /admin/approve-leave
@@ -1073,7 +1073,7 @@ async function handleRequest(event) {
     // 后台资产运维（§5，**仅 `chief_editor`**）：`POST /admin/assets/grant`（`reason` 必填 + 逐笔留痕 + 用户流水）、
     // `GET /admin/assets/logs`（`operator?` / `phone?` / `limit?` 默认 50 上限 200）、`GET /admin/assets/user`（资产快照）。
     // 账号注销（§7，K10）：`POST /account/delete` → 先 `openListingGuard`（有 open 挂单 → 409「请先撤销未成交挂单」，
-    // 不自动撤单）→ 清空四类资产 + 写 `account_clear` 流水（**保留流水审计 / jiazu_users / jiazu_anchors**）。
+    // 不自动撤单）→ 清空六类资产（四类 + 兰帖 / 兰帖残页；`scrolls` 以片计）+ 写 `account_clear` 流水（**保留流水审计 / jiazu_users / jiazu_anchors**）。
     // 本段**必须注册在树编辑闸门之前**（§10.1：闸门会先拦 `缺少 X-Tree-Id`）；
     // 错误体统一走 `eco.errorPayload`（只回域名码，绝不透传系统错误文本）。
     if (pathname === '/messages' && method === 'GET') {
