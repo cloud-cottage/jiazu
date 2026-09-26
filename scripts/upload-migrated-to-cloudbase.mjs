@@ -43,6 +43,8 @@ const COLLECTIONS = [
   // P4 新增：站内消息 / 运营审计（docs/economy-ops.spec.md §5.3）
   'jiazu_messages',
   'jiazu_ops_logs',
+  // 邀请链路（Zang 裁定 v3 · I-8）：每被邀请人一文档（_id = 被邀请人手机号）
+  'jiazu_invites',
 ];
 
 const app = cloudbase.init({ env: ENV, accessKey: KEY });

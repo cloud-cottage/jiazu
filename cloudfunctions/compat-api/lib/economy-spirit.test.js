@@ -818,6 +818,77 @@ test('读口径 · settle 先于出参（过期后读即 buffer / expired）', a
   assert.equal(expired.state_text.primary, '时流子域已停用');
 });
 
+// ==================== 注入者反查（口径 v6：GET /spirit 出参 injector） ====================
+
+test('读口径 · 注入者反查（`injector`）：三态 + 昵称兜底 + 手机号不下发', async () => {
+  // ① 未镶嵌 → injector = null（不反查、不猜）
+  assert.equal((await sp.spiritInfo(nextTree(), null, T0)).injector, null, '未镶嵌树 injector = null');
+
+  // ② 正常态：注入者有本树锚点 → nickname + person_handle
+  const treeA = nextTree();
+  const injectorA = await newUser();
+  await store.colSet('jiazu_users', injectorA, { _id: injectorA, phone: injectorA, nickname: '注入者甲', role: 'user' });
+  await setAssets(injectorA, { jades: [jadeOf('jd_inj_a', null)] });
+  await sp.mountJade(injectorA, treeA, 'jd_inj_a', T0);
+  await store.colSet('jiazu_anchors', injectorA, {
+    _id: injectorA, tree_id: treeA, person_handle: 'h_inj_a', updated_at: T0.toISOString(),
+  });
+  const ok = await sp.spiritInfo(treeA, null, T0);
+  assert.deepEqual(ok.injector, { nickname: '注入者甲', person_handle: 'h_inj_a' });
+  assert.equal(ok.jade.jade_id, 'jd_inj_a', '已镶玉信息保留（注入者是新增字段，不动既有出参）');
+  assert.ok(!JSON.stringify(ok).includes(injectorA), '出参不得出现注入者手机号');
+  assert.ok(!JSON.stringify(ok).includes('1660'), '出参任何位置都不得出现手机号片段');
+
+  // ③ 有昵称但**无锚点** → person_handle = null（前端示「注入者无本树节点」）
+  const treeB = nextTree();
+  const injectorB = await newUser(); // newUser 已写昵称；**不建锚点**
+  await setAssets(injectorB, { jades: [jadeOf('jd_inj_b', null)] });
+  await sp.mountJade(injectorB, treeB, 'jd_inj_b', T0);
+  assert.equal(await store.colGet('jiazu_anchors', injectorB), null, '夹具前提：该注入者无锚点');
+  const noAnchor = (await sp.spiritInfo(treeB, null, T0)).injector;
+  assert.equal(noAnchor.person_handle, null, '无锚点 → person_handle = null');
+  assert.ok(noAnchor.nickname, '无锚点态昵称仍有值');
+  assert.ok(!JSON.stringify(noAnchor).includes(injectorB), '无锚点态也不得泄露手机号');
+
+  // ④ 锚点存在但**跨树**（anchor.tree_id !== tree_id）→ 同样 person_handle = null（不得错挂别树节点）
+  const treeC = nextTree();
+  const injectorC = await newUser();
+  await setAssets(injectorC, { jades: [jadeOf('jd_inj_c', null)] });
+  await sp.mountJade(injectorC, treeC, 'jd_inj_c', T0);
+  await store.colSet('jiazu_anchors', injectorC, {
+    _id: injectorC, tree_id: 'sp_f0', person_handle: 'h_other_tree', updated_at: T0.toISOString(),
+  });
+  const crossTree = (await sp.spiritInfo(treeC, null, T0)).injector;
+  assert.equal(crossTree.person_handle, null, '锚点跨树 → person_handle = null');
+  assert.ok(crossTree.nickname);
+
+  // ⑤ 反查不到（凹槽有记录、资产侧无对应 `mounted_tree_id`）→ injector = null
+  const treeD = nextTree();
+  await setEntry(treeD, {
+    jade: { jade_id: 'jd_ghost', mounted_at: T0.toISOString(), expires_at: null },
+    spirit_expires_at: null, buffer_until: null, status: 'inactive', logs: [],
+  });
+  const ghost = await sp.spiritInfo(treeD, null, T0);
+  assert.equal(ghost.mounted, true, '夹具前提：凹槽有记录');
+  assert.equal(ghost.injector, null, '反查不到 → injector = null');
+  assert.equal(ghost.jade.expires_at, null, '槽位 jade 原样回传（到期语义本轮不动）');
+
+  // ⑥ 昵称缺失 → 脱敏手机号兜底，且仍不含完整手机号
+  const treeE = nextTree();
+  const nameless = await newUser();
+  await store.colSet('jiazu_users', nameless, { _id: nameless, phone: nameless, nickname: '', role: 'user' });
+  await setAssets(nameless, { jades: [jadeOf('jd_inj_e', null)] });
+  await sp.mountJade(nameless, treeE, 'jd_inj_e', T0);
+  const masked = (await sp.spiritInfo(treeE, null, T0)).injector;
+  assert.equal(masked.nickname, `${nameless.slice(0, 3)}****${nameless.slice(-4)}`, '昵称缺失 → 脱敏手机号兜底');
+  assert.ok(!JSON.stringify(masked).includes(nameless), '脱敏后不得含完整手机号');
+
+  // ⑦ 零迁移 / 零改写：注入者反查全程只读（槽位与玉记录都不被改动）
+  assert.equal((await entryOf(treeA)).jade.expires_at, null, '槽位 expires_at 原样保留');
+  assert.equal((await entryOf(treeA)).jade.mounted_at, T0.toISOString(), '槽位 mounted_at 原样保留');
+  assert.equal((await assetsOf(injectorA)).jades[0].mounted_tree_id, treeA, '玉记录去向留痕原样保留');
+});
+
 // ==================== 路由级：五条路由（index.js 接线 · P2 第二段） ====================
 // 规格：docs/spirit-domain.spec.md §6-1 / §6-2 / §6-6（错误码）/ §7（GET /spirit 读口径）/ §12-1（鉴权口径）
 
@@ -1104,4 +1175,20 @@ test('真源未变：config/tree-meta.json 与 migrate-output/（trees + details
     assert.deepEqual([...now.keys()].sort(), [...base.keys()].sort(), `migrate-output/${name} 文件集合未变`);
     for (const [f, h] of now) assert.equal(h, base.get(f), `migrate-output/${name}/${f} 未被改写`);
   }
+});
+
+// ==================== ⑮ Infinity 收口（JSON 文本 1e999 经 JSON.parse = Infinity） ====================
+
+test('Infinity 收口：外部 days_left / buffer_days_left 归 0，绝不出现在四态投影里', () => {
+  const INF = JSON.parse('1e999'); // 云端 / 前端写进来的 JSON 文本 1e999
+  assert.equal(INF, Number.POSITIVE_INFINITY);
+  const active = sp.stateTextOf('active', { days_left: INF, expires_date: '2026-01-01' });
+  assert.equal(active.primary, '灵气充盈 · 剩余 0 天', 'Infinity 必须归 0（改前为「剩余 Infinity 天」）');
+  const buffer = sp.stateTextOf('buffer', { buffer_days_left: INF, buffer_date: '2026-01-01' });
+  assert.equal(buffer.primary, '灵气已尽 · 缓冲期剩余 0 天');
+  assert.equal(
+    /Infinity|NaN/.test(JSON.stringify([active, buffer])),
+    false,
+    '任何投影里都不得出现 Infinity / NaN',
+  );
 });

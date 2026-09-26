@@ -207,6 +207,15 @@
                   @click="goPerson(c)"
                 >{{ c.name }}</text>
               </view>
+              <!-- 调整排行（入口权限 = 既有 canEdit + 非只读节点判定；1 片 / 次计费见模态框内提示） -->
+              <t-button
+                v-if="canReorderKids"
+                size="small"
+                variant="outline"
+                theme="primary"
+                class="rank-btn"
+                @click="openSiblingOrder(fam.handle)"
+              >调整排行</t-button>
             </view>
           </view>
         </t-cell-group>
@@ -461,6 +470,17 @@
           <t-button variant="outline" block @click="cancelEdit">取消</t-button>
         </view>
     </view>
+
+    <!-- 调整排行（次级模态框）：子女标签长按拖曳 / ▲▼ 微调，按 family 分段，一次提交只动一段 -->
+    <SiblingOrderModal
+      v-if="showSiblingOrder && person"
+      :tree-id="treeId"
+      :person-name="person.name"
+      :segments="siblingOrderSegments"
+      :initial-family-handle="siblingOrderFamily"
+      @close="showSiblingOrder = false"
+      @done="onSiblingOrderDone"
+    />
 
     <!-- 嫁出/娶入弹窗：选目标家族树的配偶节点 + 选填成婚日期 → 提交申请，对方家族审批后生效 -->
     <view v-if="showMarry" class="modal-mask" @click="showMarry = false">
@@ -784,7 +804,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { fetchPerson, fetchPersonForEdit, savePerson, savePersonPlaces, isLiving, API_BASE, fetchTreeMetaRemote, searchPeople, searchMarriageCandidates, removeBranchLink, reparentNode, deleteNode, marriageRequest, marryEnd, founderRequest, fetchFounderRequests, attachFounder, detachFounder, resetFounder, fetchClans, treeKindLabel, treeKindOf, feeText, isAssetInsufficientError, showAssetInsufficientGuide, fetchPersonList, fetchFamilyList, fetchSpirit, postConvergeClan, mirrorNoteText, mirrorReadonlyViewOf, treeDisplayTitleOf, MAX_RESIDENCE_PLACES, emptyPlaceInput, normalizePlace, prunePlaces, placesDirty, placeDisplayOf } from '@/business';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
-import type { PersonDetail, PersonSummary } from '@/business/types';
+import type { PersonDetail, PersonSummary, SiblingReorderSegment } from '@/business/types';
 import type { MirrorFields, MirrorReadonlyView, MirrorTarget, MarriageCandidate, PersonPlaceInput } from '@/business';
 import type { ClanSummary, FeeInfo, NodeDeleteMode, NodeDeleteResult } from '@/business/api';
 import {
@@ -798,6 +818,7 @@ import {
 } from '@/business/format';
 import { genderIconSrc } from '@/business/icons';
 import PersonManagePanel from '@/components/person-manage-panel/person-manage-panel.vue';
+import SiblingOrderModal from '@/components/sibling-order-modal/sibling-order-modal.vue';
 import TreePicker from '@/components/tree-picker/tree-picker.vue';
 import GeoCascader from '@/components/geo-cascader/geo-cascader.vue';
 
@@ -1955,6 +1976,42 @@ function spouseOf(fam: { father?: any; mother?: any }): any {
     : (fam.father || null);
 }
 
+// ---- 调整排行（子女标签拖曳排序；`POST /admin/sibling-reorder`）----
+
+/**
+ * 「调整排行」入口权限：沿用组件内既有判定（`canEdit` + 非只读节点），**不新造判据**。
+ * 只读节点另有后端 403（文案原样由模态框展示并禁用入口）。
+ */
+const canReorderKids = computed(() => canEdit.value && !readonlyMode.value);
+
+const showSiblingOrder = ref(false);
+/** 打开时定位到的分段（点击哪一段的入口就从哪一段起排；空串 = 第一段） */
+const siblingOrderFamily = ref('');
+
+/**
+ * 模态框入参：配偶家族分段（`children` 顺序即服务端当前排行）。
+ * **一次提交只动一段**的 `child_handles`（多配偶家族分段排序，跨段不合并提交）。
+ */
+const siblingOrderSegments = computed<SiblingReorderSegment[]>(() =>
+  spouseFamilies.value
+    .filter((f) => (f.children || []).length > 0)
+    .map((f) => ({
+      family_handle: f.handle,
+      spouse_name: spouseOf(f)?.name || '',
+      children: (f.children || []).map((c) => ({ handle: c.handle, name: c.name })),
+    })),
+);
+
+function openSiblingOrder(familyHandle: string): void {
+  siblingOrderFamily.value = familyHandle;
+  showSiblingOrder.value = true;
+}
+
+/** 排序已落库 → 复用既有刷新路径（重取档案 → 子女按新位次渲染，并通知宿主刷新） */
+function onSiblingOrderDone(): void {
+  onManageTreeChanged();
+}
+
 /**
  * 新增子节点的默认姓氏（随父姓）：本人是父 → 本人姓；
  * 本人是母且家族里记有父亲 → 父亲姓；无配偶家族/父不详 → 本人姓。
@@ -2578,6 +2635,8 @@ async function doEndMarriage() {
 .fam-link { font-size: 14px; color: #5D4037; }
 .fam-link:active { color: #8B4513; }
 .fam-kids { display: flex; flex-wrap: wrap; gap: 4px 14px; flex: 1; }
+/* 调整排行入口：跟在子女标签行尾（不参与换行挤压） */
+.rank-btn { flex-shrink: 0; margin-left: 8px; }
 .fam-none { font-size: 13px; color: #ccc; }
 .branch-admin { margin-top: 10px; }
 .loading { text-align: center; padding: 60px; color: #999; }

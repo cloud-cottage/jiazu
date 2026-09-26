@@ -1178,3 +1178,40 @@ test('真源未变：config/tree-meta.json 与 migrate-output/（trees + details
     for (const [f, h] of now) assert.equal(h, base.get(f), `migrate-output/${name}/${f} 未被改写`);
   }
 });
+
+// ==================== ⑮ Infinity 收口（JSON 文本 1e999 经 JSON.parse = Infinity） ====================
+
+test('Infinity 收口：市集外部值 / 挂单占量 / 官方库存一律归 0，不入账、不入投影', () => {
+  const INF = JSON.parse('1e999'); // 云端 / 前端写进来的 JSON 文本 1e999
+  assert.equal(INF, Number.POSITIVE_INFINITY);
+  // 手续费口径（136 / 148）：Infinity 不得原样穿过收口
+  assert.equal(mk.feeOf(INF), 0, 'feeOf(Infinity) 必须为 0（改前为 Infinity）');
+  const bd = mk.feeBreakdown(INF);
+  assert.equal(bd.price_seeds, 0, 'feeBreakdown(Infinity).price_seeds 必须为 0（改前为 Infinity）');
+  assert.equal(
+    Number.isFinite(bd.seller_got) && Number.isFinite(bd.destroyed),
+    true,
+    '卖方所得 / 销毁量不得出现 NaN',
+  );
+  // 挂单占量（167）：Infinity 片不得计入锁定
+  assert.equal(mk.lockedPieces('1660001000', [{ status: 'open', seller_phone: '1660001000', pieces: INF }]), 0);
+  // 官方发售惰性释放（270 / 281）：已过北京 21:00 时点，仍须收口为 0
+  const at = new Date('2026-09-16T21:30:00.000+08:00');
+  const o = { stock: {}, daily_stock: INF, last_release_date: '' };
+  const rel = mk.releaseOfficial(o, at);
+  assert.equal(rel.released, true, '前置：该时点确已释放当日库存');
+  assert.equal(o.stock[rel.today], 0, '落库的当日库存必须为 0（改前为 Infinity）');
+  assert.equal(rel.stock_left_today, 0, '今日剩余库存必须为 0（改前为 Infinity）');
+  // 官方发售出参投影（453）
+  const payload = mk.officialPayload(
+    { price_fen: 990, daily_stock: INF },
+    { stock_left_today: 0, released_today: true },
+    at,
+  );
+  assert.equal(payload.daily_stock, 0);
+  assert.equal(
+    /Infinity|NaN/.test(JSON.stringify(payload)),
+    false,
+    '投影里不得出现 Infinity / NaN',
+  );
+});

@@ -25,6 +25,8 @@
 
 import { colGet, colSet, getMeta } from './store.js';
 import {
+  ASSETS_COL,
+  ASSETS_ID,
   BAMBOO_TTL_DAYS,
   SEED_TTL_DAYS,
   addLot,
@@ -36,6 +38,7 @@ import {
   summarize,
   sumLots,
   sweep,
+  toNonNegInt,
   withAssets,
   beijingDate,
 } from './economy-ledger.js';
@@ -45,6 +48,10 @@ import { getAnchor } from './scope.js';
 
 export const SPIRIT_COL = 'jiazu_spirit';
 export const SPIRIT_ID = 'global';
+/** 账号集合（注入者昵称来源；与 economy-ops.js 同名单点） */
+const USERS_COL = 'jiazu_users';
+/** 锚点集合（注入者本树节点来源；与 scope.js 同名单点） */
+const ANCHORS_COL = 'jiazu_anchors';
 /** 中华世本（无时流子域凹槽，§3-3 TREE_ID_MASTER） */
 export const MASTER_TREE_ID = process.env.MASTER_TREE_ID || 'zhonghua';
 
@@ -237,8 +244,8 @@ export function settle(entry, now = new Date()) {
 
 /** 四态文案（§4-6 · 非定稿可调；展示日期按北京时间 UTC+8 折算） */
 export function stateTextOf(status, opts = {}) {
-  const daysLeft = Math.max(0, Math.floor(Number(opts.days_left) || 0));
-  const bufferDaysLeft = Math.max(0, Math.floor(Number(opts.buffer_days_left) || 0));
+  const daysLeft = toNonNegInt(opts.days_left);
+  const bufferDaysLeft = toNonNegInt(opts.buffer_days_left);
   switch (status) {
     case 'inactive':
       return { primary: '时流子域 · 未激活', secondary: '灌注玉露灵泽即可开启' };
@@ -395,7 +402,7 @@ export async function synthesizeJade(phone, now = new Date()) {
     }
     const seeds_used = charge.taken.map((t) => ({ lot_id: t.id, qty: t.qty, expires_at: t.expires_at ?? null }));
     // 扣尽批次就地移除（§5-2-3：不留 qty=0 残留批；不写流水）
-    user.seeds = (user.seeds || []).filter((l) => Math.floor(Number(l.qty) || 0) > 0);
+    user.seeds = (user.seeds || []).filter((l) => toNonNegInt(l.qty) > 0);
     const earliestMs = seeds_used.reduce((min, t) => {
       const ms = t.expires_at ? Date.parse(t.expires_at) : Number.POSITIVE_INFINITY;
       return ms < min ? ms : min;
@@ -592,7 +599,7 @@ export async function chargeSpirit(phone, treeId, plan, now = new Date(), opts =
           } catch (err) {
             throw seedsInsufficient(P.seeds, err.current, `石榴籽不足：本次需 ${P.seeds} 颗，当前可用 ${err.current} 颗`);
           }
-          user.seeds = (user.seeds || []).filter((l) => Math.floor(Number(l.qty) || 0) > 0);
+          user.seeds = (user.seeds || []).filter((l) => toNonNegInt(l.qty) > 0);
           let gift_lot_id = null;
           if (giftPieces > 0) {
             gift_lot_id = addLot(user, 'bamboo', giftPieces, { source: 'spirit_gift', now }).id;
@@ -666,6 +673,48 @@ export async function chargeSpirit(phone, treeId, plan, now = new Date(), opts =
 
 // ---- §7 灵气流水视图 ----
 
+// ---- §7-2 注入者反查（已镶玉区块展示口径 · 读侧 · 零迁移 / 零新字段） ----
+
+/** 手机号脱敏（昵称缺失时的兜底展示；**手机号绝不整串下发前端**） */
+export function maskPhone(phone) {
+  const s = String(phone || '');
+  if (!s) return '';
+  return s.length >= 7 ? `${s.slice(0, 3)}****${s.slice(-4)}` : `${s.slice(0, 3)}****`;
+}
+
+/**
+ * 已镶玉的**注入者**反查（`GET /spirit` 的 `injector` 出参口径）。
+ *
+ * 来源 = **读侧反查**（零迁移、零新字段、零新集合）：在 `jiazu_assets`（单文档 `global`，
+ * `users[phone].jades`）里反查 `mounted_tree_id === treeId` 的那一枚玉 → 持有者手机号 →
+ * `jiazu_users` 昵称 + `jiazu_anchors` 锚点（`tree_id` / `person_handle`）。
+ * 全程 `colGet` **只读**（不 sweep、不回写 ⇒ 不扰动真源）。
+ *
+ * 三态：
+ * - 反查到 + 锚点 `tree_id === treeId` → `{ nickname, person_handle }`（前端给可点档案链接）；
+ * - 反查到 + 无锚点 / 锚点跨树 → `{ nickname, person_handle: null }`（前端示「注入者无本树节点」）；
+ * - 反查不到（玉记录已被清空 / 账号注销清空资产）→ `null`（前端示「注入者信息不可考」）。
+ *
+ * 昵称缺失 → 脱敏手机号兜底。**出参不含手机号**。
+ */
+export async function injectorOf(treeId) {
+  if (!treeId) return null;
+  const doc = await colGet(ASSETS_COL, ASSETS_ID);
+  let phone = '';
+  for (const [p, rec] of Object.entries(doc?.users || {})) {
+    if ((rec?.jades || []).some((j) => j && j.mounted_tree_id === treeId)) {
+      phone = p;
+      break;
+    }
+  }
+  if (!phone) return null;
+  const account = await colGet(USERS_COL, phone);
+  const nickname = String(account?.nickname || '').trim() || maskPhone(phone);
+  const anchor = await colGet(ANCHORS_COL, phone);
+  const personHandle = anchor && anchor.tree_id === treeId && anchor.person_handle ? anchor.person_handle : null;
+  return { nickname, person_handle: personHandle };
+}
+
 /**
  * `GET /spirit` 出参（§7-1 / §7-2）。
  * 处理顺序：取树（400 / 404）→ `settle` 推进 → 组装出参（**推进后**的状态为准）。
@@ -711,6 +760,8 @@ export async function spiritInfo(treeId, viewer = null, now = new Date(), opts =
     days_left: daysLeft,
     buffer_days_left: bufferDaysLeft,
     jade: mounted ? { ...entry.jade } : null,
+    // 注入者（已镶玉区块展示口径）：未镶嵌 → null；已镶嵌 → 读侧反查（三态见 injectorOf）
+    injector: mounted ? await injectorOf(treeId) : null,
     logs,
     logs_total: allLogs.length,
     logs_visible: policy.logs_visible,

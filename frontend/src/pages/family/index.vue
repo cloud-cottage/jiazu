@@ -1,147 +1,125 @@
 <template>
-  <view class="container">
+  <view>
     <!-- 未登录 -->
-    <view v-if="!isAuthenticated()" class="empty-state">
-      <text class="empty-icon">🌳</text>
-      <text class="empty-text">登录后查看您加入的家族树</text>
-      <t-button theme="primary" size="small" @click="goLogin">去登录</t-button>
+    <view v-if="!isAuthenticated()" class="container">
+      <view class="empty-state">
+        <text class="empty-icon">🌳</text>
+        <text class="empty-text">登录后查看您加入的家族树</text>
+        <t-button theme="primary" size="small" @click="goLogin">去登录</t-button>
+      </view>
     </view>
 
     <!-- 已登录但未绑定 -->
-    <view v-else-if="!anchor" class="empty-state">
-      <text class="empty-icon">🏡</text>
-      <text class="empty-text">您尚未加入任何家族树</text>
-      <text class="empty-sub">加入后这里将显示您家族树的世系与档案</text>
-      <t-button theme="primary" size="small" @click="goHome">去家族列表加入</t-button>
+    <view v-else-if="!anchor" class="container">
+      <view class="empty-state">
+        <text class="empty-icon">🏡</text>
+        <text class="empty-text">您尚未加入任何家族树</text>
+        <text class="empty-sub">加入后这里将显示您家族树的世系与档案</text>
+        <t-button theme="primary" size="small" @click="goHome">去家族列表加入</t-button>
+      </view>
     </view>
 
-    <!-- 已绑定：我的家族树（卡片可点击进入家族树首页） -->
-    <template v-else>
-      <view class="hero" @click="goTreeHome">
-        <text class="hero-title">{{ hallInfo?.display_title || boundTreeId }}</text>
-        <text class="hero-hall" v-if="hallInfo?.genealogy_name">谱名：{{ hallInfo.genealogy_name }}</text>
-        <text class="hero-hall" v-if="hallInfo?.hall_name && hallInfo.hall_name !== '暂无'">堂号：{{ hallInfo.hall_name }}</text>
-        <text class="hero-origin" v-if="hallInfo?.origin">发源地：{{ hallInfo.origin }}</text>
-        <text class="hero-desc" v-if="hallInfo?.description">{{ hallInfo.description }}</text>
-        <t-tag v-if="rank" :theme="rankTheme" variant="light" size="small" class="hero-rank">
-          {{ rank.rank_label }} · {{ rank.total_generations }} 世
-        </t-tag>
-        <text class="hero-enter">进入家族树 ›</text>
+    <!--
+      已绑定：顶部双 tab 切换器 + 两面板（docs/task-center.spec.md T-1）。
+      · tab1「我的家谱」= 现有内容（好友域入口格 + <TreeHall>）—— **单真源**，
+        TreeHall 只有这一份模板（:key 绑定 tree_id + sync-nav-title=false 逐字不变）；
+      · tab2「领取今日奖励」= 任务列表（components/task-center/task-list.vue，与子包页
+        pages/task/index 同一份组件）；
+      · 切换器体例照首页 pages/index/index.vue 的 .tab-switch / .tab-btn / .tab-text（ref 驱动，**无 t-tabs**）；
+      · 两面板都用 v-show（**不卸载**）⇒ TreeHall 不因切换被卸载重建；
+      · 导航栏标题保持 pages.json 的「我的家谱」（本页不调 setNavigationBarTitle）；
+      · 未登录 / 未绑定走上面两组空态，**不显示切换器**（奖励需登录，T-2）。
+    -->
+    <view v-else class="bound-wrap">
+      <view class="fam-bar">
+        <view class="tab-switch">
+          <view
+            class="tab-btn"
+            :class="{ active: famTab === 'tree' }"
+            @click="famTab = 'tree'"
+          >
+            <text class="tab-text">我的家谱</text>
+          </view>
+          <view
+            class="tab-btn"
+            :class="{ active: famTab === 'task' }"
+            @click="openTaskTab"
+          >
+            <text class="tab-text">领取今日奖励</text>
+          </view>
+        </view>
       </view>
 
-      <!-- 我的节点（身份锚点） -->
-      <view class="anchor-card">
-        <text class="anchor-label">我的身份节点</text>
-        <text class="anchor-name">{{ anchorPersonName }}</text>
-        <text class="anchor-id">{{ anchor.person_handle }}</text>
+      <!-- 面板 1 · 我的家谱（现有内容原样；入口格仍在 TreeHall 之外、页面之内） -->
+      <view v-show="famTab === 'tree'">
+        <view class="friend-entry">
+          <view class="fe-item" @click="goFriends">
+            <text class="fe-icon">👥</text>
+            <text class="fe-text">好友列表</text>
+          </view>
+          <view class="fe-item" @click="goInviteFriend">
+            <text class="fe-icon">＋</text>
+            <text class="fe-text">邀请好友</text>
+          </view>
+        </view>
+        <TreeHall
+          :key="boundTreeId"
+          :tree-id="boundTreeId"
+          :sync-nav-title="false"
+        />
       </view>
 
-      <!-- 导航入口 -->
-      <view class="nav-grid">
-        <t-grid :columns="3" :bordered="false">
-          <t-grid-item text="世系图谱" @click="goPedigree">
-            <template #icon><text class="nav-icon">🌳</text></template>
-          </t-grid-item>
-          <t-grid-item text="文献地址" @click="goMedia">
-            <template #icon><text class="nav-icon">📜</text></template>
-          </t-grid-item>
-        </t-grid>
+      <!-- 面板 2 · 领取今日奖励（首次切入才挂载 ⇒ 首屏不因任务取数阻塞；挂载后不卸载） -->
+      <view v-show="famTab === 'task'">
+        <TaskList v-if="taskPanelOn" ref="taskPanel" />
       </view>
-
-      <!-- 统计：与首页卡片同口径（/tree/rank 的 person_count，纯血缘图） -->
-      <view class="stats" v-if="personCount !== null">
-        <text class="stat">收录人物：{{ personCount }} 人</text>
-      </view>
-
-      <view v-if="loadError" class="error">{{ loadError }}</view>
-    </template>
+    </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
 import { onShow } from '@dcloudio/uni-app';
-import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
-import { fetchMyAnchor, fetchTreeMetaRemote, fetchTreeRank, openTreeHome } from '@/business';
-import type { TreeEntry } from '@/business/types';
-import type { TreeRankInfo } from '@/business/api';
+import { isAuthenticated, getAuthToken } from '@/business/auth';
+import { fetchMyAnchor } from '@/business';
+import TreeHall from '@/components/tree-hall/tree-hall.vue';
+import TaskList from '@/components/task-center/task-list.vue';
 
 const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
-const hallInfo = ref<TreeEntry | null>(null);
-const anchorPersonName = ref('');
-const rank = ref<TreeRankInfo | null>(null);
-const loadError = ref('');
 
-/**
- * 收录人物数：与首页卡片 / 家族页统计栏同口径 —— 取 `/tree/rank` 的 `person_count`
- * （后端 lib/family-population.js 纯血缘图口径，不涉读权限裁剪）。
- * 旧口径 fetchTreeStats 走 `/people/` 的 raw.length，会被读权限裁剪，游客看到的是残缺值，故弃用。
- * 缺失或非数值 → 返回 null（模板整行不渲染），绝不出现 NaN / undefined。
- */
-const personCount = computed(() => {
-  const n = rank.value?.person_count;
-  return typeof n === 'number' && Number.isFinite(n) ? n : null;
-});
-
+/** 锚点所在家族树（空串 = 未加入，不渲染家族树内容） */
 const boundTreeId = computed(() => anchor.value?.tree_id || '');
 
-const rankTheme = computed(() => {
-  const r = rank.value;
-  if (!r) return 'default';
-  if (r.over_limit) return 'danger';
-  switch (r.rank_key) {
-    case 'family_rank': return 'default';
-    case 'clan_rank': return 'primary';
-    case 'lineage_rank': return 'warning';
-    case 'stemma_rank': return 'danger';
-    default: return 'default';
-  }
-});
+/** 已绑定分支内的双 tab 状态（默认 tab1 ⇒ 进页面先看到家族树，行为与改造前一致） */
+const famTab = ref<'tree' | 'task'>('tree');
+/** 任务面板是否已挂载（首次切入 tab2 才挂载；此后保持挂载，切回 tab1 只隐藏） */
+const taskPanelOn = ref(false);
+const taskPanel = ref<{ refresh?: () => Promise<void> } | null>(null);
 
-async function loadMyTree() {
-  loadError.value = '';
-  const token = getAuthToken();
-  if (!token) return;
-  try {
-    anchor.value = await fetchMyAnchor(token);
-  } catch (e: any) {
-    loadError.value = e.message || '加载绑定状态失败';
+/** 切到「领取今日奖励」：首次挂载（组件 onMounted 自取数），此后每次切入静默刷新当日三态 */
+function openTaskTab() {
+  famTab.value = 'task';
+  if (!taskPanelOn.value) {
+    taskPanelOn.value = true;
     return;
   }
-  if (!anchor.value) return;
+  void taskPanel.value?.refresh?.();
+}
 
-  const tid = anchor.value.tree_id;
-  // 树信息（tree-meta）
-  try {
-    const meta = await fetchTreeMetaRemote();
-    for (const [, entry] of Object.entries(meta.trees)) {
-      if (entry.tree_id === tid) {
-        hallInfo.value = entry;
-        break;
-      }
-    }
-  } catch {
-    /* 读不到则仅显示 tree_id */
+/**
+ * 解析锚点树：tab 页没有 onLoad 参数，故按登录态拉 /admin/get-anchor。
+ * 取不到（无 token / 未加入 / 请求失败）保持 null ⇒ 渲染未加入空态。
+ */
+async function loadMyTree() {
+  const token = getAuthToken();
+  if (!token) {
+    anchor.value = null;
+    return;
   }
-  // 我的节点名
   try {
-    const res = await fetch(`/api/people/${anchor.value.person_handle}?profile=all`, {
-      headers: { 'X-Tree-Id': tid },
-    });
-    if (res.ok) {
-      const p = await res.json();
-      const pn = p.primary_name || {};
-      anchorPersonName.value =
-        (pn.surname_list?.[0]?.surname || '') + (pn.first_name || '') || anchor.value.person_handle;
-    }
+    anchor.value = await fetchMyAnchor(token);
   } catch {
-    /* 节点名读不到则显示 handle */
-  }
-  // 等级（顺带给出与卡片同口径的「收录人物」数）
-  try {
-    rank.value = await fetchTreeRank(tid).catch(() => null);
-  } catch {
-    rank.value = null;
+    /* 读不到绑定状态：保持上一次结果（首次即 null ⇒ 空态），不打扰用户 */
   }
 }
 
@@ -153,31 +131,62 @@ function goHome() {
   uni.switchTab({ url: '/pages/index/index' });
 }
 
-function goPedigree() {
-  if (!boundTreeId.value) return;
-  uni.navigateTo({ url: `/pages/pedigree/index?tree_id=${boundTreeId.value}` });
+/** 好友域入口：两个页面都在**子包** `pages/friend`（主包不承载新页面） */
+function goFriends() {
+  uni.navigateTo({ url: '/pages/friend/list/index' });
 }
 
-/** 进入家族树首页（可读 uri 地址） */
-function goTreeHome() {
-  if (!boundTreeId.value) return;
-  openTreeHome(boundTreeId.value);
-}
-
-function goMedia() {
-  if (!boundTreeId.value) return;
-  uni.navigateTo({ url: `/pages/media/index?tree_id=${boundTreeId.value}` });
+function goInviteFriend() {
+  uni.navigateTo({ url: '/pages/friend/invite/index' });
 }
 
 onMounted(loadMyTree);
-// tabbar 页面切换回来时刷新（绑定状态可能变化）
+// tabbar 页面切换回来时刷新（绑定状态可能变化；换树时 :key 变化触发子树重建）
 onShow(() => {
-  if (isAuthenticated()) loadMyTree();
+  void loadMyTree();
+  // 停在「领取今日奖励」tab 上回来时，顺手刷新当日三态（静默，不闪加载态）
+  if (famTab.value === 'task') void taskPanel.value?.refresh?.();
 });
 </script>
 
 <style scoped>
 .container { padding: 20px; padding-bottom: 40px; }
+
+/* 已绑定：入口格 + 家族树（本层不设 padding，家族树内容仍按原样铺满页面） */
+.bound-wrap { display: block; }
+
+/* 双 tab 切换器（体例照首页 pages/index/index.vue 的 .sort-bar / .tab-switch / .tab-btn / .tab-text） */
+.fam-bar { display: flex; align-items: center; padding: 12px 16px 0; }
+.tab-switch {
+  display: flex; gap: 2px; margin-left: auto; flex-shrink: 0;
+  padding: 2px; background: #FFFDF8;
+  border: 1px solid #E0D5C8; border-radius: 999px;
+}
+.tab-btn {
+  display: flex; align-items: center; justify-content: center;
+  padding: 6px 14px; border-radius: 999px;
+}
+.tab-text { font-size: 13px; color: #8B4513; white-space: nowrap; }
+.tab-btn.active { background: #8B4513; }
+.tab-btn.active .tab-text { color: #fff; }
+
+/* 窄屏（≤370px）：收窄水平空间，保证两颗 tab 单行放得下 */
+@media (max-width: 370px) {
+  .tab-btn { padding: 6px 10px; }
+  .tab-text { font-size: 12px; }
+}
+
+/* 好友域入口格（页面内、<TreeHall> 之外：不复制第二份 tree-hall 模板） */
+.friend-entry { display: flex; gap: 10px; padding: 12px 16px 0; }
+.fe-item {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 10px 0; border-radius: 12px;
+  background: linear-gradient(180deg, #FFFDF8, #F8F0E5);
+  border: 1px solid #E3D3BE;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+.fe-icon { font-size: 16px; margin-right: 6px; }
+.fe-text { font-size: 13px; color: #8B4513; }
 
 /* 空态 */
 .empty-state {
@@ -186,41 +195,4 @@ onShow(() => {
 .empty-icon { font-size: 48px; display: block; }
 .empty-text { font-size: 16px; color: #3E2723; display: block; margin: 14px 0 6px; }
 .empty-sub { font-size: 12px; color: #999; display: block; margin-bottom: 18px; }
-
-/* 我的家族树 */
-.hero {
-  background: linear-gradient(135deg, #8B4513, #A66B32);
-  border-radius: 14px; padding: 20px; color: #fff; margin-bottom: 14px;
-}
-.hero-title { font-size: 20px; font-weight: bold; display: block; }
-.hero-hall { font-size: 14px; color: #FFD54F; display: block; margin-top: 8px; }
-.hero-origin { font-size: 13px; color: #E8D5C0; display: block; margin-top: 6px; }
-.hero-desc { font-size: 13px; color: #F5E6D3; display: block; margin-top: 8px; line-height: 1.6; }
-.hero-rank { margin-top: 10px; }
-.hero-enter {
-  display: inline-block;
-  margin-top: 12px;
-  padding: 6px 16px;
-  background: rgba(255,255,255,0.18);
-  border-radius: 14px;
-  font-size: 12px;
-  color: #fff;
-}
-
-.anchor-card {
-  background: #FFF8E1; border-radius: 10px; padding: 12px 14px;
-  margin-bottom: 14px;
-}
-.anchor-label { font-size: 12px; color: #8B4513; font-weight: bold; display: block; }
-.anchor-name { font-size: 16px; color: #3E2723; font-weight: bold; display: block; margin-top: 4px; }
-.anchor-id { font-size: 11px; color: #B5A594; display: block; margin-top: 2px; }
-
-.nav-grid { margin-bottom: 14px; }
-.nav-icon { font-size: 24px; }
-.nav-grid :deep(.t-grid) { border-radius: 12px; overflow: hidden; }
-
-.stats { text-align: center; padding: 14px; background: #FFF8E1; border-radius: 8px; }
-.stat { font-size: 14px; color: #5D4037; }
-
-.error { text-align: center; color: #C62828; font-size: 13px; margin-top: 14px; }
 </style>

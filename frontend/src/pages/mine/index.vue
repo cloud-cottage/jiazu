@@ -32,6 +32,32 @@
       </view>
     </view>
 
+    <!-- 行囊（游戏背包样式 · 6×6 = 36 栏位）：位于「用户卡正下方」（未登录亦同址渲染 36 空格 + 提示）；
+         占格（整堆 / 余数 / 碎片）/ 默认序 / 溢出 / 玉只计未镶嵌见 business/inventory.ts；
+         操作成功（合成 / 分解）由组件 emit('refresh') 就地重拉 summary -->
+    <asset-inventory
+      :summary="inventorySummary"
+      :error="inventoryError"
+      :loading="inventoryLoading"
+      :authenticated="isAuthenticated()"
+      :scroll-lock="scrollLock"
+      @refresh="refreshInventory"
+    />
+
+    <!-- 每日签到（独立卡 · 古风印章式）：置于行囊卡下方；**不展示碎片进度（N/9）**，签到结果只走 toast -->
+    <view v-if="isAuthenticated()" class="sign-card">
+      <view
+        class="sign-seal"
+        :class="{ 'sign-seal-done': signedToday, 'sign-seal-busy': signing }"
+        @click="doSignin"
+      >签</view>
+      <view class="sign-body">
+        <text class="sign-title">每日签到</text>
+        <text class="sign-hint">{{ signedToday ? '今日已签到' : '轻触印章 · 领 1 枚石榴籽碎片' }}</text>
+        <text v-if="signError" class="sign-error">{{ signError }}</text>
+      </view>
+    </view>
+
     <!-- 我的家族树（绑定状态 + 加入/解绑入口） -->
     <view v-if="isAuthenticated()" class="bind-card">
       <view class="bind-header">
@@ -102,7 +128,7 @@
         />
         <t-cell
           title="🧺 我的资产"
-          description="碎片 / 石榴籽 / 竹片 · 每日签到"
+          description="碎片 / 石榴籽 / 竹片 · 收支流水"
           arrow
           @click="go('/pages/assets/index')"
         />
@@ -163,6 +189,10 @@
 import { ref, computed, onMounted } from 'vue';
 import { isAuthenticated, authState, clearAuth, getAuthToken } from '@/business/auth';
 import { fetchMyAnchor, requestLeave, fetchTreeMetaRemote, fetchMessages, deleteAccount, ApiStatusError } from '@/business';
+import { fetchAssetsSummary, postSignin } from '@/business/api';
+import type { AssetsSummary } from '@/business/api';
+import { fetchFriends, scrollLockOf, type ScrollLockView } from '@/business/friends';
+import AssetInventory from '@/components/asset-inventory/asset-inventory.vue';
 
 const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
 const anchorPersonName = ref('');
@@ -175,6 +205,20 @@ const leaving = ref(false);
 
 // 站内信未读角标（GET /messages 的 unread；0 时不显示）
 const unreadCount = ref(0);
+// 行囊（GET /assets/summary）：取数在页面侧完成，组件只收 prop（数据流单一，组件内不二次请求）
+const inventorySummary = ref<AssetsSummary | null>(null);
+const inventoryError = ref('');
+const inventoryLoading = ref(false);
+/**
+ * 兰帖锁定态（好友域续约申请：本人发起、等待对方确认期间那枚兰帖被占用）——
+ * 由 `GET /friends` 的 `pending` 推导后交给行囊组件渲染；`null` = 无锁定态。
+ */
+const scrollLock = ref<ScrollLockView | null>(null);
+// 每日签到（POST /assets/signin）：独立印章卡；已签到状态以服务端 signin_date（UTC+8 自然日）为准
+const signing = ref(false);
+/** 本次会话内已签到（签到成功 / 同自然日 409 均置位） */
+const signedLocal = ref(false);
+const signError = ref('');
 // 账号注销（docs/economy-ops.spec.md §7）
 const deleting = ref(false);
 const deleteError = ref('');
@@ -195,6 +239,13 @@ const canManage = computed(() => {
 /** 消息中心入口标题：未读为 0 时不显示角标（docs/economy.spec.md 「前端落点与入口」消息行） */
 const messagesCellTitle = computed(() =>
   unreadCount.value ? `📮 消息中心（${unreadCount.value} 条未读）` : '📮 消息中心',
+);
+
+/** 当日（北京时间自然日）是否已签到：以服务端 `signin_date` 为准（本会话签到成功 / 409 亦置位） */
+const signedToday = computed(
+  () =>
+    signedLocal.value ||
+    (inventorySummary.value?.signin_date || '') === cnDateOf(Date.now()),
 );
 
 function roleName(role: string): string {
@@ -331,6 +382,85 @@ function goMessages() {
   go('/pages/assets/index');
 }
 
+/**
+ * 兰帖锁定态取数（好友域只读）：判据全在 `business/friends.ts`（`scrollLockOf`），
+ * 页面只把结果交给行囊组件。失败静默置空 ⇒ 不显示锁定文案（宁可少显示，不臆造状态）。
+ */
+async function loadFriendLock() {
+  if (!isAuthenticated()) {
+    scrollLock.value = null;
+    return;
+  }
+  try {
+    const payload = await fetchFriends();
+    scrollLock.value = scrollLockOf(payload.friends);
+  } catch {
+    scrollLock.value = null;
+  }
+}
+
+/** 行囊取数（GET /assets/summary）：失败不阻塞页面，容器内显示错误行（同消息角标口径）；
+ *  `silent = true`（页内操作就地重拉，如签到 / 合成 / 分解）时不闪「行囊加载中…」 */
+async function loadInventory(silent = false) {
+  if (!isAuthenticated()) {
+    scrollLock.value = null;
+    return;
+  }
+  void loadFriendLock(); // 锁定态与行囊同一入口刷新（不新增刷新按钮）
+  if (!silent) inventoryLoading.value = true;
+  inventoryError.value = '';
+  try {
+    inventorySummary.value = await fetchAssetsSummary();
+  } catch (e: any) {
+    inventorySummary.value = null;
+    inventoryError.value = e?.message || '加载行囊失败';
+  } finally {
+    inventoryLoading.value = false;
+  }
+}
+
+/** 行囊卡内操作（合成 / 分解）成功后的就地重拉（组件 emit('refresh')；不靠 onShow 刷新） */
+function refreshInventory() {
+  loadInventory(true);
+}
+
+/**
+ * 每日签到（POST /assets/signin）：每自然日 1 碎片（满 10 自动合成 1 颗石榴籽）。
+ * 回执口径：基础「获得石榴籽碎片 +1」；**本次触发自动合成时必须追加一句**（不得静默吞掉状态变化）；
+ * 同自然日重复 → 409「今日已签到」⇒ 按钮置灰 + 文案「今日已签到」（不弹错误）。
+ */
+async function doSignin() {
+  if (!isAuthenticated() || signedToday.value || signing.value) return;
+  signing.value = true;
+  signError.value = '';
+  try {
+    const res = await postSignin();
+    signedLocal.value = true;
+    const parts = ['获得石榴籽碎片 +1'];
+    if (res?.synthesized > 0) parts.push(`满 10 已合成 ${res.synthesized} 颗石榴籽`);
+    uni.showToast({ title: parts.join('，'), icon: 'none', duration: 3000 });
+    await loadInventory(true); // 就地更新行囊（碎片 / 籽格）
+  } catch (e: any) {
+    if (e instanceof ApiStatusError && e.status === 409) {
+      // 同自然日重复：置灰 + 文案提示，不弹错误
+      signedLocal.value = true;
+      uni.showToast({ title: '今日已签到', icon: 'none' });
+    } else {
+      signError.value = e?.message || '签到失败';
+    }
+  } finally {
+    signing.value = false;
+  }
+}
+
+/** 北京时间（UTC+8）日历日（与服务端 `signin_date` 同口径） */
+function cnDateOf(ts: number): string {
+  const d = new Date(ts + 8 * 3600 * 1000);
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${mm}-${dd}`;
+}
+
 /** 注销入口：先二次确认（明示不可恢复与挂单前置），确认后才调接口 */
 function openDeleteAccount() {
   if (deleting.value) return;
@@ -382,6 +512,7 @@ onMounted(() => {
   if (isAuthenticated()) {
     loadAnchor();
     loadUnread();
+    loadInventory();
   }
 });
 </script>
@@ -403,6 +534,33 @@ onMounted(() => {
 .user-phone { font-size: 12px; color: #E8D5C0; display: block; margin-top: 2px; }
 .role-tag { margin-top: 4px; }
 .user-action { flex-shrink: 0; }
+
+/* 每日签到（古风印章式独立卡；位于行囊卡下方；不展示碎片进度） */
+.sign-card {
+  display: flex; align-items: center; gap: 16px;
+  background: linear-gradient(180deg, #FFFDF8, #F8F0E5);
+  border: 1px solid #E3D3BE; border-radius: 14px; padding: 16px;
+  margin-bottom: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+/* 朱红方印（点击区）；已签到 → 整体置灰 */
+.sign-seal {
+  width: 56px; height: 56px; flex-shrink: 0; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(160deg, #B2352C, #8C1F18);
+  box-shadow: inset 0 0 0 2px rgba(255, 240, 220, 0.75), 0 2px 6px rgba(139, 69, 19, 0.25);
+  color: #FFF6EA; font-size: 26px; font-weight: bold; transform: rotate(-4deg);
+  user-select: none; -webkit-user-select: none;
+}
+.sign-seal-done {
+  background: linear-gradient(160deg, #C9BEB2, #A79A8C);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.6);
+  color: #F7F1E8; transform: none;
+}
+.sign-seal-busy { opacity: 0.6; }
+.sign-body { flex: 1; }
+.sign-title { font-size: 16px; font-weight: bold; color: #3E2723; letter-spacing: 2px; display: block; }
+.sign-hint { font-size: 12px; color: #B08D57; display: block; margin-top: 4px; }
+.sign-error { font-size: 12px; color: #C62828; display: block; margin-top: 4px; }
 
 /* 我的家族树 */
 .bind-card {

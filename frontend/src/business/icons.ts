@@ -9,9 +9,17 @@ export const ICON = {
   GENDER_MALE: '/static/icons/male.svg',
   GENDER_FEMALE: '/static/icons/female.svg',
   /** 石榴籽（资产计量 / 市集标价「N 籽」） */
-  SEED: '/static/icons/seed.svg',
+  SEED: '/static/icons/seed.png',
   /** 石榴籽玉（家族树凹槽镶玉 / 玉操作） */
-  JADE: '/static/icons/jade.svg',
+  JADE: '/static/icons/jade.png',
+  /** 竹简（行囊竹简格 / 资产页竹简行） */
+  BAMBOO: '/static/icons/bamboo.png',
+  /** 石榴籽碎片（签到碎片 · 行囊碎片格 / 资产页碎片行；不规则三角形） */
+  FRAGMENT: '/static/icons/fragment.png',
+  /** 兰帖（市集 / 行囊中的兰帖藏品） */
+  SCROLL: '/static/icons/scroll.png',
+  /** 兰帖碎片（兰帖碎裂产物） */
+  SCROLL_SHARD: '/static/icons/scroll-shard.png',
 } as const;
 
 /** 按资产种类取图标 URL（seed→石榴籽 / jade→石榴籽玉 / 其它→空串不显示） */

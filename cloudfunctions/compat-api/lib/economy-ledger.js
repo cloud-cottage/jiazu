@@ -4,14 +4,16 @@
  * 唯一真源：docs/economy.spec.md
  *   §3 四类资产定义 / §4-1 存储契约 / §4-6 枚举
  *   §5-1 碎片上限 9 与自动合成 / §5-2 FIFO + 整单拒绝 / §5-3 有效期 / §5-4 惰性结算 / §5-7 唯一写入路径与原子性
+ *   §15 物品域扩展（兰帖残页 `scroll_fragments` 上限 99 + 满 100 自动合成；兰帖批次 `scrolls` 恒永久；
+ *     1 枚 = 100 片 = 1 行囊格；分解 1 枚返 99 碎片，避开「分解即合成」回环）
  *
  * **已知限制（总监 2026-09-16 拍板：暂不改，部署前重构）**：资产集合当前为**全体用户共用单文档**
  * `_id='global'`，并发保护**仅进程内锁**（下方 `assetsLocks`，同实例内已串行化）——**云端多实例并发会丢更新 / 双花**。
  * 部署前**必须**重构为「**每手机号一文档 + version 乐观锁（CAS）重试**」，本限制登记见 docs/PENDING_DEPLOY.md。
  *
  * 分层（纯函数与 IO 分离，便于单测）：
- *   - 纯函数（只操作传入的 user 记录，无 IO）：sweep / addFragments / chargeLots / addLot / sumLots /
- *     recordTx / nextLotId / beijingDate / summarize / expiringItems
+ *   - 纯函数（只操作传入的 user 记录，无 IO）：sweep / addFragments / addScrollFragments / decomposeScroll /
+ *     chargeLots / addLot / sumLots / recordTx / nextLotId / beijingDate / summarize / expiringItems
  *   - IO 层：withAssets（colGet → mutator → colSet 整体回写；**同一手机号串行化**，模式同 store.js 的
  *     treeWriteLocks）/ mutateAssets / getAssets
  *
@@ -29,6 +31,22 @@ export const BAMBOO_TTL_DAYS = 365;
 export const FRAGMENT_CAP = 9;
 export const FRAGMENT_SYNTH_THRESHOLD = 10;
 export const FRAGMENT_PER_SEED = 10;
+
+// ---- §15-2 / §15-3 兰帖域常量（R-2 / R-6 / R-7 / R-9；既有常量取值一律不动） ----
+
+/** 兰帖残页上限（§15-2 · R-2） */
+export const SCROLL_FRAGMENT_CAP = 99;
+/** 兰帖残页自动合成阈值：满此数立即合成 1 枚成品兰帖、碎片取余（§15-2 / §15-4 · R-2） */
+export const SCROLL_FRAGMENT_SYNTH_THRESHOLD = 100;
+/** 每枚成品兰帖的片数（= 1 个行囊格；换算 `floor(Σqty / 本值)`，§15-3 / §15-6② · R-6 / R-11） */
+export const SCROLL_PIECES_PER_SCROLL = 100;
+/** 兰帖分解返还：1 枚 → 99 兰帖残页（留 1 片为损耗，避开「分解即合成」回环，§15-4 · R-7） */
+export const SCROLL_DECOMPOSE_REFUND = 99;
+/** 好友奖励产出（竹片 / 兰帖的批次来源新增取值，R-1 / R-3；登记要求见 §15-5②③） */
+export const SOURCE_FRIEND_REWARD = 'friend_reward';
+/** 兰帖批次来源：兰帖残页满 100 自动合成（§15-5③；与 `Tx.type` 的 `scroll_synth` 同字面） */
+export const SCROLL_SOURCE_SYNTH = 'scroll_synth';
+
 /** GET /assets/expiring 默认阈值天数（§11-11） */
 export const EXPIRING_DEFAULT_DAYS = 30;
 
@@ -66,14 +84,22 @@ export const TX_TYPES = [
   'market_sell',
   'market_buy',
   'official_buy',
+  // P4（docs/economy.spec.md §15-5⑥ · R-10）追加兰帖物品域取值（命名不与既有 19 项重名）：
+  //   `scroll_synth`（兰帖残页满 100 自动合成 1 枚成品兰帖）、
+  //   `scroll_decompose`（兰帖分解返还 99 碎片）。冲正仍只用既有 `fee_refund`。
+  'scroll_synth',
+  'scroll_decompose',
+  // 好友域（裁定 1 · `lib/friend-ops.js` 续约双边扣减）：`scroll_consume`（兰帖消耗留痕）。
+  // 冲正复用既有 `fee_refund`（唯一允许的冲正类型），本项**只此一处字面登记**（无运行期追加）。
+  'scroll_consume',
 ];
 
 export const ASSET_INSUFFICIENT = 'ASSET_INSUFFICIENT';
 
 const DAY_MS = 86400000;
-const ASSET_LABEL = { seed: '石榴籽', bamboo: '竹片', jade: '石榴籽玉' };
-const ASSET_UNIT = { seed: '颗', bamboo: '片', jade: '枚' };
-const LOT_KEY = { seed: 'seeds', bamboo: 'bamboos', jade: 'jades' };
+const ASSET_LABEL = { seed: '石榴籽', bamboo: '竹片', jade: '石榴籽玉', scroll: '兰帖' };
+const ASSET_UNIT = { seed: '颗', bamboo: '片', jade: '枚', scroll: '片' };
+const LOT_KEY = { seed: 'seeds', bamboo: 'bamboos', jade: 'jades', scroll: 'scrolls' };
 
 // ---- 基础工具 ----
 
@@ -110,9 +136,9 @@ export function beijingDate(date = new Date()) {
   return new Date(toMs(date) + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-/** 空资产记录（§4-1） */
+/** 空资产记录（§4-1 + §15-2 / §15-3 追加字段；既有字段形状一字不改） */
 function blankUser() {
-  return { fragments: 0, seeds: [], bamboos: [], jades: [], txs: [], signin_date: '' };
+  return { fragments: 0, scroll_fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], txs: [], signin_date: '' };
 }
 
 function ensureUser(doc, phone) {
@@ -122,10 +148,13 @@ function ensureUser(doc, phone) {
     doc.users[phone] = blankUser();
     return doc.users[phone];
   }
-  cur.fragments = Number(cur.fragments) || 0;
+  // 外部值收口：`Number(x) || 0` 拦不住 Infinity ⇒ 一律走 toNonNegInt（显式判有限性）
+  cur.fragments = toNonNegInt(cur.fragments);
+  cur.scroll_fragments = toNonNegInt(cur.scroll_fragments);
   cur.seeds = cur.seeds || [];
   cur.bamboos = cur.bamboos || [];
   cur.jades = cur.jades || [];
+  cur.scrolls = cur.scrolls || [];
   cur.txs = cur.txs || [];
   cur.signin_date = cur.signin_date || '';
   return cur;
@@ -157,10 +186,25 @@ export function assetInsufficient(need, current, unit = 'seed') {
 
 // ---- §4-1 批次 / 流水构造 ----
 
-/** 批次求和（籽的颗数 / 竹片的片数；忽略非法值，绝不为负） */
+/**
+ * 收口：把**外部值**收成非负整数（脏数据口径，§5-1 / §15-2 全库同一处）。
+ *
+ * **必须先判有限性**：`Math.max(0, Math.floor(Number(x) || 0))` 拦不住 `Infinity` —— 云端 / 前端随意写进来的
+ * JSON 文本 `1e999` 经 `JSON.parse` 即得 `Infinity`，`Number(Infinity) || 0` 仍是 `Infinity`、
+ * `Math.floor(Infinity)` 仍是 `Infinity`，会**原样穿过**收口表达式：下游既把它当数量累加，
+ * 又把它当循环界（`while (v >= 阈值)` 恒真）⇒ 无界循环直至堆耗尽（实测 SIGABRT / rc=-6）。
+ * 故 `Infinity` / `-Infinity` / `NaN` / 非法值一律归 0；负数归 0；有限值向下取整。
+ */
+export function toNonNegInt(x) {
+  const n = Number(x);
+  if (!Number.isFinite(n)) return 0;
+  return n > 0 ? Math.floor(n) : 0;
+}
+
+/** 批次求和（籽的颗数 / 竹片的片数；收口所有非法 / 非有限值，绝不为负） */
 export function sumLots(lots) {
   let total = 0;
-  for (const lot of lots || []) total += Math.max(0, Math.floor(Number(lot?.qty) || 0));
+  for (const lot of lots || []) total += toNonNegInt(lot?.qty);
   return total;
 }
 
@@ -168,6 +212,8 @@ export function sumLots(lots) {
  * 追加批次：seed / bamboo（qty 以「颗 / 片」计，`expires_at = now + 365 天`）、
  * jade（无 qty；**`expires_at` 必须由调用方显式传入**——`null` = 永久（仅限已判定为永久时）、
  * ISO 时刻 = 有期限。**无「默认永久」口径**（§4-1 / §11-3），缺省即抛错。
+ * scroll（qty 以**片**计；**`expires_at` 恒为 `null`（永久）且必须由调用方显式传入** ——
+ * 照玉的纪律（§15-3 / §11-3）：缺省即抛错、传有期限值亦抛错，**绝无「默认永久」**）。
  * @returns {object} 新批次
  */
 export function addLot(user, kind, qty, opts = {}) {
@@ -175,7 +221,21 @@ export function addLot(user, kind, qty, opts = {}) {
   if (!key) throw new Error(`未知资产类型：${kind}`);
   const now = opts.now ? new Date(opts.now) : new Date();
   let lot;
-  if (kind === 'jade') {
+  if (kind === 'scroll') {
+    if (opts.expires_at === undefined) {
+      throw new Error('兰帖批次必须显式指定 expires_at（恒为 null = 永久，§15-3）');
+    }
+    if (opts.expires_at !== null) {
+      throw new Error('兰帖批次 expires_at 恒为 null（永久，§15-3）：不接受有期限值');
+    }
+    lot = {
+      id: opts.id || nextLotId('sc'),
+      qty: toNonNegInt(qty),
+      expires_at: null,
+      source: opts.source || '',
+      created_at: toIso(now),
+    };
+  } else if (kind === 'jade') {
     if (opts.expires_at === undefined) {
       throw new Error('玉批次必须显式指定 expires_at（null = 永久，仅限判定为永久时使用）');
     }
@@ -189,7 +249,7 @@ export function addLot(user, kind, qty, opts = {}) {
     const ttl = opts.ttl_days ?? (kind === 'bamboo' ? BAMBOO_TTL_DAYS : SEED_TTL_DAYS);
     lot = {
       id: opts.id || nextLotId(kind === 'bamboo' ? 'bl' : 'sl'),
-      qty: Math.max(0, Math.floor(Number(qty) || 0)),
+      qty: toNonNegInt(qty),
       expires_at: opts.expires_at !== undefined ? opts.expires_at : isoPlusDays(now, ttl),
       source: opts.source || '',
       created_at: toIso(now),
@@ -223,7 +283,10 @@ export function recordTx(user, tx, now = new Date()) {
  * - 扣尽（`qty=0`）的批次就地移除，不写流水（§5-2-3）；
  * - 脏数据收口：`qty` 非法 / `NaN` / 负数一律归 0 就地剔除（同样不写流水），removed 记录与 `expire` 流水的
  *   `delta` **绝不出现 `null` / `NaN`**；
- * - 收口不变量 `0 ≤ fragments ≤ 9`（脏数据里的 ≥10 碎片顺带立即合成，不落中间态）。
+ * - 兰帖（`scrolls`，§15-3 / R-8）：**无期限 —— 无论 `now` 推多远一律不剔除**（`expires_at` 恒 `null`）；
+ *   仅做**脏数据收口**（`qty` 非法 / `NaN` / 负数 / 已扣尽一律归 0 就地剔除，**不写流水**）；
+ * - 收口不变量 `0 ≤ fragments ≤ 9` 与 `0 ≤ scroll_fragments ≤ 99`（脏数据里越界的碎片顺带立即合成，
+ *   不落中间态）。
  * @returns {Array<{asset:string, lot_id:string, qty:number, expires_at:string}>} 被剔除的批次
  */
 export function sweep(user, now = new Date()) {
@@ -233,8 +296,9 @@ export function sweep(user, now = new Date()) {
     const kept = [];
     for (const lot of user[key] || []) {
       if (!lot) continue;
-      // 脏数据收口：非法 / NaN / 负数一律归 0（就地剔除，不写流水），绝不让 NaN 流进 removed 与 expire 流水
-      const qty = Math.max(0, Math.floor(Number(lot.qty) || 0));
+      // 脏数据收口：非法 / NaN / 负数 / **非有限（Infinity，如 JSON 文本 1e999）** 一律归 0（就地剔除，
+      // 不写流水），绝不让 NaN / Infinity 流进 removed 与 expire 流水 —— 必须显式判有限性（判据 C）
+      const qty = toNonNegInt(lot.qty);
       if (qty <= 0) continue; // 已扣尽 / 脏数据 → 移除（不写流水）
       lot.qty = qty;
       if (isExpired(lot.expires_at, now)) {
@@ -256,6 +320,18 @@ export function sweep(user, now = new Date()) {
   }
   user.jades = jades;
 
+  // 兰帖（R-8）：无期限 → 不参与到期剔除；仅脏数据收口（qty 非法 / NaN / 负数 / 已扣尽 → 归 0 就地剔除，
+  // 不写流水；removed 与 expire 流水的 delta 绝不出现 null / NaN）
+  const scrolls = [];
+  for (const lot of user.scrolls || []) {
+    if (!lot) continue;
+    const qty = toNonNegInt(lot.qty);
+    if (qty <= 0) continue; // 脏数据（含 Infinity）/ 已扣尽 → 就地剔除（不写流水）
+    lot.qty = qty;
+    scrolls.push(lot); // 恒永久：不判 expires_at（R-8）
+  }
+  user.scrolls = scrolls;
+
   for (const r of removed) {
     recordTx(
       user,
@@ -268,8 +344,13 @@ export function sweep(user, now = new Date()) {
     );
   }
 
-  user.fragments = Math.max(0, Math.floor(Number(user.fragments) || 0));
+  // 标量碎片收口（判据 C）：非法 / 非有限（Infinity，如 JSON 1e999）一律归 0 —— 绝不让 Infinity 走到
+  // 下面的自动合成分支（那里以该值为循环界）
+  user.fragments = toNonNegInt(user.fragments);
   if (user.fragments >= FRAGMENT_SYNTH_THRESHOLD) addFragments(user, 0, now);
+  // 兰帖残页同口径收口（R-2 / R-13）：0 ≤ scroll_fragments ≤ 99，越界顺带立即合成，不落中间态
+  user.scroll_fragments = toNonNegInt(user.scroll_fragments);
+  if (user.scroll_fragments >= SCROLL_FRAGMENT_SYNTH_THRESHOLD) addScrollFragments(user, 0, now);
   return removed;
 }
 
@@ -282,14 +363,18 @@ export function sweep(user, now = new Date()) {
  * @returns {{fragments:number, synthesized:number, seed_lots:object[]}}
  */
 export function addFragments(user, n, now = new Date()) {
-  const add = Math.max(0, Math.floor(Number(n) || 0));
-  user.fragments = Math.max(0, Math.floor(Number(user.fragments) || 0)) + add;
+  const add = toNonNegInt(n);
+  user.fragments = toNonNegInt(user.fragments) + add;
   const seed_lots = [];
-  while (user.fragments >= FRAGMENT_SYNTH_THRESHOLD) {
-    user.fragments -= FRAGMENT_PER_SEED;
-    seed_lots.push(addLot(user, 'seed', 1, { source: 'fragment_synth', now }));
-  }
-  if (seed_lots.length > 0) {
+  // **一次性结算**（Zang 裁定 (b) / 判据 C）：合成次数 = floor(碎片 / 阈值)，**先把有界整数算出来**，再落 times 次批次；
+  // 不再「改完再重读自己」（`while (user.fragments >= 阈值)` 在字段为 Infinity 时恒真 ⇒ 无界循环直至堆耗尽）。
+  // 上面两句已把 user.fragments 收口为**有限非负整数** ⇒ times 必为有限整数，迭代次数有界。
+  const times = Math.floor(user.fragments / FRAGMENT_SYNTH_THRESHOLD);
+  if (times > 0) {
+    user.fragments -= times * FRAGMENT_PER_SEED;
+    for (let i = 0; i < times; i += 1) {
+      seed_lots.push(addLot(user, 'seed', 1, { source: 'fragment_synth', now }));
+    }
     recordTx(
       user,
       {
@@ -303,6 +388,86 @@ export function addFragments(user, n, now = new Date()) {
   return { fragments: user.fragments, synthesized: seed_lots.length, seed_lots };
 }
 
+// ---- §15-2 / §15-4 兰帖残页累加 · 自动合成 · 分解（R-2 / R-6 / R-7 / R-13） ----
+
+/**
+ * 兰帖残页累加 + 满 100 立即合成（R-2 / R-13，与 `addFragments` 逐条同构）：
+ * `scroll_fragments += n` → 每满 100 立即合成 1 枚成品兰帖（每枚一个新 ScrollLot：100 片、
+ * `expires_at = null`（永久，**显式传入**）、`source = 'scroll_synth'`），碎片取余；合成写一条
+ * `scroll_synth` 流水（`delta` 含 `scroll_fragments` 与 `scrolls` **两个键**的变动量）。
+ * 累加与合成在同一份 user 记录内**一次完成** —— **不存在「碎片 100 个、兰帖未生成」的中间态**。
+ * @returns {{scroll_fragments:number, synthesized:number, scroll_lots:object[]}}
+ */
+export function addScrollFragments(user, n, now = new Date()) {
+  const add = toNonNegInt(n);
+  user.scroll_fragments = toNonNegInt(user.scroll_fragments) + add;
+  const scroll_lots = [];
+  // **一次性结算**（同 addFragments，Zang 裁定 (b)）：times = floor(碎片 / 100) 先算后落，循环次数由有界整数
+  // 决定；不再 `while (user.scroll_fragments >= 阈值)` 重读自己（Infinity 时该条件恒真 ⇒ 无界循环）。
+  const times = Math.floor(user.scroll_fragments / SCROLL_FRAGMENT_SYNTH_THRESHOLD);
+  if (times > 0) {
+    user.scroll_fragments -= times * SCROLL_FRAGMENT_SYNTH_THRESHOLD;
+    for (let i = 0; i < times; i += 1) {
+      scroll_lots.push(
+        addLot(user, 'scroll', SCROLL_PIECES_PER_SCROLL, {
+          source: SCROLL_SOURCE_SYNTH,
+          expires_at: null, // §15-3：永久必须显式传入，绝无「默认永久」
+          now,
+        }),
+      );
+    }
+    recordTx(
+      user,
+      {
+        type: 'scroll_synth',
+        delta: {
+          scroll_fragments: -scroll_lots.length * SCROLL_FRAGMENT_SYNTH_THRESHOLD,
+          scrolls: scroll_lots.length * SCROLL_PIECES_PER_SCROLL,
+        },
+        desc: `兰帖残页满 ${SCROLL_FRAGMENT_SYNTH_THRESHOLD} 自动合成 ${scroll_lots.length} 枚兰帖`,
+      },
+      now,
+    );
+  }
+  return { scroll_fragments: user.scroll_fragments, synthesized: scroll_lots.length, scroll_lots };
+}
+
+/**
+ * 兰帖分解（R-7）：`n` 枚成品兰帖（每枚 = 100 片）→ 返还 `n × 99` 兰帖残页（每枚留 1 片为损耗）。
+ * - **为什么返 99 而不是 100（R-7 理由）**：返还 100 片会在返还瞬间触发「满 100 自动合成」⇒ 分解成为
+ *   **空操作**（分完又合回去）；返 99 片即可避开「分解即合成」回环。**与玉的免费无损耗口径并存、不互套**
+ *   （玉产出籽批次不触发自动合成，兰帖产出碎片标量会触发）。
+ * - 唯一删除条件 = **数量不足**：`Σ scrolls[].qty < n × 100` → **409 整单拒绝**（一片不扣、不返还、无流水）。
+ * - 扣减走 `chargeLots`（`qty=0` 的批次留待下一次 `sweep` 移除，§5-2-3）；兰帖批次恒永久 → 排序全为 `null`。
+ * @returns {{decomposed:number, pieces:number, refunded:number, scroll_fragments:number, synthesized:number, taken:object[]}}
+ */
+export function decomposeScroll(user, n = 1, now = new Date()) {
+  const count = toNonNegInt(n); // 外部值收口（判据 C）：非有限 / 非法一律归 0
+  const pieces = count * SCROLL_PIECES_PER_SCROLL;
+  const charged = chargeLots(user.scrolls || [], pieces, 'scroll'); // 不足 → 抛 409，一单不拆
+  const refunded = count * SCROLL_DECOMPOSE_REFUND;
+  if (count > 0) {
+    recordTx(
+      user,
+      {
+        type: 'scroll_decompose',
+        delta: { scroll_fragments: refunded, scrolls: -pieces },
+        desc: `分解 ${count} 枚兰帖（${pieces} 片），返还 ${refunded} 个兰帖残页（损耗 ${count} 片）`,
+      },
+      now,
+    );
+  }
+  const after = addScrollFragments(user, refunded, now);
+  return {
+    decomposed: count,
+    pieces,
+    refunded,
+    scroll_fragments: after.scroll_fragments,
+    synthesized: after.synthesized,
+    taken: charged.taken,
+  };
+}
+
 // ---- §5-2 FIFO 扣减 + 整单拒绝 ----
 
 /**
@@ -313,7 +478,7 @@ export function addFragments(user, n, now = new Date()) {
  */
 export function chargeLots(lots, n, unit = 'seed') {
   const list = lots || [];
-  const need = Math.max(0, Math.floor(Number(n) || 0));
+  const need = toNonNegInt(n); // 外部值收口（判据 C）：非有限一律归 0 ⇒ 不会凭 Infinity 触发扣减
   const current = sumLots(list);
   if (need === 0) return { ok: true, taken: [], need, current };
   if (current < need) throw assetInsufficient(need, current, unit);
@@ -321,7 +486,7 @@ export function chargeLots(lots, n, unit = 'seed') {
   let left = need;
   for (const lot of [...list].sort(compareLotByExpiry)) {
     if (left <= 0) break;
-    const take = Math.min(Math.max(0, Math.floor(Number(lot.qty) || 0)), left);
+    const take = Math.min(toNonNegInt(lot.qty), left);
     if (take <= 0) continue;
     lot.qty -= take;
     left -= take;
@@ -343,13 +508,15 @@ export function expiringItems(user, now = new Date(), days = EXPIRING_DEFAULT_DA
   const items = [];
   for (const asset of ['seed', 'bamboo']) {
     for (const lot of user[LOT_KEY[asset]] || []) {
-      if (!lot || !lot.expires_at || Number(lot.qty) <= 0) continue;
+      // 收口先于一切判断：qty 为 Infinity / NaN / 非法一律当 0（绝不进 expiring 投影）
+      const qty = toNonNegInt(lot?.qty);
+      if (!lot || !lot.expires_at || qty <= 0) continue;
       const expMs = Date.parse(lot.expires_at);
       if (!Number.isFinite(expMs) || expMs > limit) continue;
       items.push({
         asset,
         lot_id: lot.id,
-        qty: Math.floor(Number(lot.qty)),
+        qty,
         expires_at: lot.expires_at,
         days_left: Math.max(0, Math.ceil((expMs - nowMs) / DAY_MS)),
       });
@@ -358,12 +525,32 @@ export function expiringItems(user, now = new Date(), days = EXPIRING_DEFAULT_DA
   return items.sort((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
 }
 
-/** 资产总览（§6-1 GET /assets/summary）：碎片（含上限）/ 籽（总量 + 批次数 + 明细）/ 竹片（总片数 + 折算束数 + 批次数）/ 玉（枚数 + 每枚 expires_at 或 null）/ 最近 50 条流水 */
-export function summarize(user, now = new Date()) {
+/**
+ * 资产总览（§6-1 `GET /assets/summary` 的用户面口径；后台运维面见 `opts.include_mounted`）。
+ *
+ * 玉归属（口径 v6）：
+ * - **用户面（缺省）**：**已镶嵌玉不再属于个人**（`mounted_tree_id` 非空 = 归属家族树、凹槽永久占用）
+ *   ⇒ 只出未镶嵌玉，`jades_total` 同口径。原始记录保留、不迁移、不删除——`jiazu_assets` 里那条带
+ *   `mounted_tree_id` 的玉记录原样留着，供 `/spirit` 注入者反查与凹槽去向追溯。
+ * - **后台运维面（`{ include_mounted: true }`，仅 `GET /admin/assets/user`）**：出**全量原始记录**
+ *   （含已镶嵌、保留 `mounted_tree_id`），后台要能看到「玉去哪了、镶进了哪棵树」。
+ *
+ * §15 兰帖域新增出参（R-11，**只增字段、既有出参字段名与形状一字不改**）：`scroll_fragments`、
+ * `scroll_fragment_cap`、`scrolls_total_pieces`、`scrolls_item_count`（向下取整整格数）、`scroll_lot_count`、
+ * `scroll_lots`（原始批次数组，不经筛选、不增删字段）。
+ *
+ * @param {object} user
+ * @param {Date} [now]
+ * @param {{include_mounted?:boolean}} [opts]
+ */
+export function summarize(user, now = new Date(), opts = {}) {
   const seeds_total = sumLots(user.seeds);
   const bamboos_total_pieces = sumLots(user.bamboos);
+  const scroll_lots = user.scrolls || [];
+  const scrolls_total_pieces = sumLots(scroll_lots);
+  const jades = (user.jades || []).filter((j) => j && (opts.include_mounted || !j.mounted_tree_id));
   return {
-    fragments: Math.max(0, Math.floor(Number(user.fragments) || 0)),
+    fragments: toNonNegInt(user.fragments),
     fragment_cap: FRAGMENT_CAP,
     seeds_total,
     seed_lot_count: (user.seeds || []).length,
@@ -372,8 +559,16 @@ export function summarize(user, now = new Date()) {
     bamboo_bundles: Math.floor(bamboos_total_pieces / 100),
     bamboo_lot_count: (user.bamboos || []).length,
     bamboo_lots: user.bamboos || [],
-    jades_total: (user.jades || []).length,
-    jades: (user.jades || []).map((j) => ({ ...j, permanent: j.expires_at === null })),
+    // ---- §15-2 / §15-3 / §15-6② 兰帖域新增出参（R-11；既有出参字段名与形状一字未改） ----
+    scroll_fragments: toNonNegInt(user.scroll_fragments),
+    scroll_fragment_cap: SCROLL_FRAGMENT_CAP,
+    scrolls_total_pieces,
+    // 行囊整格数 = 向下取整（每 100 片 = 1 格；余数不占整格，展示层单行呈现）
+    scrolls_item_count: Math.floor(scrolls_total_pieces / SCROLL_PIECES_PER_SCROLL),
+    scroll_lot_count: scroll_lots.length,
+    scroll_lots,
+    jades_total: jades.length,
+    jades: jades.map((j) => ({ ...j, permanent: j.expires_at === null })),
     signin_date: user.signin_date || '',
     expiring: expiringItems(user, now),
     txs: (user.txs || []).slice(-50).reverse(),

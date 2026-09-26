@@ -16,6 +16,7 @@
  *
  * 单价一览（片 = 竹片，唯一例外是建树的「颗」）：
  *   人物内容修改 1 片 / 节点；同树改父 1 片 / 节点；跨树迁移 **9 片 / 次（与后代人数无关）**；
+ *   调整同胞排行 1 片 / 次（与被动移位的兄弟数量无关，pin 被拖动的那个子女节点）；
  *   删除节点 3 片 / 节点（subtree = 3N，promote = 3）；建树 9颗石榴籽；新增 / 关系类 = 0 片（不接闸门）。
  */
 import {
@@ -28,6 +29,7 @@ import {
   sumLots,
   summarize,
   sweep,
+  toNonNegInt,
   withAssets,
 } from './economy-ledger.js';
 // 跨树登记字段清单的**唯一真源**在 lib/tree-write.js（写路径的属性分流也用它）；
@@ -47,6 +49,9 @@ export const FEE = {
   reparent_same_tree: 1, // POST /admin/reparent 不带 new_parent_tree_id：1 片 / 节点
   reparent_cross_tree: 9, // 带 new_parent_tree_id：9 片 / 次（**绝不是 9 × 人数**）
   delete_node_per_person: 3, // 删除节点：3 片 / 节点（subtree = 3N；promote = 1 × 3）
+  // 调整同胞排行（POST /admin/sibling-reorder）：1 片 / 次，pin 本节点
+  // —— 一次「确定保存」= 一次计费，与被动移位的兄弟数量无关（排行真源 = family.child_handles[] 位次）
+  sibling_reorder: 1,
   tree_create_seeds: 9, // 建树：9颗石榴籽（非竹片）
   // 立支（POST /admin/establish-branch）：9999 颗完整石榴籽 / 次（docs/branch-clan-ops.spec.md §3-4 / §6-1-7）；
   // 默认值唯一真源 —— 运行时可被 `jiazu_wallets.config.branch_fee_seeds` 覆盖（见 lib/wallet.js getBranchFeeSeeds）
@@ -67,6 +72,8 @@ export const TX_TYPE_OF_OP = {
   reparent_same_tree: 'edit_fee',
   reparent_cross_tree: 'move_fee',
   delete_node: 'delete_fee',
+  // 调整同胞排行：**复用既有枚举 `edit_fee`**（人物内容修改一类，docs/economy.spec.md §4-6 的 19 项，不自造类型）
+  sibling_reorder: 'edit_fee',
   tree_create: 'tree_create',
   // 立支同样产出一棵新树、扣籽 → **复用既有枚举 `tree_create`**（docs/branch-clan-ops.spec.md §6-1-7 / §13-8）
   establish_branch: 'tree_create',
@@ -76,12 +83,12 @@ export const TX_TYPE_OF_OP = {
 const ASSET_KEY = { bamboos: 'bamboos', seeds: 'seeds' };
 const LOT_KIND = { bamboos: 'bamboo', seeds: 'seed' };
 
-const norm = (n) => Math.max(0, Math.floor(Number(n) || 0));
+const norm = (n) => toNonNegInt(n);
 
 /**
  * 操作 → 扣费判定（**纯函数**，无 IO，便于单测穷举矩阵）。
  *
- * @param {'person_update'|'reparent'|'delete_node'|'create_tree'} op
+ * @param {'person_update'|'reparent'|'sibling_reorder'|'delete_node'|'create_tree'} op
  * @param {{cross_tree?:boolean, dry_run?:boolean, mode?:string, people_count?:number, scope_changed?:boolean}} [ctx]
  * @returns {{unit:'bamboos'|'seeds', pieces:number, tx_type:string, free?:boolean, reason?:string}}
  */
@@ -94,6 +101,9 @@ export function feeOf(op, ctx = {}) {
       return c.cross_tree
         ? { unit: 'bamboos', pieces: FEE.reparent_cross_tree, tx_type: TX_TYPE_OF_OP.reparent_cross_tree, cross_tree: true }
         : { unit: 'bamboos', pieces: FEE.reparent_same_tree, tx_type: TX_TYPE_OF_OP.reparent_same_tree };
+    // 调整同胞排行（POST /admin/sibling-reorder）：1 片 / 次（与被动移位的兄弟数量无关）
+    case 'sibling_reorder':
+      return { unit: 'bamboos', pieces: FEE.sibling_reorder, tx_type: TX_TYPE_OF_OP.sibling_reorder };
     case 'delete_node': {
       // subtree：每条节点独立计费（3 × N，不合并、不折扣）；promote：仅本节点 = 3 片
       const people = c.mode === 'promote' ? 1 : norm(c.people_count);
@@ -391,6 +401,9 @@ function defaultDesc(unit, n, ref) {
       return `跨树迁移${who ? ` ${who}` : ''}（扣 ${unitCn}）`;
     case 'delete_node':
       return `删除节点${who ? ` ${who}` : ''}${ref.people_count > 1 ? ` 等 ${ref.people_count} 人` : ''}（扣 ${unitCn}）`;
+    // 调整同胞排行：字面口径「调整排行：<姓名> 第 <位次> 位」（路由/写路径显式传 desc，此处为兜底）
+    case 'sibling_reorder':
+      return `调整排行：${who}${ref.position ? ` 第 ${ref.position} 位` : ''}（扣 ${unitCn}）`;
     case 'tree_create':
       return `新建家族树${ref.tree_id ? ` ${ref.tree_id}` : ''}（扣 ${unitCn}）`;
     case 'establish_branch':

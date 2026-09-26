@@ -38,6 +38,10 @@
 > 云函数 `compat-api` **新增结构化字段 `origin_code`**（`PUT /tree-meta` 白名单 + 建树 / 建祖谱落库 + 立支复制 / 拆树置空共 5 处，**必须重打包**，否则云端不认 `origin_code` 且不会做「未知码 → 400」）；
 > **云端数据：有变更**（**纯数据批次**：`config/tree-meta.json` 存量 `origin` → `origin_code` + 展示串重算，§8 逐树映射 17 行，含 md5 前后登记位）；**CloudBase 集合：无变化**（§24-2「无」）；
 > 前端 H5 / 小程序**必须重打包**（建树弹窗 + 家族树编辑 + 祖谱编辑三处自由文本 → 三级级联菜单；数据集随包发布、**零请求**）。
+> **2026-09-23 追加（本批 → §31）**：**子女标签可拖曳排序（排行）**（规格 `docs/sibling-order.spec.md`；计费口径 = `docs/economy-fee.spec.md` §3-1 #36 / **§15**）——
+> 云函数 `compat-api` **新增 1 条写路由** `POST /admin/sibling-reorder`（**必须重打包，否则云端 404**）；前端 H5 / 小程序**必须重打包**（人物档案子女区新增「调整排行」入口 + 新建次级模态框 `components/sibling-order-modal/`）；
+> **CloudBase 集合与云端数据：本轮无**（不新建集合、`COLLECTIONS` 保持 **12 项**；`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰）。
+> 本批状态：**实现已落盘（Kong 实测 · 工作区在途未提交）· 待 Neng 终校**；`npm test` 当前 **478 / 476 / 2（红）**（2 红 = 预存在的 `mirror-count` 真源漂移，见 §31-5）⇒ **本清单只登记上云动作，不表示已通过 / 已部署**。
 
 ---
 
@@ -3592,3 +3596,760 @@ npm test 2>&1 | tail -8        # v1.1 复测（18:22:53 CST）：454 tests / 447
 | **E2** | 证据由 `PersonDetailModal.open(treeId, handle)`（**公开 API**）取得、**非真实鼠标点击** = **次优取证路径，已获接受**，但**必须写明理据**，避免后续会话误读为「正常路径可达」 | 同上（本节**如实登记**：Jing 本轮**尝试**真实点击流复现**未成** —— 浏览器后端被 `chrome … profile's Login Data … write lock` 拦下 ⇒ **未补证**） |
 
 **（k）本节边界（Jing · 2026-09-20 21:31–21:36 CST 实测）**：本轮**只改 `docs/**`**（本册 + `docs/founder-attach.spec.md` + `docs/clan-tree.spec.md` + `docs/branch-clan-ops.spec.md`）；**未跑迁移脚本（含 dry-run / 二次 `--apply`）、未改代码、未重传、未部署、未打包、未提交、未尝试写 `AGENTS.md`**。真源现值 = 上表 (b)（`config/tree-meta.json` = **`13616a89db2782256c3f33260aa32470`**、`migrate-output/**` = **317 文件**）；**历史行一律原文保留**（新口径 = 追加行 + 「已作废 / 已取代」标注）。**R7 的云端动作（重传 / 删旧键）与本批「云函数重打包 / 前端 H5+小程序重打」四项判据（§29-0 / §29-6）均仍未执行。**
+
+---
+
+## 30. 本批：家族树树图不绘制「外树子女镜像」（**纯前端批次**）
+
+> 规格 = `docs/marriage.spec.md` **§9-7-11**（新口径 v2：R1 显示口径 / R2 例外 / R3 数据零写入 / R4 后端零改动 / R5 回归面 + 事实基线）+ `docs/home-sort-search.spec.md` **§10-7 三** 追加行（v2）；口径拍板 = **Kevin 2026-09-22**。
+> **本批性质**：**纯前端改动** —— **无新增云函数路由、无新增集合、无真源数据变更**（三项均为「本轮无」，见 §30-0 第 1–3 行）。
+> **实施状态：前端实现「由 Kong 实施中 / 由 Neng 质检」**（**不表示已实现 / 已通过 / 已部署**）；本清单只登记**上云动作**。
+> **文档侧登记（Jing 2026-09-22）**：`AGENTS.md` **§7** 的本批「口径指路」行**文本已备、写入被 protected-file 审批拦下**（未获同意 ⇒ 该文件本轮未被修改）→ 待 Kevin 批准后由前台 / Zang 写入；**不影响本节的部署登记**。
+
+### 30-0 总览
+
+| # | 目标 | 动作 | 阻塞 |
+|---|---|---|---|
+| 1 | 云函数 `compat-api` | **本轮无**（`cloudfunctions/compat-api/**` 本批 0 改动）⇒ **无 esbuild 重打包项、无 `tcb fn deploy` 项** | — |
+| 2 | CloudBase 集合 | **本轮无**（不新建集合、不改 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS`，保持 §11-2 的 **12 项**） | — |
+| 3 | 云端数据 | **本轮无**（`migrate-output/**` 与 `config/tree-meta.json` 本批未被触碰；不重跑迁移上传、无手工删键、不动 `jiazu_id_seq`） | — |
+| 4 | 前端 H5 / 小程序 | **必须重打包 + hosting 部署**（`build:h5` 带 `VITE_API_BASE`）；小程序**同批重打**并上传 | 需确认 hosting 目标与云函数 HTTP 域名 |
+
+### 30-1 前端产物（**必须重打包：H5 + 小程序**）
+
+**为什么需要**
+
+- 本批改的是**家族树树图绘制口径**（`docs/marriage.spec.md` §9-7-11 R1）：**家族树**（`kind === 'family'`，含 `kind` 缺省）内满足 `String(p.external_mirror) === 'true'` **且** `p.external_link_type === 'child'` 的节点**连同其子树整支不绘制**；不重打包则线上仍是旧绘制行为（`shen_27784_01` 树上仍绘出 `I000286`、`gu_39038_01` 树上仍绘出 `I000293` / `I000294`）。
+- **世本 / 祖谱不受影响**（R2）：顶端链镜像（`chain`）/ 始祖镜像（`founder`）/ 祖谱登记镜像照旧绘制。
+- **数据侧零写入**（R3）：镜像节点必须保留（`docs/marriage.spec.md` §9-7-8 红线，写路径依赖镜像 handle）—— 本批**不含**任何删改节点动作。
+
+**具体命令**
+
+```bash
+cd frontend
+VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5      # 产物 frontend/dist/build/h5
+# → tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c
+
+npm run build:mp-weixin                                        # 产物交微信开发者工具上传
+```
+
+**本地验证证据**
+
+- ⚠️ **本批实施 / 质检结论尚未产生**（状态 = **由 Kong 实施中 / 由 Neng 质检**）⇒ 本清单**不预填**任何「已通过」结论；`npx vue-tsc --noEmit` / `npm test` / 真机树图读数**一律由 Neng 质检收口后回写**（本清单**不推算、不预填**）。
+- 可引用的**改动前基线（Zang 2026-09-22 实测 · 数值照抄，不得改写）**：`shen_27784_01` 森林 **1 根 / 9 节点**（含镜像 `I000286`）；`gu_39038_01` 森林 **22 节点**（含镜像 `I000293` / `I000294`）；全站同类节点 **3 个 / 2 棵树**。真源 md5：`migrate-output/trees/shen_27784_01.json` = **`407445ab3a507b1f591faf005dfb6ae2`**（**Jing 2026-09-22 13:19:20 CST 只读复测同值**）。
+  - ⚠️ Zang 登记的 `config/tree-meta.json` 基线 **`59e0271f443d4ae682cc939a064fadff`** 与 **Jing 现测 `5688ce406a59b3ca27b9a22ebd3ddb14`**、**`git show HEAD:` 值 `13616a89db2782256c3f33260aa32470`** **三值互不相等**（该文件当前为工作区在途改动 = Kevin 自己的在途工作，本批未触碰）⇒ **该值不作本批任何判据**，仅如实登记。
+- 落点（**Jing 2026-09-22 只读观察，不代表实现完成**）：`frontend/src/business/pedigree.ts` 现盘已含 **`excludeChildMirrors`** 选项（`:18-24` 判据 `isChildMirrorPerson`；`:72-73` 语义注释「该节点连同其子树整支不进入森林。缺省 false = 既有行为逐字不变」）；组件侧 `frontend/src/components/tree-pedigree/tree-pedigree.vue` 的 `hideExternalMarkers` prop（`:114` / `:137` / `:176`）**语义不变**（R5）。**最终落点与行号以 Kong 交付 / Neng 质检版本为准。**
+
+**阻塞点**：H5 需确认 hosting 目标目录与云函数 HTTP 域名；小程序需开发者工具上传权限（同 §4 / §18-1）。
+
+### 30-2 云端动作：**本轮无**
+
+- **无云函数项**：`cloudfunctions/compat-api/**` 本批 0 改动 ⇒ **不重打包、不 `tcb fn deploy`**（**本批没有云函数重打包项**）。
+- **无集合项**：`COLLECTIONS` 保持 §11-2 的 **12 项**。
+- **无数据项**：`migrate-output/**`、`config/tree-meta.json`、`jiazu_id_seq` 均不动（§9-7-11 R3：不删不改真源节点、镜像必须保留）。
+- 本节**只登记前端发布**（§30-1）：`build:h5` + `tcb hosting deploy` / `build:mp-weixin` 上传。
+
+### 30-3 部署后冒烟验证（按序做；⚠️ 均为**待执行**步骤，结论由 Neng 收口后回写，本清单不预填）
+
+1. **家族树（受影响树）**：`shen_27784_01` 树图**不再绘制** `I000286`；`gu_39038_01` 树图**不再绘制** `I000293` / `I000294`（对照 §30-1 的改动前基线 = 9 节点 / 22 节点）。
+2. **世本 / 祖谱不受影响**：`zhonghua`（世本）与祖谱（`kind === 'clan'`，如 `ji_23395` / `gu_39038`）内的**顶端链镜像**（`chain`）、**始祖镜像**（`founder`）、**祖谱登记镜像**照旧绘制。
+3. **回归面（逐项不变，§9-7-11 R5）**：卡片角标档位、统计栏、**点卡片开真身档案**（§9-7-2）、树内搜索、全站搜索、**管理选人列表**（§9-7-8 红线：仍可见镜像本身、未被解析到真身）、多支始祖列表、`hideExternalMarkers` 开关语义。
+4. **真源零写入**：上云前后 `migrate-output/trees/shen_27784_01.json` md5 **应仍为** `407445ab3a507b1f591faf005dfb6ae2`（本批只改前端绘制，不产生数据动作）。
+
+### 30-4 明确**不需要**上云的东西
+
+- 本批**无新增测试文件 / 无新增脚本 / 无云函数改动** ⇒ **无 esbuild 重打包项、无 `tcb fn deploy` 项**；
+- 规格与质检文档（`docs/marriage.spec.md` **§9-7-11**、`docs/home-sort-search.spec.md` **§10-7 三** 追加行、本册 **§30**）：不进产物、不影响云端；
+- `/tmp` 下的副本与取证文件：临时产物。
+
+---
+
+## 31. 本批：**子女标签可拖曳排序（排行）**（**代码批次：云函数新增 1 条路由 + 前端新交互** · **集合与云端数据本轮无**）（Jing 制度员 · 2026-09-23 13:30 CST · **只追加 · 不改 §0–§30 历史行**）
+
+> **性质**：本节为**部署台账登记**（**只追加**）—— **未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传**（本批仅新增 / 追加文档：`docs/sibling-order.spec.md`（新建）、`docs/economy-fee.spec.md` **§3-1 #36 + 头部对齐表新增行 + §12-1 新增行 + §15**、`AGENTS.md` **§0 / §7 / §9** 追加行、本册 **§31**）。
+> **裁定来源**：**Zang 裁定 v1（2026-09-23）**；口径真源 = `docs/sibling-order.spec.md`（业务域规格）+ `docs/economy-fee.spec.md` **§3-1 #36 / §15**（计费与闸门）。
+> **实现状态（如实登记）**：**Kong 已实测落盘 · 工作区在途未提交**（`cloudfunctions/compat-api/{index.js,lib/economy-fee.js,lib/tree-write.js,lib/sibling-reorder.test.js}` + `frontend/src/{business/api.ts,business/index.ts,business/types.ts,components/person-archive/person-archive.vue}` + 新建 `frontend/src/components/sibling-order-modal/`）；**云函数产物未重打包**（§31-1）；**`npm test` 当前为红**（**478 / 476 / 2**，2 红 = 预存在的真源漂移，§31-5）⇒ **不得**据本节认为已实现完毕 / 已验证 / 已部署。
+> **时点**：`date` = **2026-09-23 13:30:46 CST**；本节读数均为**本节实测**（复现命令见 §31-1 / §31-5）。**编号接 §30**。
+
+### 31-0 总览
+
+| # | 目标 | 动作 | 阻塞 | 备注（本节实测） |
+|---|---|---|---|---|
+| 1 | 云函数 **`compat-api`** | **重打包 + `tcb fn deploy`**（**必须**） | 先决：`npm test` 转绿（§31-5）+ 工作区冻结 | 新增 1 条路由 `POST /admin/sibling-reorder`；**产物当前未重打包**（判据串命中 **0**） |
+| 2 | **前端 H5 + 小程序** | **重打 + hosting / 开发者工具上传**（**必须**） | hosting 目标 + 云函数 HTTP 域名 | 现有产物均**早于**本批实现（H5 `2026-09-21 07:23` / 小程序 `2026-09-20 13:21`） |
+| 3 | CloudBase **集合** | **本轮无**（不新建集合；`COLLECTIONS` 保持 **12 项**） | — | 本路由扣费写**既有** `jiazu_assets` |
+| 4 | **云端数据（树 JSON / 详情 / tree-meta）** | **本轮无** | — | `migrate-output/**` 与 `config/tree-meta.json` 本批 0 改动 ⇒ **无重传、无手工删键、不动 `jiazu_id_seq`** |
+
+### 31-1 必登 ①：云函数 `compat-api` **必须重打包 + `tcb fn deploy`**
+
+| 项 | 实测（本节 2026-09-23 13:30 CST） |
+|---|---|
+| 产物 | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B** · mtime **2026-09-19 12:50:59** · md5 **`d61a8aebfb3f3095baae4e1e731fd675`**（与 §24-1 / §25-10 / §26-1 / **§29-1** 同值） |
+| 判定 | ❌ **未重打包** |
+| **判据 A（`grep -c` ≥1 · 首选 · 逐字）** | 在 **`cloudfunctions/deploy/compat-api/index.js`** 中：`grep -c 'sibling-reorder'` → **期望 ≥1**（证明本批已进产物）；**本节实测 = `0`** ⇒ 未重打包 |
+| 判据 B（辅助 · 下划线形态） | 同产物 `grep -c 'sibling_reorder'` → **期望 ≥1**；**本节实测 = `0`** |
+| 源码侧对照（证明字面已实现 · 本节实测命中数） | `sibling-reorder`：`cloudfunctions/compat-api/index.js` **2** · `lib/economy-fee.js` **2** · `lib/tree-write.js` **1**；`sibling_reorder`：`index.js` **1** · `lib/economy-fee.js` **6** · `lib/tree-write.js` **1** |
+| 打包命令 | 沿用**仓库既有**打包命令（同 §24-1 / §25-1 / §26-1 / §29-1 的同一份，本册**不新造**）；产物路径 = `cloudfunctions/deploy/compat-api/index.js`；`cloudfunctions/deploy/**` 是**产物、不是编辑对象** |
+| 部署命令 | `tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c`（沿用既有批次口径） |
+| 部署后判定 | 再跑判据 A/B：**两者均 ≥1** 且产物 md5 **≠** `d61a8aebfb3f3095baae4e1e731fd675`、mtime > **2026-09-23 13:30** |
+| 附带核对（非本批判据，防误判） | 若产物仍为 `d61a8aeb…`，则**本批与 §23 / §24 / §25 / §26 / §29 的口径同时落后**（该产物内 `personEditLockMessage` / `residence_places` 等 §29 判据串亦为 0） |
+
+```bash
+cd /Users/kevin/bistro/jiazu
+grep -c 'sibling-reorder' cloudfunctions/deploy/compat-api/index.js   # 期望 ≥1；本节实测 0
+grep -c 'sibling_reorder' cloudfunctions/deploy/compat-api/index.js   # 期望 ≥1；本节实测 0
+wc -c < cloudfunctions/deploy/compat-api/index.js; md5 -q cloudfunctions/deploy/compat-api/index.js
+```
+
+### 31-2 必登 ②：前端 **H5 + 小程序重打**
+
+| 项 | 实测（本节） |
+|---|---|
+| H5 产物 | `frontend/dist/build/h5/index.html` mtime **2026-09-21 07:23:37**（目录 mtime 同） |
+| 小程序产物 | `frontend/dist/build/mp-weixin/app.json` mtime **2026-09-20 13:21:14** |
+| 判定 | ❌ **均早于本批实现**（本批前端改动 = 人物档案子女区「调整排行」入口 + 新建 `frontend/src/components/sibling-order-modal/sibling-order-modal.vue`）⇒ **必须重打**，否则线上无该入口 |
+| 命令 | `cd frontend && VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5` → `tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c`；`npm run build:mp-weixin` + 微信开发者工具上传 |
+| 判据（候选） | 产物内命中本批新增字面 ≥1（示例字符串见 §31-4 第 8 条的可观察行为）；或产物 mtime > 本节时点。**本册不预设前端产物字面**（以 Kong 交付 / Neng 质检版本为准） |
+
+### 31-3 云端动作：**集合与数据本轮无**（**纯数据面无**）
+
+- **无集合项**：不新建集合、不新增上传项 —— `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS` 保持 **12 项**（本节只读核对 = 12）。本路由扣费写**既有** `jiazu_assets`（`_id='global'`）。
+- **无数据项**：`migrate-output/**`（trees / details / collections）与 `config/tree-meta.json` 本批 **0 改动** ⇒ **不重跑上传脚本、无手工删旧详情键、不动 `jiazu_id_seq`**；排行真源就是既有树 JSON 的 `families[].child_handles[]` 数组序（**不新增字段**，`docs/sibling-order.spec.md` §2）。
+- ⚠️ 若日后发现真源在本批期间被**运行时实例**改写（`migrate-output/**` 是活文件），按 §28-0 事件 K / §29 同址要求处理：**上传范围与前后 md5 必须以「全部 local-server 重启 + 冻结后」的一次实测为准**。
+
+### 31-4 部署后冒烟验证（按序做；⚠️ 均为**待执行**步骤，结论由 Neng 收口后回写，本清单不预填）
+
+1. **部署前判据**：`grep -c 'sibling-reorder' cloudfunctions/deploy/compat-api/index.js` **≥1**（§31-1 判据 A）。
+2. **正常重排**：带 `Bearer` + `X-Tree-Id` 调 `POST /admin/sibling-reorder`（`{tree_id, family_handle, person_handle, child_handles:[…]}`）→ **200**，且 `fee = { unit:'bamboos', pieces:1, balance:<扣前>, balance_after:<扣后> }`、`position` / `previous_position` 与提交一致、`child_handles` = **提交序**。
+3. **读侧零改动生效**：`GET /people/<handle>?profile=all` → `profile.families[].children` 的顺序 = **提交序**（`index.js:179` 按数组序出参）。
+4. **流水核验**：`GET /assets/summary`（带 Bearer）→ `txs` 出现一条 **`type='edit_fee'`**、`desc='调整排行：<姓名> 第 N 位'`、`ref.tree_id` + `ref.person_handle` = **被拖动的子女节点**、`delta.bamboos = -1`。
+5. **no-op**：把**同一顺序**再提交一次 → **200 + `noop:true` + `fee.pieces:0`**，且树 `version` / `updated_at` 不动、**无新流水**。
+6. **被拒请求零痕迹**：①无 `Bearer` → **401 `请先登录后再进行编辑操作`**；②游客 → **403 `游客无编辑权限，请注册后编辑`**；③只读节点（始祖真身 / 镜像）→ **403**（既有只读文案）—— 三者均**不得产生任何 `Tx`**（含 `fee_refund`）。
+7. **409 与集合校验**：①0 片账号 → **409 `资产不足，需 1 片竹片，当前 0 片`** 且树未变；②`child_handles` 少一个 / 换人 / 重复 → **400 `子女列表须与现有子女完全一致（等长 / 同元素 / 无重复）`**；③`family_handle` 不存在 → **404 `家族记录不存在`**。
+8. **前端 H5 真机**：有写权的节点在档案子女区看到「调整排行」→ 模态框顶部分段（多配偶时）、行内序号 1/2/3… + 姓名 + ▲▼；**长按拖曳**与 **▲▼** 两条通道都能改位次（**位移 < 12px 不换位**）；点「确定」先出**二次确认**（文案含 `本次调整消耗 1 片竹片。`）；成功后子女标签顺序更新（**树图子女遍历顺序随之变化**，属既有读出参连带面，见 `docs/sibling-order.spec.md` §2）。
+9. **小程序端**：同批冒烟（小程序侧 `preventDefault` 为空实现 ⇒ 拖曳中的页面滚动拦截以其空实现为准，**以 ▲▼ 通道作为兜底验证路径**）。
+10. **数据面回归（应无变化）**：部署前后 `migrate-output/trees/*.json` 与 `config/tree-meta.json` 的 md5 **应一致**（本批无数据动作）；若不一致，按 §31-3 的运行时写入要求处理。
+
+### 31-5 本节实测读数与证据（**供 Neng 终校**）
+
+| 项 | 实测 |
+|---|---|
+| `npm test` | `cd /Users/kevin/bistro/jiazu && npm test` → **478 tests / 476 pass / 2 fail / 0 skipped**（**exit 1**）；TAP 汇总逐字 = `1..478` / `# tests 478` / `# pass 476` / `# fail 2` / `# skipped 0`；实测时点 **2026-09-23 13:30:28 CST**（Jing） |
+| **2 红（预存在 · 与本批无关）** | 均为 `not ok 354` / `not ok 358` = **`cloudfunctions/compat-api/lib/mirror-count.test.js`** 的 **M2**（点名镜像 **`I000143`** 未命中）与 **M6**（点名镜像 **`I000209`** 未命中）；真源实测 = `migrate-output/trees/gu_39038_01.json` 的 `I000143`（顾清学）与 `migrate-output/trees/ji_23395_01.json` 的 `I000209`（季花）的 **`external_mirror` 现为空串** ⇒ **真源漂移，待重同步** |
+| 本批专测 | `cloudfunctions/compat-api/lib/sibling-reorder.test.js`（**512 行**）**全绿**；已注册进根 `package.json` 的 `scripts.test` ⇒ **`scripts.test` 注册数 = 磁盘 `lib/*.test.js` 数 = 29**（**未注册 = 假绿**） |
+| 门槛 | **`npm test` 全绿 = 本批交付门槛**（沿用 §29-6 第 1 条口径）；**未全绿前不得打包 / 部署 / 重传**，工作区保持冻结；**全绿读数由 Neng 终校后回写本节**（本册**不推算、不预填**） |
+| 真源零写入 | 本节**只读**：未改 `migrate-output/**`、未改 `config/tree-meta.json`、未跑迁移 / 上传脚本、未改任何代码 |
+| 复现命令 | `cd /Users/kevin/bistro/jiazu && npm test`；`node --test cloudfunctions/compat-api/lib/{sibling-reorder,mirror-count}.test.js`；`ls cloudfunctions/compat-api/lib/*.test.js \| wc -l` |
+
+### 31-6 明确**不需要**上云的东西
+
+- `auth-server/**`、一次性修复脚本、`migrate-output/` 中间报告、`/tmp` 下的副本与取证文件（临时产物）；
+- 规格与制度文档（`docs/sibling-order.spec.md`、`docs/economy-fee.spec.md` §15、`AGENTS.md` 本批追加行、本册 §31）：**不进产物、不影响云端**；
+- **本批追加（2026-09-23 18:20 CST）**：`docs/sibling-order.qa.md`（三轮质检汇编）与 `docs/sibling-order.spec.md` **§14**、`docs/economy-fee.spec.md` **§15-9**、`AGENTS.md` **§0 / §9** 追加行 —— 同属**文档面**，**不进产物、不影响云端**；
+- 本批**无新增脚本**、**无新增集合**、**无真源数据变更**。
+
+---
+
+### 31-7 终校收口追加（**追加 · 2026-09-23 18:20 CST** · **只追加 · 不改 §31-0 – §31-6 历史行**）
+
+> **性质**：**部署台账追加登记**（**未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传**）。本节取代 §31-5 的**门槛待办态**与 §31-2 的**判据缺省态**（两处**原文均保留**）。
+
+**① 交付门槛 —— 已达标（取代 §31-5 的 `478 / 476 / 2` 读数）**
+
+| 项 | 实测 |
+|---|---|
+| 命令 / 时点 | `cd /Users/kevin/bistro/jiazu && npm test` · **2026-09-23 18:20 CST**（Jing） |
+| 读数 | **478 tests / 478 pass / 0 fail / 0 skipped（exit 0）**；TAP = `1..478` / `# tests 478` / `# pass 478` / `# fail 0` / `# cancelled 0` / `# skipped 0` |
+| 一致性 | **四方一致**：Zang 亲跑 + Kong / Neng 各跑过一次 + Jing 复跑 ⇒ 上列 **§31-5 的 2 红（`not ok 354` / `not ok 358`）已清零** ⇒ **§31-0 第 1 行的先决条件「`npm test` 转绿」已满足**（工作区冻结仍须以执行时点复核） |
+| 本批专测 | `cloudfunctions/compat-api/lib/sibling-reorder.test.js`（512 行）全绿；`scripts.test` 注册数 = 磁盘 `lib/*.test.js` 数 = **29** |
+
+**② `mirror-count` 点名重同步登记（本批副产物 · 断言零放宽）**
+
+- `cloudfunctions/compat-api/lib/mirror-count.test.js` 本批**重同步**：点名 **`GU_MIRROR_GIDS` 5 → 4（删 `I000143`）**、**`JI_MIRROR_GIDS` 4 → 3（删 `I000209`）**，M2 标题 `5 个 → 4 个`。
+- **依据 = 真源实测（只读）**：`migrate-output/trees/gu_39038_01.json` 的 `I000143`（顾清学）与 `ji_23395_01.json` 的 `I000209`（季花）的 **`external_mirror` 现为空串**（`external_person_handle` 亦空）⇒ 二者**已就地反转为非镜像**。
+- **先例**：`058b5f7`（ji 排除集改空 ⇒ 回 427/427/0）、`23a8467`（M6 快照 61）。**断言零放宽**逐条 = 点名仍**包含式**、总数仍 `realMirrors()` **动态推导**、`person_count` 快照与不变量**一字未动**、其余点名**保留**、本批 diff 仅 **18 insertions / 9 deletions** 且全在**点名数组与注释 / 标题**。
+- ⚠️ **本项与 §31-3「本轮无数据项」不冲突**：重同步改的是**测试文件**，**真源未被本批写入**（`external_mirror` 的空串是**既存漂移**，非本批所致）。
+
+**③ 云函数动作：判据不变、**动作仍未执行**（§31-1 复核）**
+
+- 实测（2026-09-23 **18:19 CST**）：`grep -c 'sibling-reorder' cloudfunctions/deploy/compat-api/index.js` = **0**；`grep -c 'sibling_reorder' …` = **0** ⇒ **§31-1 判据 A / B 仍不达标、产物仍未重打包**，§31-1 的打包 / 部署 / 部署后判定三行**一律照旧执行**。
+
+**④ 前端重打判据 —— 补具体字面（取代 §31-2「本册不预设前端产物字面」的缺省态）**
+
+- **覆盖文件面（整改后 · 均须进 H5 + 小程序产物）**：`frontend/src/components/sibling-order-modal/sibling-order-modal.vue`（**505 行**，含自绘确认层与 no-op 双路径）、`frontend/src/components/person-archive/person-archive.vue`（入口 `:210-218` / 挂载 `:475` / `canReorderKids` **:1985**）。
+- **候选判据（`grep -c` ≥1 · **期望值**，本册**未执行打包 ⇒ 未实测**）**：
+  ```bash
+  # H5 产物（CSS 类名与 JS 字面在 minify 后均保留）
+  grep -rc 'som-confirm-ok'            frontend/dist/build/h5   # 期望 ≥1（自绘确认层按钮类名）
+  grep -rc '排行未改动，无需保存'        frontend/dist/build/h5   # 期望 ≥1（no-op ① 前端短路文案）
+  grep -rc '调整' frontend/dist/build/h5                        # 粗判据（宽，仅作交叉验证）
+  # 小程序产物
+  grep -rc 'som-confirm-ok'            frontend/dist/build/mp-weixin   # 期望 ≥1
+  ```
+- **辅助判据**：产物 `mtime` > **2026-09-23 18:20 CST**（本批实现落盘之后）。**两者判据均不得预填实测值**（本册未执行打包）。
+
+**⑤ 冒烟第 8 条 —— 文案口径更正（追加标注 · **§31-4 第 8 条原文保留**）**
+
+- §31-4 第 8 条原写「点『确定』先出**二次确认**（文案含 `本次调整消耗 1 片竹片。`）」 ⇒ **该文案已作废**（旧实现 `uni.showModal`，且其 `.uni-modal` z-index = 999 **被 `.som-mask` 1000 盖住 ⇒ 不可点**）。
+- **现行口径（逐字）**：二次确认层 = **自绘层**（`.som-confirm-mask` z-index = **1010**），正文 = **「调整 <被移动子女姓名> 的排行，消耗 1 片竹片。」** + 「<配偶标签>的子女排行将按调整后的顺序保存。」；按钮 = `取消` / `确定调整`（`.som-confirm-ok`）。
+- **冒烟须加做三项**：① 确认层按钮**可点**（`elementFromPoint` 命中 `.som-confirm-ok` 本体；真实指针点击可提交）；② **no-op 双路径文案**：本地未改动点「确定」→ **零请求** + toast **「排行未改动，无需保存」**；同一顺序再提交 → 200 `noop:true` + `fee.pieces:0` + toast **「排行未变化，未消耗竹片」**；③ 详情见 `docs/sibling-order.spec.md` **§9-2-1** 与 `docs/sibling-order.qa.md` **§4.2**。
+
+**⑥ 本批文档面（新增 / 追加 · 台账登记）**：`docs/sibling-order.spec.md`（**§14** 终校收口 + 头部状态行 + §3-1-1 + §9-2-1 + §3-5 追加行 + §12 ⑨–⑮）、**`docs/sibling-order.qa.md`（新建）**、`docs/economy-fee.spec.md`（§15-2 追加行 + **§15-9**）、`AGENTS.md`（**§0 / §9** 追加行已落盘；**§7 追加行本回合未落盘** —— 受保护文件写保护审批未获响应，内容见 `docs/sibling-order.spec.md` §14「落盘状态」）、本册 §31-7。
+
+**⑥ 追记（追加 · 2026-09-23 18:48 CST · **只追加 · 不改 §31-0 – §31-7 既有行**）**：**`AGENTS.md` §7 追加行（`npm test` 终值基线 **478 / 478 / 0 / 0（exit 0）** + `mirror-count` 点名重同步登记）已于 2026-09-23 18:48 CST 落盘**，位于 `AGENTS.md` **第 213 行**（Jing 受保护文件写入获批后落盘）；上段 ⑥ 中「**§7 追加行本回合未落盘**」措辞**属本回合初态、原文保留**，其语义**自本追记起被覆盖**，**一律以本追记为准**。同步追记见 `docs/sibling-order.spec.md` §14「落盘状态追记」。
+
+**⑥ 追记之二（追加 · 2026-09-23 · **只追加 · 不改 §31-0 – §31-7 既有行**）**：同上 —— 第 ⑥ 段及其 ⑥ 追记中凡指向「`AGENTS.md` §7 追加行」的「**未落盘**」措辞**均已过时**：该行**已落盘于 `AGENTS.md` 第 213 行**（真源写入登记 = **第 214 行** + 其**追记行** = **第 215 行**；§9 追记 = **第 243 行**，本批追记行插入**前** = 第 242 行），`git diff --numstat AGENTS.md` ⇒ **删除行 = 0（纯追加）**；**`shen_27784_01`（树 **14:25:10** + `details/shen_27784_01:*` × 2）归属已由 Kevin 当面确认 = 归 Kevin 本人** ⇒ 本批 2026-09-23 窗口内**四类写入**（`shen_27784_01` / `ji_23395_01` / `pan_28504_01` + `jiazu_assets` & `tree-meta.json` 连带变更）**全部已认领，无待确认项**。上列各行措辞**一律原文保留**，语义**自本行起被覆盖**（`AGENTS.md` §10 纪律）。同步追记见 `docs/sibling-order.spec.md` **§15** 与 `docs/sibling-order.qa.md` **§8**。**部署门槛不变**：云函数产物**仍未重打包**，打包 / 部署仍按 §31-1 – §31-6 逐项执行。
+
+**§31-7 追记之三（追加 · 2026-09-23 · 只追加 · 不改 §31-0 – §31-7 既有行）**：**文件头本批状态块（第 44 行一带）已作废、原文保留** —— 该块所载 **「待 Neng 终校」** 与 **「`npm test` 当前 478 / 476 / 2（红）」** 均为**整改前**初态；**终值 = `npm test` 478 tests / 478 pass / 0 fail / 0 skipped（exit 0）**（2026-09-23 四方各跑一致）、**状态 = 已终校（Neng 复检通过）**。上文各行的「待终校 / 红」措辞**语义自本行起被覆盖**（`AGENTS.md` §10 纪律，原文一律保留）。**§31-7 ① 只取代 §31-5 的读数、未覆盖文件头状态块**，故在此补记。详见 `docs/sibling-order.spec.md` **§14 / §15 / §16** 与 `docs/sibling-order.qa.md` **§8**。**部署门槛不变**：云函数产物**仍未重打包**，打包 / 部署仍按 §31-1 – §31-6 逐项执行。
+
+---
+
+## 32. 本批：**行囊（道具栏）v3–v6 + 玉归属 v6**（**代码批次：云函数读侧改动 + 前端新交互** · **集合与云端数据本轮无**）（Jing 制度员 · 2026-09-24 · **只追加 · 不改 §0–§31 历史行**）
+
+> **性质**：本节为**部署台账登记**（**只追加**）—— **未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传**（本批仅追加文档：`docs/economy.spec.md` **§14**（新建）+ 其 **§13 标题下「已被取代 · 原文保留」**标注（`:562`）、`docs/spirit-domain.spec.md` **§14**（新建）、`AGENTS.md` **§0 / §7 / §9** 追加行、本册 **§32**）。
+> **裁定来源**：**Zang 裁定 v3 / v4 / v5 / v6 / v6-附（2026-09-24）**；口径真源 = `docs/economy.spec.md` **§14**（展示层 · 行囊 36 栏位 / 换算 / 溢出 / 默认序 / 拖曳）+ `docs/spirit-domain.spec.md` **§14**（域口径 · 玉归属 / 注入者反查 / 永久占用）。
+> **实现状态（如实登记）**：**Kong 已实测落盘 · 工作区在途未提交**（改动面见 §32-1 / §32-2）；**云函数产物未重打包**（§32-1 判据实测 = **0**）；**前端 H5 / 小程序产物均早于本批**（§32-2）⇒ **不得**据本节认为已实现完毕 / 已验证 / 已部署。
+> **时点**：`date` = **2026-09-24 18:03:01 CST**；本节读数除注明外均为**本节实测**（复现命令见 §32-1 / §32-5）。**编号接 §31**。
+
+### 32-0 总览
+
+本批两件事：① **行囊（道具栏）展示层 v3–v6** —— 6 × 6 = **36 栏位**的展示与交互（1 格 = 1 道具换算 / 碎片占 1 格 / 余数占格 / 默认序 / 溢出提示 / 属性提示层 `z-index: 1010` / **插入式拖曳**，含本轮**拖曳坐标系归一化修复**）；② **玉归属与注入者读侧 v6** —— `GET /assets/summary` 用户面**只返未镶嵌**（`jades_total` 同口径）、`GET /admin/assets/user` 后台面**全量原始记录**（`include_mounted:true`）、`GET /spirit` 新增**只读**出参 `injector`（三态、手机号不下发）。**两件事都只落在「读侧 / 展示侧」**：本批代码对真源 **零写入（内容零变化）** —— 逐字结论、三处读数与**本节复核**见 **§32-3**。
+
+| # | 目标 | 动作 | 阻塞 | 备注（本节实测） |
+|---|---|---|---|---|
+| 1 | 云函数 **`compat-api`** | **重打包 + `tcb fn deploy`**（**必须**） | 先决：`npm test` 转绿（§32-5）+ 工作区冻结 | 改动面 = `lib/economy-ledger.js` / `lib/economy-ops.js` / `lib/economy-spirit.js`（**`index.js` 未改** —— 路由原本就调 `adminUserAssets`）；**产物当前未重打包**（判据串命中 **0**） |
+| 2 | **前端 H5 + 小程序** | **重打 + hosting / 开发者工具上传**（**必须**） | hosting 目标 + 云函数 HTTP 域名 | 现有产物均**早于**本批实现（H5 **2026-09-21 07:23:37** / 小程序 **2026-09-20 13:21:14**） |
+| 3 | CloudBase **集合** | **本轮无**（不新建集合、不新增字段 / 枚举；`COLLECTIONS` 保持 **12 项**） | — | 本批零新路由：`injector` 挂在**既有** `GET /spirit` 出参上；玉过滤挂在**既有** `summarize` 的 `opts` 上 |
+| 4 | **云端数据（树 JSON / 详情 / tree-meta）** | **本轮无**（零重传 / 零删键 / 不动 `jiazu_id_seq`） | — | 本批代码**不写** `migrate-output/**` 与 `config/**`；⚠️ 真源期内确有一次**与本批代码无关**的运行时写入，登记与归因见 **§32-3 复核块** |
+
+### 32-1 必登 ①：云函数 `compat-api` **必须重打包 + `tcb fn deploy`**
+
+| 项 | 实测（本节 2026-09-24 CST） |
+|---|---|
+| 改动面 ①（`lib/economy-ledger.js`） | `summarize(user, now, {include_mounted})` 按 `opts.include_mounted` 过滤玉：`const jades = (user.jades \|\| []).filter((j) => j && (opts.include_mounted \|\| !j.mounted_tree_id));`；`jades_total` **同口径**（用户面只计未镶嵌） |
+| 改动面 ②（`lib/economy-ops.js`） | `adminUserAssets(phone, now)` 调 `summarize(assets, now, { include_mounted: true })` ⇒ 后台面出**全量原始记录**（含 `mounted_tree_id`） |
+| 改动面 ③（`lib/economy-spirit.js`） | 新增 `maskPhone(phone)` 与只读反查 `injectorOf(treeId)`；`spiritInfo(...)` 出参**新增** `injector`（`injector: mounted ? await injectorOf(treeId) : null`）；全程 `colGet` 只读、**不 `sweep`、不回写** |
+| **`index.js` 未改（逐字登记）** | `cloudfunctions/compat-api/index.js` 的 `/admin/assets/user` 路由（`index.js:894-899`，`chief_editor` 门禁 → `await ops.adminUserAssets(query.phone, new Date())`）与 `/spirit` 路由（`index.js:700-703` → `spirit.spiritInfo(treeId, …, new Date())`）本批**一字未改** ⇒ **本批无新增路由**（与 §31 那种「新增 1 条路由」不同）；**mtime 佐证（本节实测）**：`index.js` = **2026-09-23 13:08:00**，早于本批三处 lib 改动（`economy-ledger.js` **2026-09-24 12:51:13** / `economy-ops.js` **12:51:34** / `economy-spirit.js` **12:32:52**） |
+| **判据（逐字可跑 · 本节实测值已填）** | `grep -c "include_mounted" cloudfunctions/compat-api/lib/economy-ledger.js` = **4**（**≥1 达标**）· `grep -c "include_mounted" cloudfunctions/compat-api/lib/economy-ops.js` = **2**（**≥1 达标**）· `grep -c "injectorOf" cloudfunctions/compat-api/lib/economy-spirit.js` = **3**（**≥1 达标**） |
+| 产物 | `cloudfunctions/deploy/compat-api/index.js` = **998,338 B** · mtime **2026-09-19 12:50:59** · md5 **`d61a8aebfb3f3095baae4e1e731fd675`**（与 §24-1 / §25-10 / §26-1 / §29-1 / §31-1 同值） |
+| 产物判据（本节实测 = **0**） | 同产物内 `grep -c "include_mounted"` = **0**、`grep -c "injectorOf"` = **0**、`grep -c "maskPhone"` = **0** ⇒ ❌ **未重打包** |
+| 打包命令 | 沿用**仓库既有**打包命令（同 §24-1 / §25-1 / §26-1 / §29-1 / §31-1 的同一份，本册**不新造**）；产物路径 = `cloudfunctions/deploy/compat-api/index.js`；`cloudfunctions/deploy/**` 是**产物、不是编辑对象** |
+| 部署命令 | `tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087c`（沿用既有批次口径） |
+| 部署后判定 | 源码 3 条判据仍 ≥1（不变）；且**产物**内 `grep -c "include_mounted"` **≥1** 与 `grep -c "injectorOf"` **≥1**；产物 md5 **≠** `d61a8aebfb3f3095baae4e1e731fd675`、mtime > **2026-09-24 18:03** |
+
+```bash
+cd /Users/kevin/bistro/jiazu
+grep -c "include_mounted" cloudfunctions/compat-api/lib/economy-ledger.js   # 期望 ≥1；本节实测 4
+grep -c "include_mounted" cloudfunctions/compat-api/lib/economy-ops.js      # 期望 ≥1；本节实测 2
+grep -c "injectorOf"      cloudfunctions/compat-api/lib/economy-spirit.js   # 期望 ≥1；本节实测 3
+grep -c "include_mounted" cloudfunctions/deploy/compat-api/index.js         # 部署后期望 ≥1；本节实测 0（未重打包）
+grep -c "injectorOf"      cloudfunctions/deploy/compat-api/index.js         # 部署后期望 ≥1；本节实测 0（未重打包）
+wc -c < cloudfunctions/deploy/compat-api/index.js; md5 -q cloudfunctions/deploy/compat-api/index.js
+```
+
+### 32-2 必登 ②：前端 **H5 + 小程序重打**
+
+| 项 | 实测（本节） |
+|---|---|
+| 改动面（7 个文件 · 均须进 H5 + 小程序产物） | `frontend/src/business/inventory.ts`（**327 行** · 行囊纯逻辑）· `frontend/src/business/asset-text.ts`（**44 行** · 玉状态文案单点）· `frontend/src/components/asset-inventory/asset-inventory.vue`（**873 行** · 容器组件，**本轮含拖曳坐标系归一化修复**）· `frontend/src/pages/mine/index.vue`（**572 行** · 行囊卡 + 签到印章卡）· `frontend/src/pages/assets/index.vue`（**427 行** · 四处移除）· `frontend/src/pages/spirit/index.vue`（**668 行** · 移除玉操作区 + 注入者区块 + 「永久有效」）· `frontend/src/business/api.ts`（**2,838 行** · 接口封装） |
+| H5 产物 | `frontend/dist/build/h5/index.html` mtime **2026-09-21 07:23:37** |
+| 小程序产物 | `frontend/dist/build/mp-weixin/app.json` mtime **2026-09-20 13:21:14** |
+| 判定 | ❌ **均早于本批实现** ⇒ **必须重打**，否则线上无行囊容器 / 无注入者区块 / 资产页与 spirit 页仍是旧版（还带已移除的签到 / 合成 / 分解入口） |
+| 命令 | `cd frontend && VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5` → `tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c`；`npm run build:mp-weixin` + 微信开发者工具上传 |
+| 判据（候选 · **本册未执行打包 ⇒ 未实测**） | 产物内命中本批新增字面 ≥1（如容器组件类名 / 行囊标题「行囊」/ 溢出文案「背包空间不足，无法合成」/「此玉由」），或产物 mtime > 本节时点。**本册不预设前端产物字面**（以 Kong 交付 / Neng 质检版本为准，口径同 §31-2） |
+
+### 32-3 真源零写入
+
+> **逐字结论**：本批代码对真源 **零写入（内容零变化）**。依据 = 本节**三处读数**（**批次登记时点 = 2026-09-24 08:58 CST 一带**，同批登记见 `AGENTS.md` §7「真源写入登记 · 本批」行）：
+>
+> | # | 读数 | 登记值（批次登记时点） |
+> |---|---|---|
+> | ① | 被 touch 的真源文件 | `find migrate-output config -newermt "2026-09-24 00:00" -type f` = **1 条** ⇒ 仅 `migrate-output/collections/jiazu_assets.json` |
+> | ② | 该文件 `mtime` | **动值**（每次读 `GET /assets/summary` 都可能移动；登记值 07:42:20 → 08:58:09）—— **`mtime` 不作为判据** |
+> | ③ | 该文件**内容 `md5`** | 登记值 = **`9f17a77f7871584a563047c3ab45f09e`**（内容零变化） |
+>
+> **归因（批次登记时点）**：读侧 `GET /assets/summary` 触发 `sweep` 的**整体回写** ⇒ **内容不变、仅 `mtime` 变**（`lib/economy-ledger.js` / `lib/economy-ops.js` 的 `summarize` 前置于 `sweep`）—— **不是**本批代码的数据写入（本批代码改动全在 `filter` 与只读反查 `injectorOf`）。
+> **制度口径**：**后续本机验证优先用 `/tmp` 副本栈**（`COMPAT_OUT_DIR` / `COMPAT_META_FILE` 钩子），**避免无谓 touch 真源**；确需对真源跑时，**先备份**（`~/jiazu-backups/<日期-说明>/`）再按本节格式登记**前后 md5**。
+
+**本节复核（Jing · 2026-09-24 18:01–18:03 CST 只读实测 · 只追加 · 上表原文保留）**
+
+⚠️ **上表 ①②③ 中，① 的「1 条」与 ③ 的「内容 `md5` 恒为 `9f17a77f…`」两条读数在复核时点已不成立** —— 本批窗口内出现一次**与本批代码无关**的运行时写入。实测如下：
+
+| # | 复核读数（2026-09-24 18:01:32 CST） |
+|---|---|
+| ① | `find migrate-output config -newermt "2026-09-24 00:00" -type f` = **4 条**（非 1 条） |
+| ② | 逐条 `mtime` / 现行 `md5`（↔ 2026-09-23 只读快照 `~/jiazu-backups/2026-09-23-kevin-writes/` 对照）：**`collections/jiazu_assets.json`** `2026-09-24 17:48:10` · **`610cc94d39feb90fedfe2f41e164f69c`**（批次登记值 = `9f17a77f7871584a563047c3ab45f09e` ⇒ **已变**；快照值 = `076221b867c0c5d201361dda5cfe8791`）· **`trees/gu_39038_01.json`** `2026-09-24 17:48:10` · **`d3669b730b655bbf9a9bfe7f485bdcfc`**（快照 = `7224c15728b0fd5084141ac6c02d6483`；`version` **17 → 21**、`updated_at` **2026-09-24T09:48:10.294Z**）· **`details/gu_39038_01:103f95b87b5a464242933ee319d5.json`** `2026-09-24 17:47:33` · **`3aaf96364c9f79f9bc36fc41001b8951`**（快照 = `81e7c545c89cbe0c92e958e735ed58a1`）· **`details/gu_39038_01:103f95b87b9a398b1289942102ec.json`** `2026-09-24 17:48:10` · **`7889f0c036590ff72215dda01007092f`**（快照 = `0cd44543009ce01c1c77be7f54e1aeba`） |
+| ③ | **归因判据 = 计费流水（`jiazu_assets` `txs` 136 → 149 条）**：其中 **4 条** = ts **`2026-09-24T09:47:06.672Z` / `09:47:33.235Z` / `09:48:01.371Z` / `09:48:10.293Z`**（= CST **17:47:06 / 17:47:33 / 17:48:01 / 17:48:10**）的 **`type='edit_fee'`**、`delta.bamboos = -1`、`ref.tree_id = gu_39038_01`（竹片 lot `bl_mu67o50m30bxt` **735 → 723**）；另有 **`signin`** 1 条（ts `2026-09-23T22:53:23.678Z`，`fragments` 2 → 3、`signin_date` 2026-09-18 → **2026-09-24**） |
+| ④ | 逐节点内容差异（树 JSON vs 快照）= **2 个节点**：`103f95b87b5a464242933ee319d5`（**顾清学 I000143**：`is_living` 缺 → `false`、`residence_places` 缺 → `[]`）、`103f95b87b9a398b1289942102ec`（**顾秀英 I000147**：`is_living` `true → false`、`death_date` `'' → '2025'`）⇒ **形态 = 经 UI / API 的档案编辑（走计费闸门、逐次扣 1 片竹片）**，**不是**本批代码所致 |
+
+- **结论（不改上表口径、只补事实）**：本批「**代码零写入真源**」的结论**不变** —— 本批改动全在**读侧**（`opts.include_mounted` 过滤 + 只读反查 `injectorOf`），**未新增任何写路径**；上述 4 次写入是**运行时人工编辑**（`edit_fee` × 4），**与本批归因无关**。
+- **未决项（本节不裁定）**：① 该 4 次编辑（tree `gu_39038_01`，2026-09-24 17:47–17:48 CST）**写入主体待确认**（按 `AGENTS.md` §2.1「真源写入一律先备份、后登记」，**本次写入前无备份**：`~/jiazu-backups/` 最新 = `2026-09-23-kevin-writes/`）⇒ 建议照 2026-09-23 先例**补建只读快照**；② 是否在 `AGENTS.md` §7 追加「真源写入登记 · 2026-09-24 追记」行，**待 Zang / Kevin 拍板**（本册只登记事实，**不代改 `AGENTS.md` §7**）。
+
+### 32-4 部署后冒烟验证（按序做；⚠️ 均为**待执行**步骤，结论由 Neng 收口后回写，本清单不预填）
+
+1. **用户面玉口径**：带 `Bearer` 调 `GET /assets/summary` ⇒ 出参 `jades` **不含任何 `mounted_tree_id` 非空的玉**（已镶嵌玉一枚不出现），且 **`jades_total` = 未镶嵌枚数**（全为已镶嵌 ⇒ `jades = []`、`jades_total = 0`，不崩、无空壳项）。
+2. **后台面玉口径**：以 `chief_editor` 调 `GET /admin/assets/user?phone=<号>` ⇒ **含已镶嵌玉**且**保留 `mounted_tree_id`**（枚数 / `jade_list` 均含）；非 `chief_editor` 同请求 ⇒ **403**（`ERR_CHIEF_ONLY` 文案）。**两端口径不得互相套用**（§32-0 第 3 行）。
+3. **`injector` 三态 + 手机号不下发**：携 `X-Tree-Id` 调 `GET /spirit`，**三态各取一组** —— ① 正常（反查到 + 锚点同树）⇒ `injector = { nickname, person_handle }` 且 `person_handle` 可点；② 无锚点 / 跨树 ⇒ `injector.person_handle = null`（文案「注入者无本树节点」）；③ 反查不到 ⇒ `injector = null`（文案「注入者信息不可考」）；未镶嵌 ⇒ `injector = null`。**响应体不得含任何手机号**（昵称缺失时只出**脱敏串**：前 3 + `****` + 后 4）。
+4. **行囊页**：36 格网格（`SLOT_COLUMNS` = 6 → 6 × 6）+ 溢出提示（占格需求 > 36 时逐类提示：玉 = 「背包空间不足，无法合成」、其它 = 「空间不足，无法持有」；**不入格**）；属性提示层 `z-index = 1010`；拖曳 = **插入式重排**（H5 与小程序命中判定分别用 `getBoundingClientRect()` / `boundingClientRect()`，**不得混用**；刷新 / 重进回默认序，**tabBar 切回保留内存序 = 已裁定可接受**）。
+5. **spirit 页展示**：已镶玉区块出 **「此玉由〈昵称〉注入」**，① 态出卡片 **「查看注入者档案 ›」** 并可**跳到人物档案页**；**不得**再出现 **「玉有效期 至 <日期>」**（统一 = **永久有效（镶嵌即永久占用）**）；玉操作区（合成 / 分解）已移除（迁至「我的 → 行囊」）。
+
+### 32-5 基线
+
+| 项 | 实测 |
+|---|---|
+| 命令 / 时点 | `cd /Users/kevin/bistro/jiazu && npm test` · **2026-09-24 18:02–18:03:01 CST**（Jing） |
+| 读数 | **480 tests / 480 pass / 0 fail / 0 skipped（exit 0）**；TAP = `1..480` / `# tests 480` / `# pass 480` / `# fail 0` / `# cancelled 0` / `# skipped 0`；`not ok` 行 = **0 条** |
+| 增量 | **含本轮 2 个新增用例**：`lib/economy-spirit.test.js`「读口径 · 注入者反查（`injector`）」+1、`lib/assets.test.js`「`GET /assets/summary` 玉归属（v6）」+1 |
+| 注册一致性 | `scripts.test` 注册数 = 磁盘 `cloudfunctions/compat-api/lib/*.test.js` 数 = **29**（**未注册 = 假绿**） |
+| 门槛 | **`npm test` 全绿 = 本批交付门槛**（沿用 §29-6 第 1 条口径）；**未全绿前不得打包 / 部署 / 重传**，工作区保持冻结 |
+| ⚠️ 终值 | **终值以 Neng 终校复跑为准**（本册**不推算、不预填**；若终校读数不同，再追加一行登记，本节原文保留） |
+| 真源零写入（本节自身） | 本节**只读**：未改任何代码 / 真源，未跑迁移 / 上传脚本，未打包 / 部署 |
+| 复现命令 | `cd /Users/kevin/bistro/jiazu && npm test`；`ls cloudfunctions/compat-api/lib/*.test.js \| wc -l` |
+
+### 32-6 明确**不需要**上云的东西
+
+- `migrate-output/**`（树 JSON / 详情 / collections 中间产物）与 `config/**`（含 `tree-meta.json` / `geo-divisions.json`）：**本轮无重传**；
+- `docs/**`（`docs/economy.spec.md` §14 / `docs/spirit-domain.spec.md` §14 等）与 **本册 §32**、`AGENTS.md` 本批追加行：**不进产物、不影响云端**；
+- `scripts/**`（含 `scripts/*.test.js` 与上传脚本）、一次性修复脚本：**不进云函数包**；
+- `/tmp/**`（副本栈 / 取证文件）、`backups/**`、`~/jiazu-backups/**`：**离线 / 临时产物**，不同步云端、不参与打包；
+- 本批**无新增集合**、**无新增路由**、**无新增字段 / 枚举**、**无真源数据变更**（玉归属全走读侧过滤）。
+
+---
+
+### 32-7 §32-2 追加行：家谱 tab 三文件进 **H5 + 小程序重打面**（**追加 · 2026-09-24 · 只追加 · 不改 §32-0 – §32-6 历史行**）
+
+> **性质**：**部署台账追加登记**（**只追加**）—— **未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传**。本节即 `docs/home-sort-search.spec.md` **§11-4 第 5 行**与 **§11-5** 两处所引「**`docs/PENDING_DEPLOY.md` §32-2 追加行**」的**落点本身**（该两处引用自本节起闭合）；§32-2 的改动面 7 文件、两产物读数、命令、判据各行**一律原文保留**。
+
+| 项 | 实测（2026-09-24 · Jing 收口轮 · 只读） |
+|---|---|
+| 追加改动面（本批**家谱 tab** · **3 个新增文件** · 均须进 H5 + 小程序产物） | `frontend/src/components/tree-hall/tree-hall.vue`（**1055 行** · mtime **2026-09-24 18:28:55**）· `frontend/src/pages/family/index.vue`（**89 行** · **2026-09-24 18:29:14**）· `frontend/src/pages/hall/index.vue`（**23 行** · **2026-09-24 18:29:07**） |
+| 本批前端**重打面合计** | §32-2 的 **7 个文件** + 本节 **3 个文件** = **10 个文件** ⇒ **H5 / 小程序各一次重打即可，不拆两批** |
+| H5 产物 | `frontend/dist/build/h5/index.html` mtime **2026-09-21 07:23:37** |
+| 小程序产物 | `frontend/dist/build/mp-weixin/app.json` mtime **2026-09-24 21:59:22** —— ⚠️ **本节撰写中途发生变动**：§32-2 登记值 = **2026-09-20 13:21:14**，实测**整树 219 / 219 文件同批写入**（**执行方 / 是否完整 / 是否含本批三文件改动 = 未验证**，见下方追记） |
+| 判定 | ① **H5 产物早于本批三文件的最后 mtime（2026-09-24 18:29:14）** ⇒ ❌ **H5 必须重打（判定不变）**；② **小程序产物 mtime（21:59:22）已晚于本批三文件**，但其**改动面 / 完整性未验证** ⇒ **不得据「mtime 已新」免除小程序重打**（见下方追记）；③ 两产物在本批重打前，线上家谱 tab 仍是旧版（hero 卡 / 身份节点卡 / 导航格 /「收录人物：N 人」统计栏仍在，且**尚未**复用单真源组件） |
+| 后端面（**本轮无**） | 家谱 tab **零后端改动** ⇒ **无云函数重打包项、无新增路由、无新增集合 / 字段**（口径真源 = `docs/home-sort-search.spec.md` **§11** / **§11-5**）；§32-1 的云函数必登项**不因本节增减** |
+| 命令 | 与 §32-2 **同一份**（本册**不新造**）：`cd frontend && VITE_API_BASE=https://<云函数 HTTP 域名> npm run build:h5` → `tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c`；`npm run build:mp-weixin` + 微信开发者工具上传 |
+| 判据（候选 · **本册未执行打包 ⇒ 未实测 / 不预填**） | ① 产物内命中本批三文件的**可辨识字面** ≥1（**字面以 Kong 交付 / Neng 质检版本为准，本册不预设**，口径同 §31-2 / §32-2）；② 产物 `mtime` > **2026-09-24 18:29:14**（本批三文件最后 mtime） |
+| 冒烟 | 家谱 tab **专面**判据 = `docs/home-sort-search.spec.md` **§11-5**（家谱 tab 与直开 `/pages/hall/index?tree_id=…` 的内容**逐字 / 逐项一致** + **两空态逐字** + hall 原链路回归 + `type-check` / `npm test` 不回归）；**结论待 Neng 收口后回写**，本节**不写「已通过」** |
+| 真源零写入（本节自身） | 本节**只读**：未改代码 / 真源，未跑打包 / 部署 / 上传，未动 `frontend/dist/**` |
+
+**追加读数追记（2026-09-24 22:08 CST 实测 · 只追加 · 本节新增行已按现读数更正，§32-2 登记值原文保留）**
+
+- **实测（22:08 CST）**：`frontend/dist/build/h5/index.html` mtime = **2026-09-21 07:23:37**（**未变**）· `frontend/dist/build/mp-weixin/app.json` mtime = **2026-09-24 21:59:22**（**整树 219 文件同批写入**，时点 **21:59:22**，即本节初稿时点 **21:54** 之后）。
+- ⚠️ **本册不代判定**：该次小程序写入的**执行方（是否属本批批次）、是否为完整构建、是否真正含本批三文件改动**，本节**均未验证**（本节**未执行打包**、未做任何产物内容判据）⇒ **不得**据本行认为小程序「已重打完毕 / 可免重打」；打包 / 部署 / 上传仍按 §32-1 – §32-7 **逐项执行并以本节判据复核**。
+- **本节未做**：未改代码 / 真源，未跑打包 / 部署 / 上传，未动 `frontend/dist/**`（该次写入**非本节所为**，本节只登记读数）。
+
+**追记更正（**追加实测 · 只追加** · 上列「⚠️ 本册不代判定」行措辞**原文保留**，其语义**自本块起被覆盖**）**
+
+- **新增只读实测**：`frontend/dist/build/mp-weixin` **共 219 个文件、mtime 均为 2026-09-24 21:59**（**整树重写**；**执行方未核实**）。
+- **产物内容判据（只读实测 · 特征串命中数）**：`搜索本家族人物姓名` = **1** 个文件 · `背包空间不足，无法合成` = **1** · `inv-tip-btn` = **2** · `本格为余数` = **1** · `tree-hall` = **7** ⇒ **实测产物已含本批改动** —— 上列「是否真正含本批三文件改动 = **未验证**」**自本块起关闭**。
+- ⚠️ **仍未核实项**：该次小程序写入的**执行方**（是否属本批批次）**仍未核实** ⇒ 仍**不得**据「mtime 已新 / 内容已含本批改动」免除重打；打包 / 部署 / 上传仍按 §32-1 – §32-7 **逐项执行并以本节判据复核**。
+- **H5 侧不变（陈旧）**：`frontend/dist/build/h5` 仍 = **2026-09-21 07:23:37**（**陈旧**）⇒ **部署时 H5 必须重打**。
+- **本块未做**：未改代码 / 真源，未跑打包 / 部署 / 上传，未动 `frontend/dist/**`。
+
+### 32-8 §32-3 / §32-5 追记：**归属确认（归 Kevin 本人）+ `npm test` 终值基线回填**（**追加 · 2026-09-24 · 只追加 · 不改 §32-0 – §32-7 历史行**）
+
+> **性质**：**部署台账追加登记**（**只追加**）—— **未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传**。本节即 `AGENTS.md` **§7「真源写入登记 · 2026-09-24 归属确认追记」行**、**§7「`npm test` 终值基线」行**与 `docs/sibling-order.spec.md` **§17** 三处所引「**`docs/PENDING_DEPLOY.md` §32-8 (1) / (2)**」的**落点本身**（该三处引用自本节起闭合）。§32-3 与 §32-5 的**全部既有行**（含 §32-3「本节复核」块 + 「未决项 ①②」、§32-5「⚠️ 终值」行）**一律原文保留**，其语义**自本节起被覆盖**（口径 = `AGENTS.md` §0 第 4 条「历史版本行不机械改写」）。
+
+**(1) §32-3 追记：4 笔 `edit_fee` 的归属 = 归 Kevin 本人（已当面确认）**
+
+| 项 | 口径 / 读数 |
+|---|---|
+| 触发方 / 形态 | **人工前端编辑会话（H5 `5199`）**、**逐笔走计费闸门**（`type = 'edit_fee'`、每笔扣 1 片竹片）⇒ **非脚本 / 非直改文件 / 非本批代码**（本批**未新增任何写路径**） |
+| 归属（定稿） | **归 Kevin 本人** —— **Kevin 于 2026-09-24 当面确认**（operator 手机号 `16601061656` / 角色 `chief_editor` / 昵称「季节」；**64 秒内 = 1 次拖动排行 + 3 次人物保存**） |
+| §32-3「未决项 ①」处置 | ✅ **已办结** —— **写入主体已确认**（见上）；**备份已补建** = 只读快照 `~/jiazu-backups/2026-09-24-stage-backup/`（含 `migrate-output/` + `config/` 全量 + `MD5-LEDGER.txt` **32,671 B**，时点 **2026-09-24 18:30**）⇒ §32-3 的「建议照 2026-09-23 先例补建只读快照」**已落地** |
+| §32-3「未决项 ②」处置 | ✅ **已办结** —— **`AGENTS.md` §7 追加行已落盘**（「真源写入登记 · 2026-09-24 追记」+「归属确认追记」两行）；**同步定稿** = `docs/sibling-order.spec.md` **§17**（排行落点的真源侧自证） |
+| 结论 | **无需回滚 / 退费** —— 4 笔全为**走闸门的正常编辑**（逐笔扣 1 片、**零冲正**：`fee_refund` **0 笔**）、树内变更面自洽、**无越权写入 / 无绕过闸门 / 无直改文件痕迹** |
+| ⚠️ 易误判口径 ① | **不得**把树内变更概括为「2 个 person 节点」—— **实为 3 处**（2 person + **1 个 family 记录**：`families.103f95b8792451191a492bcabff3.child_handles` **9 元素整体重排、集合等价**；顾纯海 `…fb261f` **index 6 → 3** = 第 7 位 → 第 4 位，与流水 `desc` **逐字吻合**） |
+| ⚠️ 易误判口径 ② | **「735 → 723」≠ 这 4 笔** —— 竹片批次 `bl_mu67o50m30bxt` 自 **2026-09-23 只读快照**（**735**）以来累计 **12 笔 `qty = 1`**（**8 笔在 2026-09-23** + **4 笔在本轮窗口**）⇒ **735 − 12 = 723**（现盘 `bamboos[0].qty = 723`）；**本轮只占 −4 片**，另 **−8 片不得记在本批头上** |
+| 读数不重写 | §32-3「本节复核」块的 4 条实测读数（`newermt` **4 条**、逐条 `mtime` / `md5`、计费流水 `txs` 136 → 149 与 4 笔 `edit_fee`、逐节点差异 **2 个节点**）**继续有效、逐字不变**；本节**只补归属与处置**，**不改任何读数、不新增读数** |
+
+**(2) §32-5 追记：`npm test` 终值基线回填（挂账关闭）**
+
+| 项 | 值（**引用已登记读数 · 本节未复跑、不自报**） |
+|---|---|
+| 命令 | `cd /Users/kevin/bistro/jiazu && npm test` |
+| 终值 | **480 tests / 480 pass / 0 fail / 0 skipped（exit 0）** —— **两次读数同值、无第三值** |
+| 两次读数 | **Neng 终校复跑 2026-09-24 20:18 CST** + **Jing 收口复跑 2026-09-24 20:31:17–20:31:19 CST** |
+| TAP 逐字 | `1..480` / `# tests 480` / `# pass 480` / `# fail 0` / `# cancelled 0` / `# skipped 0`；`not ok` 行 = **0 条** |
+| `duration_ms` | **2129.6**（Neng）/ **2363.5**（Jing） |
+| 注册一致性 | `scripts.test` 注册数 = 磁盘 `cloudfunctions/compat-api/lib/*.test.js` 数 = **29**（**未注册 = 假绿**） |
+| 类型检查 | `cd frontend && npm run type-check`（`vue-tsc --noEmit`）= **EXIT 0**（Neng 实测） |
+| 门槛 | ✅ **已达标** —— §32-5 的「⚠️ 终值以 Neng 终校复跑为准」**挂账自本行起关闭**（`AGENTS.md` §7 同条已落盘）；执行打包 / 部署前仍须做**冻结时点终校** |
+| 仍未做的事（如实登记 · **不得**据本节认为已部署） | ① 云函数产物**未重打包**（§32-1 产物判据实测 = **0**，md5 仍 `d61a8aebfb3f3095baae4e1e731fd675`）；② 前端 **H5 产物早于本批**（`2026-09-21 07:23:37`；小程序产物已在本轮窗口被重写为 `2026-09-24 21:59:22`，**完整性未验证**，见 §32-7 追记）⇒ **打包 / 部署 / 上传 / 重传仍须按 §32-1 – §32-7 逐项执行** |
+
+> **本节边界**：追加式登记 —— **未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传、未 commit**；§32-0 – §32-7 的历史行**一律原文保留**。
+
+**(3) §32-3 追记 · 真源写入登记：`jiazu_assets.json` 于 2026-09-24 21:52:50–21:55:12 被写入（**归 Kevin 本人**）**（**追加 · 只追加 · 不改 §32-8 (1) / (2) 既有行**）
+
+> **性质**：**部署台账追加登记**（**只追加**）—— **未改代码、未写真源、未执行任何打包 / 部署 / 上传 / 重传**。本块补登 §32-3「真源零写入 / 内容 `md5` 恒为 `9f17a77f7871584a563047c3ab45f09e`」与 (1) 之后的**又一次内容变**；§32-3 全部既有行、§32-8 (1) / (2) 既有行**一律原文保留**，其语义**自本块起被覆盖**。
+
+| 项 | 口径 / 读数（**逐字引用 · 不得改写 / 不得推算**） |
+|---|---|
+| 写入窗口 | **2026-09-24 CST 21:52:50–21:55:12** |
+| 被写真源 | `migrate-output/collections/jiazu_assets.json`（size **106872 B**、mtime **Sep 24 21:55**） |
+| 归属（定稿） | **归 Kevin 本人** —— 他在 **5199** 上**实操测行囊的合成 / 分解**（**非脚本 / 非直改文件**） |
+| 账本 5 笔新流水 | operator `166****1656` / `chief_editor`：`jade_decompose` `2026-09-24T13:52:50.251Z`（ref `jd_mu592iykburg5`）· `jade_synth` `13:52:55.606Z` · `jade_synth` `13:53:00.217Z` · `jade_synth` `13:53:02.950Z` · `jade_decompose` `13:55:12.053Z`（ref `jd_mu9mnogl1oi2x`） |
+| 该用户 `txs` | **149 → 154** |
+| 字段变化 | `seeds` 批次 **1 → 3**、`jades` **11 → 12** |
+| 文件内容 `md5` | **`610cc94d39feb90fedfe2f41e164f69c`（18:30 快照）→ `6977ad9a5a713d1951453208a09671d0`** |
+| 同窗口另一文件 | `migrate-output/collections/jiazu_market.json` mtime **21:54**（**同源 = 市集页访问**） |
+| 结论 | **归 Kevin 本人、无需回滚 / 退费** |
+| 口径备注 | 「读 `GET /assets/summary` 触发 `sweep` 回写」**只能解释 `mtime` 变、不能解释内容变** —— 本次**内容变已由上述 5 笔流水完全解释** |
+| 同步登记 | `AGENTS.md` **§7「真源写入登记 · 追记」行**（本册本块 = 其落点） |
+| 本块未做 | 未改代码 / 真源，未跑打包 / 部署 / 上传 / 重传，未 commit |
+
+### 32-9 §32-2 追加行：V3「灵石共鸣」特效批（`components/asset-inventory/asset-inventory.vue`）进前端重打面（**追加 · 2026-09-25 · 只追加 · 不改 §32-0 – §32-8 历史行**）
+
+- **上云动作与判据** = **重打 H5 产物** + `npm run build:mp-weixin`；判据 = `dist/build/mp-weixin/…/asset-inventory.wxss` 的 `@keyframes` 计数 = **0**、`animation` 计数 = **0**，且主包体积不超 2,097,152 B（现盘实测 **2,025,818 B**，余 **71,334 B**）；**本批未部署**（**未打包 / 未上传 / 未重传**，云函数产物与前端产物均未动）。
+- **口径与已接受差异登记落点** = `docs/economy.spec.md` **§14-12**（本节只登记上云动作与判据，**不复写** §14-12 正文）。
+
+---
+
+## 33. 本批：**好友关系 + 兰帖物品扩展**（**代码批次 + 新集合批次**：云函数新增路由 + 前端新页面 + **新增集合 `jiazu_friends`**）（Jing 制度员 · 2026-09-25 · **只追加 · 不改 §0–§32 历史行**）
+
+### 33-0 总览
+
+- **本批性质**：① **代码批次**（`cloudfunctions/compat-api/**` 新增好友域与兰帖路由 + `frontend/src/**` 新增页面 / 入口 / 行囊增量）；② **新集合批次**（**新增 `jiazu_friends`**，必须补进上传脚本 `COLLECTIONS`）；③ **字段批次**（`jiazu_assets.users[<手机号>]` **新增 2 个字段** `scroll_fragments` / `scrolls`）。
+- **本轮无云端数据修正**（不重传树 JSON、不删旧详情键、不改真源 `migrate-output/` 与 `config/`）。
+- **⚠️ 本批含【待裁】项**：`docs/friend-domain.spec.md` **§15**（13 条）与 `docs/economy.spec.md` **§15** 尾注 2 处（层位 / 默认序插入点）——**未裁前不得据任一案判实现负**；本节只登记**动作与判据形态**，**不预判口径**。
+- **状态**：**本节为待执行清单**（**未打包 / 未部署 / 未上传 / 未重传**；结论由执行批与质检收口后回写，**本清单不预填**）。
+
+### 33-1 必登 ①：云函数 `compat-api` **必须重打包 + `tcb fn deploy`**
+
+- **为什么必登**：好友域与兰帖路由全在 `cloudfunctions/compat-api/**` ⇒ **不重打包，云端新路由 404 / 静默返旧口径**（口径见 `AGENTS.md` §2.1「不要忘记云函数重打包」；先例 §11-1 / §14-1 / §16-1 / §17-1 / §31-1 / §32-1）。
+- **打包命令（沿用既有流程，逐字取自 `docs/economy.spec.md` §12-5）**：
+  - `npx esbuild cloudfunctions/compat-api/index.js --bundle --platform=node --format=cjs --external:@cloudbase/node-sdk --outfile=cloudfunctions/deploy/compat-api/index.js`
+  - 再 `tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087e`
+- **判据形态**（**只登记形态，不登记数值** —— 数值一律以对应命令的实际输出为准）：
+
+  | # | 判据 | 命令形态 | 通过条件 |
+  |---|---|---|---|
+  | 1 | 新路由字面已进产物 | `grep -c "<路由字面>" cloudfunctions/deploy/compat-api/index.js` | **≥ 1**（每个新增路由**各测一条**；**0 命中 = 未打包或漏路由 ⇒ 判负**） |
+  | 2 | 新增字段名已进产物 | `grep -c "scroll_fragments" cloudfunctions/deploy/compat-api/index.js`、`grep -c "scrolls" …` | **≥ 1**（**各一条**） |
+  | 3 | 作废字段名**未**进产物 | `grep -c "bamboo_fragments" cloudfunctions/deploy/compat-api/index.js` | **= 0**（**否定项判据**，配套 R-1；**非 0 ⇒ 判负**） |
+  | 4 | 新增枚举字面已进产物 | `grep -c "friend_renew" …`、`grep -c "scroll_synth" …`、`grep -c "scroll_decompose" …`、`grep -c "friend_reward" …` | **≥ 1**（**逐枚举各一条**；枚举字面以 `docs/friend-domain.spec.md` **§9** 的登记为准） |
+  | 5 | 冲正未另造 | `grep -c "fee_refund" …` | **≥ 1**，且**不得出现**第二套冲正类型字面（**承 `docs/economy.spec.md` §4-6 尾注**） |
+
+  > **判据纪律**：上表 5 组判据**均为「形态」登记**（`grep -c` ≥1 或 = 0），**不含任何数值读数**；执行时**逐条贴实际输出**，**不得预填、不得推算**。
+
+- **⚠️ 前置门槛（沿用既有口径）**：**`npm test` 未全绿前不得打包 / 部署 / 重传**（承 §29-6 第 1 条）；`npm test` 与类型检查的读数**以对应命令的实际输出为准**。
+- **实现位置提醒（承 `docs/economy.spec.md` §6 头部）**：账号级路由（好友 / 资产 / 市集）必须挂在 `index.js` 的**树编辑闸门之前**，否则没有 `X-Tree-Id` 的账号级请求会先被 400 拦掉。
+
+### 33-2 必登 ②：前端 **H5 + 小程序重打**
+
+- **H5**：`build:h5`（带 `VITE_API_BASE`）+ `tcb hosting deploy`。
+- **小程序**：`npm run build:mp-weixin` + 开发者工具上传。
+- **进重打面的新增 / 变更文件（拟定，按 `docs/friend-domain.spec.md` §11 的落点）**：新增 `frontend/src/pages/friends/index.vue`；`frontend/src/pages.json`（**`pages` 数组新增一条路由 —— ⚠️ `tabBar` 数组一字不动，R-11 硬约束**）；`frontend/src/pages/mine/index.vue`（新增好友入口）；`frontend/src/business/api.ts` / `business/index.ts` / `business/types.ts`（新增封装与类型）；行囊侧（`business/inventory.ts` 及展示层）按 `docs/economy.spec.md` **§15-6** 的增量动。
+- **判据形态（只登记形态）**：
+  | # | 判据 | 命令形态 | 通过条件 |
+  |---|---|---|---|
+  | 1 | 新页面已进小程序产物 | `ls frontend/dist/build/mp-weixin/pages/friends/`（或等价路径核对） | 目录与页面文件**存在** |
+  | 2 | **tabBar 结构未变** | `grep -c "pages/friends/index" frontend/src/pages.json` 与 tabBar 段核对 | **tabBar 段内 0 命中**（新路由只出现在 `pages` 数组，**不得**出现在 `tabBar.list`） |
+  | 3 | 行囊新常量已进产物 | `grep -c "SCROLL_PIECES_PER_ITEM" frontend/dist/build/mp-weixin/…`（或源码侧 `grep -c`，二选一，**执行时写明用哪一侧**） | **≥ 1** |
+  | 4 | 小程序真机未测（**如实登记**） | 环境无微信开发者工具时**只验产物** | 沿用既有已接受差异形态（承 §32-9 体例 / `docs/economy.spec.md` §14-12-2 #4），**未当已验** |
+
+> **⚠️ 主包体积纪律**：本批**新增页面**（新页面 + 行囊增量）会进主包 ⇒ **新增 static 资源前必须先算体积**（承 §32-9 与 `docs/economy.spec.md` §14-12 E3「余量告急」口径）；**体积读数以对应命令的实际输出为准**，**本节不预填**。
+
+### 33-3 必登 ③：**新增集合 `jiazu_friends` 登记进上传脚本 `COLLECTIONS`**
+
+- **动作**：`scripts/upload-migrated-to-cloudbase.mjs` 的 `const COLLECTIONS = [...]` **追加一项 `'jiazu_friends'`**（既有形态 = 数组字面量 + `ensureCollections()` 逐个 `db.createCollection`）。
+- **为什么必登**：**新增集合不入该列表 ⇒ 云端对应路由首写报错**（承 `AGENTS.md` §8 与 `docs/economy.spec.md` §12-1；先例 §11-2）。
+- **判据形态（只登记形态）**：`grep -c "jiazu_friends" scripts/upload-migrated-to-cloudbase.mjs` ⇒ **≥ 1**；且 `grep -n "const COLLECTIONS" -A 30 …` 的数组字面量内**确实含该名**（**不得**只出现在注释里）。
+- **形态纪律（R-15 硬约束）**：`jiazu_friends` **从设计起即为「每手机号一文档（`_id` = 手机号）+ `version` 乐观锁 CAS 重试」** ⇒ **本集合不在 §7-7 阻塞项范围内**（§7-7 针对的是 `jiazu_assets` 单文档 `_id='global'` 形态）；**但 `jiazu_assets` 的阻塞项仍然存在**（见 §33-4）。
+- **本地对应**：本地模式落 `migrate-output/collections/jiazu_friends.json`（新增文件，**本批不预置数据**）。
+
+### 33-4 ⚠️ 阻塞点（**未解除前不得上云**）
+
+| # | 阻塞项 | 与本批的关系 | 口径出处 |
+|---|---|---|---|
+| 1 | **`jiazu_assets` 单文档 `_id='global'` + 仅进程内锁** ⇒ 云端多实例可**丢更新 / 双花** | **本批的字段扩展（`scroll_fragments` / `scrolls`）写在 `jiazu_assets` 上** ⇒ **本批同样受该阻塞项约束**（**不得**以为 `jiazu_friends` 走了 CAS 形态就顺带解决物品侧并发） | **`docs/PENDING_DEPLOY.md` §7-7**（跨批次 §10-2）；`docs/economy.spec.md` §4-1 尾注 / §5-7 第 5 条 |
+| 2 | **`jiazu_spirit` / `jiazu_market` / `jiazu_messages` / `jiazu_ops_logs` 同形态** | 本批**复用了 `jiazu_messages`**（通知，R-16）⇒ **同受该形态约束**，上云前按 §7-7 一并评估 | 同上（§10-2 跨批次登记） |
+| 3 | **本批含【待裁】口径**（`docs/friend-domain.spec.md` §15 共 13 条 + `docs/economy.spec.md` §15 尾注 2 处） | **未裁前不得据任一案判实现负**；实现若已落盘，**不得**以未裁项验收 | 本册 §33-0 |
+
+> **上云前自检**：若 `jiazu_assets` 仍是 `_id='global'`，**本批次视为未就绪**（沿用 §7-7 末句制度）。
+
+### 33-5 部署后冒烟验证（**按序做**；⚠️ 均为**待执行**步骤，结论由执行 / 质检收口后回写，**本清单不预填**）
+
+1. **邀请 → 接受**：A 邀请 B ⇒ B 接受 ⇒ `GET /friends` 双侧可见、`expires_at` = 接受时刻 + 12 个月、`reward_months = 0`。
+2. **窗口判定**：距到期 > 30 天时发起续约 ⇒ **409**；构造 ≤ 30 天（或副本改时刻）⇒ 通过。
+3. **双边复校（R-10）**：发起方自持 < 1 枚成品兰帖 ⇒ 发起即 **409**；发起方自持足、确认前把兰帖花掉 ⇒ 确认时 **409** 且**申请仍保留**（未超时前可再次确认）。
+4. **续约成功**：双方各 −1 枚成品兰帖、`reward_months += 1`、`expires_at` 重算（**从 `T0` 起算**，逐个锚点核对 12 / 13 / 24 个月三例）。
+5. **奖励池**：触发一次活动 ⇒ 本人得**石榴籽碎片 1 + 竹片 1**（竹片入 `bamboos`）、每位**生效中**好友按分母得分（**缓冲期好友不参与**）；**不整除时余数销毁**；**重复触发同一活动实例不重复分发**。
+6. **不连锁**：收件人收到的碎片**不再**触发新的池分发（无二次流水）。
+7. **兰帖碎片上限**：`scroll_fragments` 到第 10 个 ⇒ **立即自动合成 1 枚成品兰帖**、碎片取余；**不得**出现「碎片 10 个 + 待合成」中间态。
+8. **兰帖分解**：分解 1 枚成品 ⇒ 返还 **9 兰帖碎片**（**断言分解后碎片 ≠ 10、不触发自动合成** —— R-7 回环防护）。
+9. **`expires_at` 永久**：新写入的兰帖批次 `expires_at` **恒为 `null`**；**缺省不静默永久**（缺省即抛错）。
+10. **到期缓冲期**：过了原定到期时刻未续约 ⇒ 关系**保留、列表可见**、**奖励停发**、**不能发起续约**；缓冲期内**可单方解除**（立即终止）。
+11. **缓冲期满自动解除**：缓冲期结束 ⇒ 关系**彻底解除**（惰性 sweep 推进）。
+12. **解除不返还**：主动解除后**不返还已消耗的兰帖**；**历史奖励保留不追回**。
+13. **重建清零**：彻底解除后重建 ⇒ **只能重新发起邀请**；新关系 `reward_months` **从 0 起算**。
+14. **无定时任务核对**：**不得**出现新注册的 cron / 定时器（R-13：全部惰性 sweep）。
+15. **作废字段核对**：全仓 `grep -rn "bamboo_fragments"` ⇒ **0 命中**（R-1 否定项）。
+16. **行囊展示**（承 `docs/economy.spec.md` §15-6）：碎片类 **2 种**各占 1 格；兰帖 `floor(Σqty / 100)` 格 + 余数占格；**默认序落位待 Kevin 裁定后**核对（**未裁前不得判负**）。
+
+### 33-6 明确**不需要**上云的东西
+
+- **`migrate-output/` 与 `config/` 的既有真源内容**：本批**无数据修正**，**不重传树 JSON、不删旧详情键、不改 `config/tree-meta.json`**。
+- **`auth-server/**`**：已退役 / 仅排查用的遗留链路，**不进云**（§6）。
+- **`scripts/*` 一次性修复脚本、`shell-scripts/**`、`/tmp/jiazu-*`、`backups/**`**：离线 / 临时产物，**不参与打包、不同步云端**（`AGENTS.md` §2.4）。
+- **`docs/**`**：规格与台账**不上云**（本册本节即纯台账追加）。
+- **`cloudfunctions/deploy/**`**：是**打包产物**，**不是编辑对象**（`AGENTS.md` §2.1）。
+
+### 33-7 本节的口径落点（**本节只登记上云动作与判据，不复写正文**）
+
+| 口径面 | 落点 |
+|---|---|
+| 好友域完整口径（生命周期 / 时间轴 / 续约 / 奖励池 / 新集合字段表 / 接口清单 / 枚举 / 权限 / 前端落点 / **待裁 13 条**） | **`docs/friend-domain.spec.md`**（本轮新立分册；§15 = 待裁清单） |
+| 物品域增量（竹简碎片 = 既有竹片 / `scroll_fragments` / `scrolls` / 合成分解 / 行囊衔接） | **`docs/economy.spec.md` §15**（本轮追加章节） |
+| 计费（续约消耗成品兰帖，**非竹片**） | **本轮未落入** `docs/economy-fee.spec.md` §3-1 扣费矩阵（受「只许改 3 个文件」约束）⇒ **登记为待办**；该册竹片侧口径**一字不改** |
+| 通知文案 | `docs/economy-ops.spec.md` §6（本批**不写文案**） |
+
+### 33-8 本节未做
+
+- **未改任何代码 / 配置 / `migrate-output/` / `config/`**；**未改 §0–§32 任何历史行**。
+- **未打包 / 未部署 / 未上传 / 未重传**（云函数产物与前端产物**均未动**）。
+- **未跑测试 / 未跑构建**；**未写任何实现现状读数**（测试条数 / 构建字节 / 当前行数等**一律不写**）。
+- **未 commit / 未 push**。
+
+---
+
+## 34. 追补（好友域规格追记 v3）：**新增集合 `jiazu_invites` + 邀请链路 2 路由 + 三个新页面进子包**（制度员 · 2026-09-25 · **只追加 · 不改 §0–§33 历史行**）
+
+> **本节性质**：`docs/friend-domain.spec.md` **§17 追记**与 `docs/economy.spec.md` **§16** 带来的**部署面增量**。**只追加**；**未打包 / 未部署 / 未上传 / 未重传**。判据形态沿用 **§33**。
+
+### 34-1 新增集合与形态变更（**并入 `COLLECTIONS`，否则首写报错**）
+
+- **`jiazu_invites`**（新增）：**每被邀请人一文档**，`_id` = **被邀请人手机号**，字段 = `inviter_phone` / `created_at` / `rewarded`。
+- **`jiazu_friends`**（§33 已有）：**形态变更为「每关系一文档」**（`_id` = 双方手机号升序拼接；列表查询用 `colWhere`）。
+- 与 §33 同规则：**两者都必须登记进 `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS` 列表**。
+
+### 34-2 云函数重打包（新增 / 变更路由）
+
+- 新增 **`GET /invite/me`**、**`POST /invite/accept`** —— **两条都注册在「树编辑闸门」之前、均需登录、无效 token 回 401（不降级 guest）**。
+- 邀请奖励 = **9 石榴籽碎片 + 11 兰帖碎片**（**被邀请人不得奖**）；日限 **3 次/日**（北京自然日；超限**静默不发、不回滚注册**）；防刷三条（不自邀 / 同一被邀请人只奖一次 / 邀请人必须已注册）。
+- 奖励池触发点：**批 2 只挂后台 `POST /admin/assets/grant` 通道与内部函数，不接任何用户侧活动**（批 3 任务中心再接）。
+- 启用 **`invite_code`** 注册参数（**邀请码 = 邀请人手机号，不引短码映射表**）。
+
+### 34-3 前端两产物重打
+
+- **三个新页面（好友页 / 邀请相关 / 任务中心）一律注册为 `subPackages` 子包**（不占主包余量；主包余量读数**以对应命令的实际输出为准**）。
+- **入口改落「家谱页」**（**不动 tabBar 结构**；tabBar `list` 数组一字不动）。
+- 行囊常量与文案：**前端 `SCROLL_FRAGMENTS_PER_ITEM` = 100、`SCROLL_PIECES_PER_ITEM` = 100**（后端真源导出名 = **`SCROLL_PIECES_PER_SCROLL`**，**两处不得混用**，见 `docs/economy.spec.md` §16-2）；文案统一 **`标准石榴籽` → `石榴籽`**（单一来源 = `inventory.ts` 的 `seed` 显示名；**行级改写待代码同批改名后执行**，见该册 §16-3）。**以上取值一律以对应命令的实际输出为准。**
+
+### 34-4 本节未做
+
+- **未改任何代码 / 配置 / `migrate-output/` / `config/`**；**未改 §0–§33 任何历史行**。
+- **未打包 / 未部署 / 未上传 / 未重传**；**未跑测试 / 未跑构建**。
+- **未写任何实现现状读数**（测试条数 / 构建字节 / 当前行数等**一律不写**）。
+- **未 commit / 未 push**。
+- **未裁项**（任务中心每项任务的周期与单次奖励量 / 贡献类核实表单形态 / 邀请码额外风控 / `_id` 分隔符与 `colWhere` 过滤字段名 / 签到与 R-4「签到逻辑不动」的并存读法 / 文案改名行级落点）**未落任何实现** —— **未裁前不得据任一案判任何实现负**（清单见 `docs/friend-domain.spec.md` §17-9）。
+
+---
+
+## 35. 本批：**兰帖 / 行囊 / 图标 + 好友关系域 + 邀请链路**（**代码批次 + 新集合批次**；**批 3 任务中心 = 规划中 · 不做动作**）（Jing 制度员 · 2026-09-25 · **只追加 · 不改 §0–§34 历史行**）
+
+> **本节性质**：本批已由 **§33**（好友关系 + 兰帖物品扩展）与 **§34**（邀请链路追补 v3）分别登记；本节把**本批实际落盘的三个动作面 + 一个规划面**收口成**一张合并上云清单**，并补齐**资产生成面（兰帖 / 兰帖碎片账本）· 前端行囊与图标面 · 文案统一面**、**真源写入登记**与 **§7-7 复核点**。体例、判据形态与门槛**一律沿用 §33 / §34**，本节**不重复其正文**、**不预填任何读数**（凡数值一律写「**以对应命令的实际输出为准**」）。
+>
+> **§33 / §34 未被本节取代**：三节并存，冲突时以**更具体的一条**为准（本条只在收口面追加，**不回改任何历史行**）。
+
+### 35-0 总览（本批动作面 = **4 项**）
+
+| # | 动作面 | 落点 | 本轮动作定性 |
+|---|---|---|---|
+| **①** | **兰帖 / 兰帖碎片资产 + 前端行囊 / 图标 + 文案统一** | 后端 `cloudfunctions/compat-api/lib/economy-ledger.js`（及其调用面）· 前端 `frontend/src/business/inventory.ts` / `business/asset-text.ts` / `pages/assets/index.vue` 等 + **`frontend/src/static/icons/*.png`（6 图标位图化）**；文案统一 **`标准石榴籽` → `石榴籽`**（单一来源 = `inventory.ts` 的 `seed` 显示名） | **云函数重打包 + 前端 H5 / 小程序重打**（内容批次，**无新集合**） |
+| **②** | **好友关系域** | `cloudfunctions/compat-api/lib/friends.js` + **新集合 `jiazu_friends`** | **云函数重打包 + 新集合建库 + 前端重打**（明细 = §33） |
+| **③** | **邀请链路** | `cloudfunctions/compat-api/lib/invite.js` + `index.js` **两条路由** + **新集合 `jiazu_invites`** + `scripts/upload-migrated-to-cloudbase.mjs` 的 `COLLECTIONS` **已 12 → 13**（**以文件实际为准**，**项数不在本节预填**） | **云函数重打包 + 新集合建库 + 注册脚本已同步**（明细 = §34） |
+| **④** | **批 3 任务中心** | `docs/task-center.spec.md`（§12 部署要点） | **规划中 · 本轮不做任何上云动作**（只登记规划面，见 §35-4） |
+
+- **本轮云端数据修正 = 无**：**不重传树 JSON、不删旧详情键、不改 `config/tree-meta.json`**（同 §33-0）。
+- **真源侧**：本批窗口内出现 **1 次内容写入**（`migrate-output/collections/jiazu_assets.json`），**归属待 Kevin 确认** —— 完整登记见 **§35-3**。
+- **本批含【待裁】项**：`docs/friend-domain.spec.md` **§15**（13 条，含 **§15-5** 存储形态张力 / **§15-13** 兰帖在行囊默认序中的位置）与 `docs/economy.spec.md` §15 尾注 —— **未裁前不得据任一案判实现负**。
+- **状态**：**本节为待执行清单**（**未打包 / 未部署 / 未上传 / 未重传 / 未建集合**）；结论由执行批与质检收口后回写，**本清单不预填**。
+
+### 35-1 必登 ①：云函数 `compat-api` **必须重打包 + `tcb fn deploy`**（本批**唯一**一次重打包覆盖 ①②③）
+
+- **为什么必登**：本批三面（账本字段 / 好友域 / 邀请链路）全在 `cloudfunctions/compat-api/**` ⇒ **不重打包，云端新路由 404 / 静默返旧口径**（`AGENTS.md` §2.1；先例 §11-1 / §14-1 / §16-1 / §17-1 / §31-1 / §32-1 / §33-1）。
+- **打包命令（沿用既有流程，逐字取自 `docs/economy.spec.md` §12-5 / 本节承 §33-1）**：
+  - `npx esbuild cloudfunctions/compat-api/index.js --bundle --platform=node --format=cjs --external:@cloudbase/node-sdk --outfile=cloudfunctions/deploy/compat-api/index.js`
+  - 再 `tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087e`
+- **判据形态（**只登记形态，不登记数值** —— 逐条执行时贴实际输出）**：
+
+  | # | 判据 | 命令形态 | 通过条件 |
+  |---|---|---|---|
+  | 1 | 兰帖 / 兰帖碎片账本字段字面已进产物 | `grep -c "scroll_fragments" cloudfunctions/deploy/compat-api/index.js`、`grep -c "scrolls" …` | **≥ 1**（**各一条**） |
+  | 2 | 好友域路由字面已进产物 | `grep -c "<friends 路由字面>" …`（**字面以代码为唯一源**，清单 = `docs/friend-domain.spec.md` §8） | **≥ 1**（**每条路由各一条**；**0 命中 = 未打包或漏路由 ⇒ 判负**） |
+  | 3 | 邀请链路两路由字面已进产物 | `grep -c "/invite/me" …`、`grep -c "/invite/accept" …` | **≥ 1**（**各一条**） |
+  | 4 | 两新集合名字面已进产物 | `grep -c "jiazu_friends" …`、`grep -c "jiazu_invites" …` | **≥ 1**（**各一条**） |
+  | 5 | 作废字段名**未**进产物 | `grep -c "bamboo_fragments" …` | **= 0**（**否定项**，承 R-1；**非 0 ⇒ 判负**） |
+  | 6 | 新枚举字面已进产物 | `grep -c "friend_renew" …`、`grep -c "scroll_synth" …`、`grep -c "scroll_decompose" …`、`grep -c "friend_reward" …` | **≥ 1**（**逐枚举各一条**；枚举清单以 `docs/friend-domain.spec.md` §9 与实际代码为源） |
+  | 7 | 冲正未另造 | `grep -c "fee_refund" …` | **≥ 1**，且**不得出现**第二套冲正类型字面（承 `docs/economy.spec.md` §4-6 尾注） |
+  | 8 | 好友 / 资产类账号级路由挂在**树编辑闸门之前** | 读 `cloudfunctions/compat-api/index.js` 的路由注册次序 | **在闸门之前**（否则无 `X-Tree-Id` 的账号级请求先被 400 拦掉，口径 = `docs/economy.spec.md` §6 头部 / §33-1） |
+
+- **⚠️ 前置门槛（沿用既有口径）**：**`npm test` 未全绿前不得打包 / 部署 / 重传**（承 §29-6 第 1 条）。
+  - ⚠️ **注册差量必核**（**本手册口径：未注册 = 假绿**，承 §14-4 / §16-1）：`scripts.test` 的**注册项数**与磁盘 `cloudfunctions/compat-api/lib/*.test.js` 的**文件数**执行时**自行重算并贴输出**；**两数不等即视为覆盖不全**（本批新增测试文件 `lib/friends.test.js` / `lib/invite.test.js` 属**必核项**；**注册端由另一条改单同步**）。**Jing 复核读数（2026-09-25 13:40:16 后）**：`scripts.test` **注册 = 32 = 磁盘 = 32、未注册 = 0** ⇒ **差量已关闭**（**落笔时读数 = 30 / 32，两读数并存**）；**执行时仍须自行重算**。**注册数 / 文件数 / 测试条数一律以对应命令的实际输出为准，本节不预填。**
+- **重打包后本轮 `deploy/` 产物 md5 与 §32-x / §34 的旧产物 md5 必然不同** ⇒ **以命令实际输出为准**（**旧行一律原文保留**）。
+
+### 35-2 必登 ②：**两新集合必须手工建**（**云端首写前**）
+
+- **动作**：云端 CloudBase **手工建**两集合 —— **`jiazu_friends`** 与 **`jiazu_invites`**（控制台建库，或执行上传脚本时由 `ensureCollections()` 建；**无论走哪条，判据 = 首写前集合已存在**）。
+- **形态（逐字取自 §33-3 / §34-1）**：
+  - `jiazu_friends` = **每关系一文档**（`_id` = 双方手机号升序拼接；列表查询用 `colWhere`）；
+  - `jiazu_invites` = **每被邀请人一文档**（`_id` = 被邀请人手机号；字段 `inviter_phone` / `created_at` / `rewarded`）。
+- **为什么必登**：**新增集合不入 `COLLECTIONS` ⇒ 云端对应路由首写报错**（`AGENTS.md` §8；先例 §11-2 / §33-3）。
+- **判据形态（**只登记形态**）**：
+  | # | 判据 | 命令 / 动作形态 | 通过条件 |
+  |---|---|---|---|
+  | 1 | 脚本已登记两集合 | `grep -c "jiazu_friends" scripts/upload-migrated-to-cloudbase.mjs`、`grep -c "jiazu_invites" …` | **≥ 1**，且 `grep -n "const COLLECTIONS" -A 30 …` 的**数组字面量内确实含该名**（**不得只出现在注释里**） |
+  | 2 | 云端集合已存在（**首写前**） | 控制台集合列表核对，或对空集合做一次读（`colWhere`）**不报「集合不存在」** | **存在**（读返空**不算**该集合已建的充分证据时，以控制台为准；**执行时写明用了哪一侧**） |
+  | 3 | 本地对应文件 | `ls migrate-output/collections/jiazu_friends.json migrate-output/collections/jiazu_invites.json` | **首写后存在**（**本批不预置数据**，**首写前不存在属正常**；**不得**为凑判据手工造文件） |
+- **顺序纪律（按序做）**：**① 先建两集合 → ② 再重打包 + `tcb fn deploy` → ③ 再前端 H5 / 小程序重打**（**首写在集合已建之后**；承 §7-7「上云前自检」体例）。
+- **形态纪律**：两集合**从设计起**即「每关系一文档 / 每被邀请人一文档」⇒ **不复制 §7-7 欠债**；**但复核点必做（见 §35-5）**。
+
+### 35-3 必登 ③：**真源写入登记 + 补救快照**（本批窗口 · **归属 = 待 Kevin 确认**）
+
+| 项 | 登记值（**均为 Jing 只读实测 / 派单给定事实**） |
+|---|---|
+| 写入文件 | `migrate-output/collections/jiazu_assets.json` |
+| 写入时点 | **2026-09-25 12:57:56**（派单给定事实）；Jing 实测 `mtime` = **2026-09-25 13:32:33**（**动值** —— 每次读 `GET /assets/summary` 都可能移动，同 §32-3 体例）；`size` = **109351 B** |
+| 内容 `md5` | `a221831f17a394cfb5a17ce9c2cb23ef`（前）→ **`594d25dfea0f78a17c86851e86401169`**（后 · 现盘实测 · 写后复核同值） |
+| 触发方 | **待定**（两个子代理各自报出该写入、**均声明非自己写入** ⇒ 第三方触发）；形态备注 = `3100` 端口**有 node 在监听**（实测 `node` PID 69131）⇒ 形似**经 UI / API 的既有链路写入** —— **初步形态描述，不构成归属裁定** |
+| 归属 | **待 Kevin 确认**（**本册不代裁定**；先例 = 2026-09-23 `shen_27784_01` / 2026-09-24 `gu_39038_01` 的「待确认 → 追记确认」体例） |
+| 判定初步 | **非本批代码所写**：该文件内 `grep -c "scroll_fragments"` = **0**、`grep -c "scrolls"` = **0**（现盘实测）⇒ **不含本批新账本字段** |
+| 补救快照 | **已补建** `~/jiazu-backups/2026-09-25-stage-backup/`（`migrate-output/` + `config/` 全量 + `MD5-LEDGER.txt`）；**条目数 = 342**（= 快照内实际文件数 **342** = 唯一路径数 **342**；ledger **33091 B**）；**快照内该文件 md5 = `594d25dfea0f78a17c86851e86401169` = 现盘一致**；**原文件未改 / 未移 / 未删**（`cp -a` 只读拷贝） |
+
+- **口径（承 `AGENTS.md` §2.1）**：**后续本机验证优先用 `/tmp` 副本栈**（`COMPAT_OUT_DIR` / `COMPAT_META_FILE` 钩子），**避免无谓 touch 真源**；确需对真源跑时**先备份、后登记前后 md5**。
+- **本节与 §32-3 的关系**：§32-3 是 **2026-09-24** 窗口的「真源零写入 / 读侧 sweep 回写」登记；**本行是新窗口、新事实**（**内容已被写**），§32-3 **原文保留、不改**。
+
+**§35-3 追记（追加 · 2026-09-25 · **只追加 · 不改 §35-3 既有正文**）**：上表行「**归属 = 待 Kevin 确认**」措辞**原文保留**，其语义**自本追记起被覆盖**（口径 = `AGENTS.md` §0 第 4 条「历史版本行不机械改写」）。**性质 = 纯台账追加**（**未改代码、未写真源、未打包 / 未部署 / 未上传 / 未重传、未跑测试 / 未跑构建、未 commit**）。本块即 `AGENTS.md` **§7「真源写入登记 · 2026-09-25 归属确认追记（归 Kevin 本人 · 已当面确认）」行**所引「**§35-3 追记**」的**落点本身**。**读数（均 Jing 只读实测 / 派单给定事实）**：
+
+| 项 | 值 |
+|---|---|
+| 归属（定稿） | **归 Kevin 本人** —— **Kevin 于 2026-09-25 当面确认**（本人所为） |
+| 旧行处置 | §35-3 表内「归属 = **待 Kevin 确认**」措辞**原文保留**、语义**自本追记起被覆盖**；§35-3 其余各行**一字未改** |
+| 写入时点 / 文件 | **2026-09-25 12:57:56 CST**（派单给定）/ `migrate-output/collections/jiazu_assets.json` |
+| 内容 `md5` | `a221831f17a394cfb5a17ce9c2cb23ef`（前）→ `594d25dfea0f78a17c86851e86401169`（后 · 现盘复核同值） |
+| 改动面特征（流水实测 · 窗口 = 2026-09-25 12:40–13:10 CST） | **命中 1 笔**：`tx_mughpdj2qfzbt` / `ts` = `2026-09-25T04:57:56.413Z`（= **12:57:56.413 CST**，**与写入时点同秒**）/ `type` = `jade_synth` / `desc` 逐字 = `合成石榴籽玉` / `delta` = `{seeds:-999, jades:1}` / `ref` = `{}`（空）；**该记录无 `operator` 键**（键集 = `delta` / `desc` / `id` / `ref` / `ts` / `type`）⇒ 形态 = 经 UI / API 既有链路的合成操作 |
+| 判定依据 | **非本批代码所写**：`scroll_fragments` / `scrolls` 两串 **grep 均 0 命中**（现盘实测） |
+| 快照 | `~/jiazu-backups/2026-09-25-stage-backup/`；**现盘实测**：ledger **342 行** = **非 ledger 文件数 342**（ledger **不含自身**）⇒ 磁盘 `find -type f` = **343**（含 ledger 自身），与本节登记的「条目数 = 342」**一致**；`MD5-LEDGER.txt` **33091 B**；**快照内该文件 md5 = `594d25dfea0f78a17c86851e86401169` = 现盘一致** |
+| 结论 | **无需回滚 / 退费**（归 Kevin 本人的正常操作；**非脚本 / 非直改文件 / 非本批代码**） |
+| 同步登记 | `AGENTS.md` **§7「真源写入登记 · 2026-09-25 归属确认追记」行**（本块 = 其落点） |
+
+**未做项（本追记）**：**未跑测试 / 未跑构建 / 未改代码 / 未写真源 / 未打包 / 未部署 / 未建集合 / 未 commit**；**本册不写任何实现现状读数**（测试条数 / 构建字节 / 行数）—— 凡读数一律**以对应命令的实际输出为准**。
+
+### 35-4 必登 ④：**批 3 任务中心 = 规划中 · 本轮不做动作**
+
+- **本轮动作 = 无**：**不打包、不建集合、不重打前端、不写实现读数**（批 3 **未落实现**）。
+- **规划面唯一落点** = `docs/task-center.spec.md`（**§12 部署要点** 只指向本册；**§13 待裁 2 项**不属本批）。
+- **未来动作的登记纪律（预置）**：批 3 若**新增集合 / 路由** ⇒ **必须同步进上传脚本的集合列表与 `COLLECTIONS`**，并按**本节同体例**（§35-1 / §35-2 / §35-5 / §35-6）追加登记；**不得**留下「云端首写报错」的悬空项（口径 = `docs/task-center.spec.md` §12 第 2 条）。
+- **⚠️ 未裁前不得据任一读法判实现负**（`docs/task-center.spec.md` §13-1 / §13-2）。
+
+### 35-5 与已知部署阻塞项的关系（**§7-7 欠债 · 本批复核点**）
+
+| # | 关系判定 | 说明 |
+|---|---|---|
+| 1 | **物品侧仍受 §7-7 约束（未解除）** | 本批 ① 的兰帖 / 兰帖碎片字段**仍写在 `jiazu_assets`**（设计上**不新建物品集合**，见 `docs/friend-domain.spec.md` §7-2）⇒ `_id='global'` 单文档 + 仅进程内锁 ⇒ **云端多实例可丢更新 / 双花**问题**本批物品面依旧存在**；**不得**以为新集合走了每关系一文档就顺带解决（同 §33-4 第 1 条） |
+| 2 | **两新集合不复制该欠债** | `jiazu_friends` = **每关系一文档**、`jiazu_invites` = **每被邀请人一文档** ⇒ 并发面由「全体用户」缩到「**单条关系 / 单个被邀请人**」（口径 = `docs/friend-domain.spec.md` §7-1 / §17-1） |
+| 3 | **通知面同受约束** | 本批复用 `jiazu_messages`（不造第二套消息域）⇒ 同形态、一并评估（同 §33-4 第 2 条） |
+
+- **必须复核点（未复核不得判「已解除」，逐条贴实际输出）**：
+  1. **形态落地复核**：两新集合的 `_id` 构造是否**确为**上述形态（**以代码为唯一源**：`lib/friends.js` / `lib/invite.js` 的 `_id` 构造）；列表查询用的**过滤字段名**（`colWhere` 口径）**属未裁项**（§34-4 尾注 / `docs/friend-domain.spec.md` §15-6）⇒ **未裁前不判负**。
+  2. **同关系并发复核（**关键**）**：「每关系一文档」**只缩小并发面、不等于解除** —— 若同一关系的写协议仍是「读整份 → 改 → 整份回写」**且无 `version` 乐观锁 CAS**，**同一关系内两实例并发写仍可丢更新**（此即 `docs/friend-domain.spec.md` **§15-5【待裁】R-15 与 R-17 的张力**）⇒ **执行时须实测 / 读码确认写协议，结论以实际输出与代码为源**。
+  3. **`COLLECTIONS` 复核**：两集合名均在数组字面量内（判据同 §35-2 判据 1）。
+  4. **上云前自检（承 §7-7 末句）**：若 `jiazu_assets` 仍是 `_id='global'`，**本批物品侧视为未就绪**（本批**不因此被阻止登记**，但**上云决策须显式记入该欠债**）。
+
+### 35-6 部署后冒烟验证（**按序做**；每步 = 判据 + 期望；⚠️ 结论由执行 / 质检收口后回写，**本清单不预填**）
+
+1. **重打包判据逐串**：命令 = §35-1 表列 `grep -c` 全组 ⇒ **期望**：表列通过条件**逐条成立**（**实际输出为准**；任一否定项非 0 ⇒ 判负）。
+2. **两集合已建**：控制台 / 读集合核对 ⇒ **期望**：两集合存在，账号级路由首写**不报「集合不存在」**；首写后本地 `migrate-output/collections/jiazu_friends.json` / `jiazu_invites.json` **按实际写入生成**。
+3. **文案统一**：对前端**产物**（H5 `frontend/dist/build/h5/**` / 小程序 `frontend/dist/build/mp-weixin/**`）与源码侧各做一次 `grep -c "标准石榴籽"` ⇒ **期望 = 0**；`grep -c "石榴籽"` ⇒ **期望 ≥ 1**（**现行区**；**已标「已被取代 · 原文保留」的历史区旧名不计入本判据**）。
+4. **6 图标位图化**：核对产物内图标资源与引用 ⇒ **期望**：图标按位图形态**已进产物**、页面不出现缺图（**逐项以实际产物路径为准**）。
+5. **行囊展示（兰帖 / 兰帖碎片面）**：兰帖 = `floor(Σ scrolls[].qty / 100)` 格 + 余数格；兰帖碎片 **1–99 个占 1 格**、角标 = 实际个数 ⇒ **期望**：**不出现**「碎片满 100 个仍未自动合成」中间态；**默认序插入点（§15-13）未裁前不得判负**。
+6. **好友关系建立**：A 邀请 B ⇒ B 接受 ⇒ **期望**：`GET /friends` 双侧可见、`expires_at` = 接受时刻 `T0` + **12 个月**、`reward_months = 0`。
+7. **续约双边扣费**：窗口 ≤ 30 天发起并确认 ⇒ **期望**：**双方各 −1 枚成品兰帖**、`reward_months += 1`、`expires_at` **从 `T0` 重算**；窗口 > 30 天 ⇒ **期望 409**；单边兰帖不足 ⇒ **期望 409 且申请保留**（R-10）。
+8. **奖励池**：触发一次 ⇒ **期望**：本人得基础奖励、每位**生效中**好友按分母得分（**缓冲期好友不参与**）、**不整除余数销毁**、**同一活动实例不重复分发**、**收件人所得不再触发新池（不连锁）**；**分母 = 0 的读法属未裁项（§15-4）⇒ 未裁前不判负**。
+9. **邀请链路**：`GET /invite/me` / `POST /invite/accept` ⇒ **期望**：**均需登录**、无效 token 回 **401（不降级 guest）**；注册带 `invite_code` ⇒ **期望**：邀请人得 **9 石榴籽碎片 + 11 兰帖碎片**、**被邀请人不得奖**；**日限 3**（超限**静默不发、不回滚注册**）；防刷三条（不自邀 / 同一被邀请人只奖一次 / 邀请人须已注册）逐条成立。
+10. **真源零写入核对（冒烟窗口）**：`find migrate-output config -newermt "<冒烟开始时刻>" -type f` ⇒ **期望为空**；若因读侧 `sweep` 只动 `mtime`，**须逐文件记录 `mtime` + `md5` 并登记**（口径承 `AGENTS.md` §2.1 / 本册 §32-3）。
+11. **批 3 任务中心**：**本轮不验**（§35-4）。
+
+### 35-7 明确**不需要**上云的东西
+
+- **`migrate-output/` 与 `config/` 的既有真源内容**：本批**无数据修正**，**不重传树 JSON、不删旧详情键、不改 `config/tree-meta.json`**（**§35-3 登记的那次写入是「本地既有事实」，不是本次要上云的内容** —— 上云数据面**不由本批驱动**）。
+- **`auth-server/**`**：已退役 / 仅排查用链路，**不进云**（§6）。
+- **`scripts/*` 一次性修复脚本、`shell-scripts/**`、`/tmp/jiazu-*`、`backups/**`、`~/jiazu-backups/**`**：离线 / 临时产物，**不参与打包、不同步云端**（`AGENTS.md` §2.4；**§35-3 的快照目录即此类**）。
+- **`docs/**`**：规格与台账**不上云**（本册本节即纯台账追加）。
+- **`cloudfunctions/deploy/**`**：是**打包产物**，**不是编辑对象**（`AGENTS.md` §2.1）。
+
+### 35-8 本节未做
+
+- **未改任何代码 / 配置 / `migrate-output/` / `config/`**（**真源只读**：`cp -a` 快照为只读拷贝，源侧零写入）；**未改 §0–§34 任何历史行**。
+- **未打包 / 未部署 / 未上传 / 未重传 / 未建集合**；**未跑测试 / 未跑构建**（本册本节**不写**测试条数 / 构建字节 / 哈希 / 行数；**注册差量以命令实际输出为准**）。
+- **未 commit / 未 push**。
+- **未裁任何【待裁】项**（`docs/friend-domain.spec.md` §15 十三条 / `docs/task-center.spec.md` §13 两条 / §35-5 复核点 1–2 的过滤字段名与写协议）—— **本册不代裁定**。
+
+---
+
+### 35-9 批 3 上云动作与判据（**追加 · 2026-09-25 · 只追加 · 不改 §35-0–§35-8 任何行**）
+
+> **性质**：本节把 §35-0 表内 **④「批 3 任务中心 = 规划中 · 本轮不做动作」**与 §35-4 的**规划面**展开为**可执行上云清单**；§35-4 的「本轮动作 = 无」**措辞原文保留**，其语义**自本节起**只指「**本批尚未执行**」（**未打包 / 未部署 / 未上传**），**不再指「无动作面」**（口径 = `AGENTS.md` §10「历史版本行不机械改写」）。**执行时逐项照做，一律以对应命令的实际输出为准；本节不预填任何读数 / 结论**（测试条数 / 构建字节 / 路由条数 / 产物 md5 一概不预填）。
+
+#### 35-9-1 动作面 ①：云函数 `compat-api` **必须重打包 + `tcb fn deploy`**（**批 3 任务中心两条路由 + 好友域路由**）
+
+- **为什么必登**：批 3 新路由与好友域路由全在 `cloudfunctions/compat-api/**` ⇒ **不重打包，云端新路由 404 / 静默返旧口径**（`AGENTS.md` §2.1；先例 §35-1）。
+- **批 3 任务中心两条路由（**Jing 现盘 `grep` 现证逐字 · 唯一源 = `cloudfunctions/compat-api/index.js`**）**：
+  - **`GET /tasks/today`** —— 路由清单注释逐字（第 **22** 行）= `GET  /tasks/today | POST /tasks/claim（任务中心：三条每日任务三态 + 手动领取；领取即 friend-ops 奖励池入口）`；派发判据逐字 = `if (pathname === '/tasks/today' || pathname === '/tasks/claim') {`（第 **1031** 行）· `if (pathname === '/tasks/today' && method === 'GET') {`（第 **1045** 行）。
+  - **`POST /tasks/claim`** —— 逐字 = `if (pathname === '/tasks/claim' && method === 'POST') {`（第 **1056** 行）；入参 `task ∈ signin / invite / write`（第 **1024–1025** 行注释 + `lib/task-center.js` 第 **84** 行枚举，逐字）。
+  - **注册次序**：`/tasks/*` 段与 `/friends/*` 段同段、**注册在树编辑闸门之前**（口径 = §35-1 判据 8）。
+- **好友域路由（**同为 `index.js` 现证逐字**；承 §35-1 判据 2「字面以代码为唯一源」**）**：现盘实测 `index.js` 内 `/friends*` 路由**逐条 = 9 条** ——
+  1. `GET  /friends`（第 **922** 行）
+  2. `POST /friends/invite`（第 **931** 行）
+  3. `POST /friends/accept`（第 **939** 行）
+  4. `POST /friends/reject`（第 **940** 行）
+  5. `POST /friends/cancel`（第 **941** 行）
+  6. `POST /friends/renew/request`（第 **942** 行）
+  7. `POST /friends/renew/confirm`（第 **943** 行）
+  8. `POST /friends/renew/cancel`（第 **944** 行）
+  9. `POST /friends/dissolve`（第 **945** 行）
+  - 该段**入口前缀判据逐字** = `pathname === '/friends' || pathname.startsWith('/friends/') || pathname === '/assets/scroll/decompose'`（第 **903–907** 行）⇒ **同一派发段实际覆盖 10 条路由**（上列 **9 条** + `POST /assets/scroll/decompose`，第 **906** 行）。
+  - ⚠️ **口径备注（不代裁定）**：`docs/friend-domain.spec.md` §8 **拟定**清单内的 `GET /friends/requests` · `POST /friends/renew-request` · `POST /friends/renew-confirm` · `POST /friends/revoke` · `POST /friends/incr` 等字面**现盘 `index.js` 实测未出现**；**实现字面以代码为唯一源**，spec 拟定字面与实现的差量属**规格侧待裁项**（`docs/friend-domain.spec.md` §15-6）—— **本节不代裁定**。
+  - **邀请链路两路由**（同批、同一次重打包覆盖）：`GET /invite/me`（第 **473** 行）· `POST /invite/accept`（第 **479** 行）（明细则 §34）。
+- **打包 + 部署命令（沿用既有流程，逐字同 §35-1）**：
+  - `npx esbuild cloudfunctions/compat-api/index.js --bundle --platform=node --format=cjs --external:@cloudbase/node-sdk --outfile=cloudfunctions/deploy/compat-api/index.js`
+  - `tcb fn deploy compat-api -e liwu-d8gek6jjdab1d087e`
+- **判据（**只登记形态、不登记数值**）**：① `grep -c "/tasks/today" cloudfunctions/deploy/compat-api/index.js` ⇒ **≥ 1**、`grep -c "/tasks/claim" …` ⇒ **≥ 1**；② §35-1 表列判据 **1–8 逐条重跑**（全组通过条件不变，**实际输出为准**）。
+- **⚠️ 前置门槛**：**`npm test` 未全绿前不得打包 / 部署 / 重传**（承 §29-6 第 1 条；注册差量口径 = §35-1 末条，**执行时自行重算**）。
+
+#### 35-9-2 动作面 ②：前端子包 + 全量产物重打（随 ① 之后）
+
+- **小程序**：`build:mp-weixin` 后在开发者工具**上传**；子包 = `frontend/src/pages.json` 现盘实测三个 `root` —— **`pages/friend`**（第 **96** 行）· **`pages/task`**（第 **103** 行）· **`pages/special`**（第 **109** 行）。
+- **H5**：`build:h5`（**构建前注入 `VITE_API_BASE` = 云函数 HTTP 域名，取值同 §1 / §7-4**）⇒ 产物 `frontend/dist/build/h5` ⇒ `tcb hosting deploy frontend/dist/build/h5 -e liwu-d8gek6jjdab1d087c`。
+- **顺序纪律**：**先重打包云函数 → 再前端重打**（同 §35-2；**首写前集合已建**的先决条件不变）。
+- **判据（**只登记形态**）**：对**产物**（`frontend/dist/build/mp-weixin/**` 与 `h5/**` 各一次）`grep -c "/tasks/today"` ⇒ **≥ 1**、`grep -c "/tasks/claim"` ⇒ **≥ 1**；三个子包目录按实际构建生成；**字节数 / md5 / 文件数一律以命令实际输出为准**。
+
+#### 35-9-3 动作面 ③：`cloudfunctions/deploy/**` 产物 —— **本批未重打包**（**如实登记**）
+
+- **现盘实测（目录级读数）**：`cloudfunctions/deploy/compat-api/` 目录 `mtime` = **Aug 15 16:01**（`ls -la cloudfunctions/deploy/`）。
+- **本单（制度员落盘单）未执行任何 `esbuild` 重打包 / `tcb fn deploy` / 前端构建 / 上传** ⇒ **本批上云动作尚未开始**（未打包 / 未部署 / 未上传 / 未重传 / 未建集合），**本轮云端状态零变更**。
+- **形态纪律**：`cloudfunctions/deploy/**` 是**打包产物、不是编辑对象**（§35-7 / `AGENTS.md` §2.1）。
+
+#### 35-9-4 动作面 ④：集合同步（`COLLECTIONS`）
+
+- **本批未新增集合**（实测依据）：`lib/task-center.js` 内出现的集合名**现盘实测唯一 = `jiazu_assets`**（`grep -o "jiazu_[a-z_]*" … | sort -u`）⇒ 批 3 任务中心**复用既有 `jiazu_assets`**，**不新建集合** ⇒ **本批无需同步 `COLLECTIONS`**。
+- **现盘基线（供执行时比对，非预言值）**：`scripts/upload-migrated-to-cloudbase.mjs` 的 `const COLLECTIONS = [` 数组（第 **31–48** 行）现盘实测 **13 项**（末项 `jiazu_invites`）。
+- **纪律**：**若执行时实测有新增集合，必须先同步该列表再上云**（否则云端对应路由首写报错，口径 = `AGENTS.md` §8 / §35-2 判据 1）。
+
+#### 35-9-5 冒烟验证（**按序做**；⚠️ **不预填结论、不预填任何读数**）
+
+1. **重打包判据全组**：命令 = §35-1 表列判据 1–8 + §35-9-1 判据 ① ⇒ **期望**：通过条件**逐条成立**（**实际输出为准**；任一否定项非 0 ⇒ 判负）。
+2. **任务中心路由可达**：`GET /tasks/today`（带 Bearer）⇒ **期望**：200 且 `data.tasks` 出三条任务的**三态**；**无 token ⇒ 期望 401**；`POST /tasks/claim {"task": <signin|invite|write>}` 三值各一次 ⇒ **期望**：按 T-4 口径返回（**未达标 ⇒ 409 中文**；**已领取 ⇒ 幂等态**），**读数以实际输出为准**。
+3. **`GET /tasks/today` 零写入**：同 §35-6 第 10 条手法（`find migrate-output config -newermt "<冒烟开始时刻>" -type f`）⇒ **期望为空**；若仅 `mtime` 动（读侧 `sweep`），**须逐文件登记 `mtime` + `md5`**（口径承 `AGENTS.md` §2.1 / §32-3）。
+4. **好友域路由复用既有判据**：§35-6 第 **6–8** 条（建关系 / 续约双边扣费 / 奖励池）**逐条重跑** ⇒ **期望**同 §35-6 各条（**本节不预填读数**）。
+5. **前端子包（小程序）**：开发者工具打开 ⇒ **期望**：`pages/friend` / `pages/task` / `pages/special` 三子包可加载、任务中心页与好友页**不报错 / 不缺图**（**逐项以实际产物路径为准**）。
+6. **H5**：部署后访问对应页面 ⇒ **期望**：任务中心 / 好友页正常、**无 404 / 无白屏**。
+7. **未裁项不判负**：`docs/task-center.spec.md` **§13-1 / §13-2**（任务每日重置时点 / 平台写操作达标判定粒度）与 `docs/friend-domain.spec.md` **§15** 各条 —— **未裁前不得据任一读法判实现负**。
+
+#### 35-9-6 本节未做
+
+- **未打包 / 未部署 / 未上传 / 未重传 / 未建集合**；**未改任何代码 / 配置 / `migrate-output/` / `config/`**（**真源只读**）；**未改 §0–§35-8 任何历史行**（**纯追加**）。
+- **未跑测试 / 未跑构建**；**本节不写任何实现读数**（测试条数 / 构建字节 / 产物 md5 / 路由条数一律**以对应命令的实际输出为准**）。
+- **未 commit / 未 push**；**未裁任何【待裁】项**。

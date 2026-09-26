@@ -93,6 +93,19 @@
   ],
   "subPackages": [
     {
+      "root": "pages/friend",
+      "pages": [
+        { "path": "list/index", "style": { "navigationBarTitleText": "好友" } },
+        { "path": "invite/index", "style": { "navigationBarTitleText": "邀请好友" } }
+      ]
+    },
+    {
+      "root": "pages/task",
+      "pages": [
+        { "path": "index", "style": { "navigationBarTitleText": "领取今日奖励" } }
+      ]
+    },
+    {
       "root": "pages/special",
       "pages": [
         {

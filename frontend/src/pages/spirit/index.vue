@@ -43,9 +43,21 @@
               <text class="jade-line">已镶玉：{{ shortId(mountedJade?.jade_id) }}</text>
             </view>
             <text class="jade-line">镶嵌时间 {{ formatDate(mountedJade?.mounted_at || '') }}</text>
-            <text class="jade-line">
-              玉有效期 {{ mountedJade?.expires_at ? formatDate(mountedJade.expires_at) : '永久有效' }}
-            </text>
+            <text class="jade-line">永久有效（镶嵌即永久占用）</text>
+
+            <!-- 注入者（口径 v6 · 后端读侧反查）：三态展示，手机号不下发、不展示 -->
+            <view class="injector-box">
+              <template v-if="injector">
+                <text class="injector-main">此玉由 {{ injector.nickname }} 注入</text>
+                <view v-if="injectorHandle" class="injector-card" @click="goInjectorProfile">
+                  <text class="injector-card-name">{{ injector.nickname }}</text>
+                  <text class="injector-card-link">查看注入者档案 ›</text>
+                </view>
+                <text v-else class="injector-note">注入者无本树节点</text>
+              </template>
+              <text v-else class="injector-note">注入者信息不可考</text>
+            </view>
+
             <text class="jade-warn">
               镶嵌即永久占用本树唯一凹槽：该玉已销毁，不可取回、不可分解、不可二次使用。
             </text>
@@ -67,7 +79,7 @@
           </view>
           <view v-else-if="unmountedJades.length === 0" class="empty">
             <text v-if="jades.length">您持有的石榴籽玉均已镶嵌，每棵家族树仅可镶嵌 1 枚</text>
-            <text v-else>需先合成石榴籽玉（{{ JADE_SYNTH_SEEDS }} 颗石榴籽可合成 1 枚）</text>
+            <text v-else>需先在「我的 → 行囊」合成石榴籽玉（{{ JADE_SYNTH_SEEDS }} 颗石榴籽可合成 1 枚）</text>
             <text class="link" @click="goMyAssets">去我的资产</text>
           </view>
           <view v-for="j in unmountedJades" :key="j.id" class="row-item">
@@ -141,51 +153,7 @@
         </template>
       </view>
 
-      <!-- ④ 玉操作区：合成（8.2 定稿确认）/ 分解（免费 + 二次确认） -->
-      <view class="section">
-        <view class="ico-line">
-          <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
-          <text class="section-title">石榴籽玉</text>
-        </view>
-        <text class="section-hint">{{ JADE_SYNTH_SEEDS }} 颗石榴籽合成 1 枚玉；分解免费，返还 {{ JADE_SYNTH_SEEDS }} 颗石榴籽（统一 {{ SEED_VALID_DAYS }} 天有效期）。</text>
-
-        <t-button
-          theme="primary"
-          block
-          class="op-btn"
-          :loading="synthesizing"
-          :disabled="synthesizing"
-          @click="confirmSynthesize"
-        >
-          <view class="btn-inline">
-            <image class="ico-sm" :src="ICON.JADE" mode="aspectFit" />
-            <text>合成石榴籽玉（999 颗）</text>
-          </view>
-        </t-button>
-
-        <view v-if="!isAuthenticated()" class="empty">
-          <text>请先登录后合成 / 分解石榴籽玉</text>
-        </view>
-        <view v-else-if="unmountedJades.length === 0" class="empty">
-          <text>暂无可分解的石榴籽玉</text>
-        </view>
-        <view v-for="j in unmountedJades" :key="'d-' + j.id" class="row-item">
-          <view class="row-left">
-            <text class="row-main">{{ jadeLabel(j) }}</text>
-            <text class="row-sub">未镶嵌 · 可免费分解</text>
-          </view>
-          <t-button
-            size="small"
-            variant="outline"
-            theme="primary"
-            :loading="decomposingId === j.id"
-            :disabled="decomposingId !== ''"
-            @click="confirmDecompose(j.id)"
-          >分解</t-button>
-        </view>
-      </view>
-
-      <!-- ⑤ 灌注流水（该树成员可看；非成员 / 未登录按接口文案降级） -->
+      <!-- ④ 灌注流水（该树成员可看；非成员 / 未登录按接口文案降级） -->
       <view class="section">
         <view class="section-head">
           <text class="section-title">灵泽蓄能流水</text>
@@ -220,24 +188,17 @@ import {
   ApiStatusError,
   fetchAssetsSummary,
   fetchSpirit,
-  postDecomposeJade,
   postMountJade,
   postSpiritCharge,
-  postSynthesizeJade,
   stateTextPrimary,
   stateTextSecondary,
 } from '@/business/api';
 import type { AssetsSummary, Jade, SpiritInfo, SpiritLogItem, SpiritPlan, SpiritPlanItem } from '@/business/api';
 import { isAssetInsufficientError, showAssetInsufficientGuide } from '@/business/asset-guide';
 import {
-  DECOMPOSE_CONFIRM_BODY,
-  DECOMPOSE_CONFIRM_TITLE,
   JADE_SYNTH_SEEDS,
   MOUNT_CONFIRM_BODY,
   MOUNT_CONFIRM_TITLE,
-  SEED_VALID_DAYS,
-  SYNTH_CONFIRM_BODY,
-  SYNTH_CONFIRM_TITLE,
 } from '@/business/jade-ops';
 import { isAuthenticated } from '@/business/auth';
 import { ICON } from '@/business/icons';
@@ -303,9 +264,7 @@ const fatalError = ref('');
 const error = ref('');
 const selectedKey = ref<SpiritPlan>('daily');
 const charging = ref(false);
-const synthesizing = ref(false);
 const mountingId = ref('');
-const decomposingId = ref('');
 /** 档位重拉中（蓄能区失败态的重试按钮 loading） */
 const plansLoading = ref(false);
 
@@ -313,6 +272,11 @@ const plansLoading = ref(false);
 
 const isMounted = computed(() => info.value?.mounted === true);
 const mountedJade = computed(() => info.value?.jade || null);
+
+/** 注入者（口径 v6）：后端读侧反查结果；未镶嵌 / 反查不到 → null（「注入者信息不可考」） */
+const injector = computed(() => info.value?.injector || null);
+/** 注入者在本树的锚点节点 handle；空 → 无本树节点（纯文本兜底，不给链接） */
+const injectorHandle = computed(() => injector.value?.person_handle || '');
 
 const statusClass = computed(() => {
   const st = info.value?.status || 'none';
@@ -556,84 +520,7 @@ async function doMount(jadeId: string) {
   }
 }
 
-// ---- 合成（8.2 定稿确认）/ 分解（免费 + 二次确认） ----
-
-function confirmSynthesize() {
-  if (synthesizing.value) return;
-  if (!isAuthenticated()) {
-    goLogin();
-    return;
-  }
-  uni.showModal({
-    title: SYNTH_CONFIRM_TITLE,
-    content: SYNTH_CONFIRM_BODY,
-    confirmText: '确认合成',
-    cancelText: '取消',
-    success: (res) => {
-      if (res.confirm) doSynthesize();
-    },
-  });
-}
-
-async function doSynthesize() {
-  synthesizing.value = true;
-  error.value = '';
-  try {
-    const res = await postSynthesizeJade();
-    const tail = res?.permanent
-      ? '（永久有效）'
-      : res?.expires_at
-        ? `（有效期至 ${formatDate(res.expires_at)}）`
-        : '';
-    await loadAssets();
-    uni.showToast({
-      title: `合成成功${tail}，消耗 ${res?.seeds_deducted || JADE_SYNTH_SEEDS} 颗，余 ${seedsTotal.value} 颗石榴籽`,
-      icon: 'none',
-      duration: 4000,
-    });
-  } catch (e: any) {
-    if (isSeedsInsufficient(e)) {
-      showAssetInsufficientGuide(e);
-    } else {
-      error.value = e?.message || '合成失败';
-      uni.showToast({ title: error.value, icon: 'none' });
-    }
-  } finally {
-    synthesizing.value = false;
-  }
-}
-
-function confirmDecompose(jadeId: string) {
-  if (!jadeId || decomposingId.value) return;
-  // 分解免费：仅需二次确认（不走 8.2 合成文案）
-  uni.showModal({
-    title: DECOMPOSE_CONFIRM_TITLE,
-    content: DECOMPOSE_CONFIRM_BODY,
-    confirmText: '确认分解',
-    cancelText: '取消',
-    success: (res) => {
-      if (res.confirm) doDecompose(jadeId);
-    },
-  });
-}
-
-async function doDecompose(jadeId: string) {
-  decomposingId.value = jadeId;
-  error.value = '';
-  try {
-    const res = await postDecomposeJade(jadeId);
-    uni.showToast({
-      title: `已分解，返还 ${res?.seeds_returned || JADE_SYNTH_SEEDS} 颗石榴籽，余 ${seedsTotal.value} 颗`,
-      icon: 'none',
-    });
-    await loadAssets();
-  } catch (e: any) {
-    error.value = e?.message || '分解失败';
-    uni.showToast({ title: error.value, icon: 'none' });
-  } finally {
-    decomposingId.value = '';
-  }
-}
+// ---- 合成 / 分解：**已迁至「我的 → 行囊」**（本页不再承载玉操作区，相关 import / state / 函数一并移除） ----
 
 /** 籽不足判定：优先业务码，其次后端文案（含「石榴籽不足 / 资产不足」） */
 function isSeedsInsufficient(e: unknown): boolean {
@@ -680,6 +567,13 @@ function goLogin() {
 function goMyAssets() {
   uni.navigateTo({ url: '/pages/assets/index' });
 }
+
+/** 注入者节点卡片 → 该人物档案页（跳转口径同 components/person-detail-modal：/pages/person/detail?tree_id=&handle=） */
+function goInjectorProfile() {
+  const handle = injectorHandle.value;
+  if (!handle || !treeId.value) return;
+  uni.navigateTo({ url: `/pages/person/detail?tree_id=${treeId.value}&handle=${handle}` });
+}
 </script>
 
 <style scoped>
@@ -702,7 +596,6 @@ function goMyAssets() {
 .ico-line-end { justify-content: flex-end; flex-shrink: 0; }
 .ico-sm { width: 40rpx; height: 40rpx; flex-shrink: 0; }
 .ico-seed { width: 36rpx; height: 36rpx; flex-shrink: 0; }
-.btn-inline { display: flex; align-items: center; justify-content: center; gap: 8rpx; }
 
 .status { border-left: 4px solid #B5A594; }
 .status-active { border-left-color: #2E7D32; }
@@ -724,6 +617,21 @@ function goMyAssets() {
 .jade-warn { font-size: 12px; color: #C62828; display: block; margin-top: 8px; }
 .jade-note { font-size: 11px; color: #B5A594; display: block; margin-top: 4px; }
 
+/* 注入者（口径 v6）：醒目主文案 + 可点节点卡片 / 两级兜底文案 */
+.injector-box {
+  margin-top: 10px; padding: 10px 12px;
+  background: #FBF6EF; border-radius: 8px; border-left: 4px solid #8B4513;
+}
+.injector-main { font-size: 14px; font-weight: bold; color: #8B4513; display: block; }
+.injector-card {
+  margin-top: 8px; padding: 8px 10px;
+  background: #fff; border: 1px solid #E8DCCB; border-radius: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.injector-card-name { font-size: 13px; color: #3E2723; }
+.injector-card-link { font-size: 12px; color: #2C5F8A; flex-shrink: 0; }
+.injector-note { font-size: 12px; color: #B5A594; display: block; margin-top: 6px; }
+
 .plan-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .plan-card {
   width: 30%; flex: 1 1 30%; min-width: 96px;
@@ -740,7 +648,6 @@ function goMyAssets() {
 
 .charge-btn { margin-top: 6px; }
 .retry-btn { margin-top: 10px; }
-.op-btn { margin-top: 4px; }
 
 .empty { text-align: center; color: #999; padding: 14px 0; font-size: 13px; }
 .link { color: #2C5F8A; font-size: 13px; display: block; margin-top: 6px; }

@@ -13,6 +13,17 @@
 import type { PersonSummary } from './types';
 import type { FamilySummary } from './api';
 
+/**
+ * 「外树子女镜像」判据（简单判据，不看本姓）：
+ * `external_mirror === 'true'` 且 `external_link_type === 'child'`。
+ * 与后端人数口径同源（compat-api lib/family-population.js 家族人数口径里的同一判据）。
+ * 仅用于家族树树图绘制：这类节点是「本姓女性嫁出后所生子女」在娘家的镜像占位，
+ * 真身在夫家树（数据零写入，节点本身必须保留）。
+ */
+function isChildMirrorPerson(p: PersonSummary | undefined): boolean {
+  return !!p && String(p.external_mirror) === 'true' && p.external_link_type === 'child';
+}
+
 export interface TreePersonNode {
   name: string;
   handle: string;
@@ -58,14 +69,18 @@ export interface TreePersonNode {
  *   （始祖是具体人物，图上直接以真实人物为根，可点击查看/编辑）。
  *   未指定或找不到时，按多根构建，并排除「配偶姻亲」根（其子女已挂在配偶血缘支系下，
  *   避免同一批子女在图示中被重复渲染）。
+ * @param opts.excludeChildMirrors 排除「外树子女镜像」（external_mirror='true' 且
+ *   external_link_type='child'）：该节点连同其子树整支不进入森林。缺省 false = 既有行为逐字不变。
+ *   仅家族树（tree-meta 判定 kind==='family'，含缺省）使用；世本 / 祖谱不传（顶端链镜像、
+ *   始祖镜像、祖谱登记镜像照旧绘制）。
  * @returns 根节点列表（每棵树的根）
  */
 export function buildPedigreeForest(
   people: PersonSummary[],
   families: FamilySummary[],
-  opts?: { founderGrampsId?: string },
+  opts?: { founderGrampsId?: string; excludeChildMirrors?: boolean },
 ): TreePersonNode[] {
-  const { founderGrampsId } = opts || {};
+  const { founderGrampsId, excludeChildMirrors = false } = opts || {};
 
   // handle -> person
   const personMap = new Map<string, PersonSummary>();
@@ -86,7 +101,7 @@ export function buildPedigreeForest(
   if (founderGrampsId) {
     const founder = people.find((p) => p.gramps_id === founderGrampsId);
     if (founder) {
-      const node = buildWithFreshVisited(founder.handle, personMap, families);
+      const node = buildWithFreshVisited(founder.handle, personMap, families, excludeChildMirrors);
       if (node) {
         node._is_root = true;
         return [node];
@@ -196,7 +211,7 @@ export function buildPedigreeForest(
   for (const rootHandle of effectiveRoots) {
     // 每个根重新建立 visited（多棵树独立）
     // 但共用 visited 会丢节点，这里对每个根用独立 visited
-    const node = buildWithFreshVisited(rootHandle, personMap, families);
+    const node = buildWithFreshVisited(rootHandle, personMap, families, excludeChildMirrors);
     if (node) {
       node._is_root = true;
       forest.push(node);
@@ -210,6 +225,7 @@ function buildWithFreshVisited(
   handle: string,
   personMap: Map<string, PersonSummary>,
   families: FamilySummary[],
+  excludeChildMirrors = false,
 ): TreePersonNode | null {
   const visited = new Set<string>();
 
@@ -217,6 +233,8 @@ function buildWithFreshVisited(
     if (visited.has(handle)) return null;
     const person = personMap.get(handle);
     if (!person) return null;
+    // 家族树：外树子女镜像连同其子树整支不入图（不遍历其子女，也不占用 visited）
+    if (excludeChildMirrors && isChildMirrorPerson(person)) return null;
     visited.add(handle);
 
     const node: TreePersonNode = {

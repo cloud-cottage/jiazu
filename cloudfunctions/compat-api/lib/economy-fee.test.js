@@ -244,12 +244,16 @@ test('单价表 FEE 与 feeOf 矩阵穷举：1 / 1 / 9（与人数无关）/ 3N 
     reparent_same_tree: 1,
     reparent_cross_tree: 9,
     delete_node_per_person: 3,
+    sibling_reorder: 1, // 调整同胞排行：1 片 / 次（pin 被拖动的子女节点，与被动移位的兄弟数量无关）
     tree_create_seeds: 9,
     branch_fee_seeds: 9999, // 立支（docs/branch-clan-ops.spec.md §3-4 / §6-1-7）
   });
 
   // #1 人物内容修改 1 片 / 节点
   assert.deepEqual(eco.feeOf('person_update'), { unit: 'bamboos', pieces: 1, tx_type: 'edit_fee' });
+  // #1′ 调整同胞排行 1 片 / 次（复用既有枚举 edit_fee；与被动移位兄弟数量无关）
+  assert.deepEqual(eco.feeOf('sibling_reorder'), { unit: 'bamboos', pieces: 1, tx_type: 'edit_fee' });
+  assert.equal(eco.feeOf('sibling_reorder', { people_count: 9 }).pieces, 1, '单价是常量，不按人数放大');
 
   // #2 同树改父 1 片 / 节点；#3 跨树改父 9 片 / 次
   assert.equal(eco.feeOf('reparent', { cross_tree: false }).pieces, 1);
@@ -1120,8 +1124,8 @@ test('0 片穷举：矩阵里 30 条 0 片路由均未接闸门（源码级）+ 
   assert.equal(missing.length, 0, `0 片清单与 index.js 对不上的路由（幽灵或改名）：${missing.join(', ')}`);
   assert.equal(ZERO_FEE_ROUTES.length, 30, '0 片清单条数固定（矩阵即契约）');
 
-  // 正向对照：4 条计费路由都确实接了闸门
-  for (const p of ['/admin/reparent', '/admin/delete-node', '/admin/create-tree']) {
+  // 正向对照：5 条计费路由都确实接了闸门
+  for (const p of ['/admin/reparent', '/admin/delete-node', '/admin/create-tree', '/admin/sibling-reorder']) {
     const snippets = branchesOf(p).join('\n');
     assert.ok(GATE_RE.test(snippets), `${p} 应接入扣费闸门`);
   }
@@ -1174,14 +1178,16 @@ test('0 片穷举：矩阵里 30 条 0 片路由均未接闸门（源码级）+ 
 
 // ================= ⑥-2 冲正回显统一（fee_refunded） =================
 
-test('冲正回显统一：4 条计费路由落库失败一律带 fee_refunded:true（/admin/reparent、/admin/delete-node 实测）', async () => {
-  // 源码口径：四条 catch 一律 `…refunded ? { fee_refunded: true } : {}`（PUT /people、/admin/create-tree、
-  // /admin/reparent、/admin/delete-node 各一处；冲正才回显，未扣费 / 冲正失败不带）
+test('冲正回显统一：5 条计费路由落库失败一律带 fee_refunded:true（/admin/reparent、/admin/delete-node 实测）', async () => {
+  // 源码口径：五条 catch 一律 `…refunded ? { fee_refunded: true } : {}`（PUT /people、/admin/create-tree、
+  // /admin/reparent、/admin/delete-node、/admin/sibling-reorder 各一处；冲正才回显，未扣费 / 冲正失败不带）
   const hits = (INDEX_LINES.join('\n').match(/refunded \? \{ fee_refunded: true \} : \{\}/g) || []).length;
-  assert.equal(hits, 4, '四条冲正分支口径必须统一');
-  for (const p of ['/admin/reparent', '/admin/delete-node']) {
+  assert.equal(hits, 5, '五条冲正分支口径必须统一');
+  for (const p of ['/admin/reparent', '/admin/delete-node', '/admin/sibling-reorder']) {
     assert.match(branchesOf(p).join('\n'), /refunded \? \{ fee_refunded: true \}/, `${p} 冲正分支应回显 fee_refunded`);
   }
+  // /admin/sibling-reorder 的落库失败实跑（0444 → 500 + fee_refunded:true + 原路返还）见
+  // lib/sibling-reorder.test.js「落库失败（树文件 0444）」一例，避免在本文件重造同一套夹具。
 
   // ① /admin/reparent 落库失败（树文件 0444 → writeFileSync EACCES）→ 冲正 + fee_refunded:true
   const rp = chainTree('fee_ref_rp', 2, 1400);

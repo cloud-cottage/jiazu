@@ -98,7 +98,7 @@ import { fetchPersonList, fetchFamilyList, fetchTreeMetaRemote } from '@/busines
 import type { FamilySummary } from '@/business/api';
 import { buildPedigreeForest } from '@/business/pedigree';
 import { personIdDisplay, nameWithTitles } from '@/business/format';
-import { openTreeHome, mirrorLabelOf, mirrorTargetOf } from '@/business';
+import { openTreeHome, mirrorLabelOf, mirrorTargetOf, treeKindOf } from '@/business';
 import type { TreePersonNode } from '@/business/pedigree';
 import * as echarts from 'echarts';
 import PersonDetailModal from '@/components/person-detail-modal/person-detail-modal.vue';
@@ -315,8 +315,15 @@ async function loadData() {
     totalPeople.value = people.data.length;
     // 家族关系（用于「孤立占位」判定：仅无任何家族关系的外树登记才隐藏）
     familyList.value = families;
+    // 本树是否家族树（单一判定点）：口径 = 后端 compat-api lib/family-population.js treeKind()
+    // —— is_master===true || kind==='master' → 世本；kind==='clan' → 祖谱；其余含 kind 缺省 → 家族树。
+    // 只有家族树的树图不绘制「外树子女镜像」（该节点连同其子树整支不入图）；世本 / 祖谱照旧绘制
+    // （顶端链镜像 chain、始祖镜像 founder、祖谱登记镜像不动）。meta 取不到 → treeKindOf 返 family，
+    // 即按家族树处理（与后端 kind 缺省口径一致）。
+    const isFamilyTree = treeKindOf(meta?.trees?.[props.treeId]) === 'family';
     forest.value = buildPedigreeForest(people.data, families, {
       founderGrampsId: founderGrampsId.value || undefined,
+      excludeChildMirrors: isFamilyTree,
     });
     if (chart) {
       chart.dispose();

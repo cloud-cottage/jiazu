@@ -37,6 +37,7 @@ import {
   sumLots,
   summarize,
   sweep,
+  toNonNegInt,
   withAssets,
 } from './economy-ledger.js';
 import { SPIRIT_COL, SPIRIT_ID, settleAllTrees } from './economy-spirit.js';
@@ -186,7 +187,7 @@ export function expiringCandidates(phone, user, now = new Date()) {
   ]) {
     for (const lot of user?.[bucket] || []) {
       if (!lot || !lot.id) continue;
-      if (Math.floor(Number(lot.qty) || 0) <= 0) continue;
+      if (toNonNegInt(lot.qty) <= 0) continue;
       const d = daysLeftUntil(lot.expires_at, now);
       if (!Number.isFinite(d) || d <= 0) continue;
       if (d <= WARN_DAYS_30) {
@@ -505,7 +506,7 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     // —— 负向预检：任一资产不足 → 409 整单拒绝（绝不部分扣减、绝不扣至负）——
     if (delta.fragments < 0) {
       const need = -delta.fragments;
-      const current = Math.max(0, Math.floor(Number(user.fragments) || 0));
+      const current = toNonNegInt(user.fragments);
       if (current < need) throw fragmentsInsufficient(need, current);
     }
     let jadeTaken = null;
@@ -537,15 +538,15 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     if (delta.fragments > 0) synthesized = addFragments(user, delta.fragments, now).synthesized;
 
     // —— 负向落账 ——
-    if (delta.fragments < 0) user.fragments = Math.max(0, Math.floor(Number(user.fragments) || 0) + delta.fragments);
+    if (delta.fragments < 0) user.fragments = Math.max(0, toNonNegInt(user.fragments) + delta.fragments);
     if (jadeTaken) {
       const drop = new Set(jadeTaken);
       user.jades = (user.jades || []).filter((j) => !drop.has(j.id));
     }
     // 扣尽批次就地移除（§5-2-3：不留 qty=0 残留批）
     if (seedsTaken || bamboosTaken) {
-      user.seeds = (user.seeds || []).filter((l) => Math.floor(Number(l.qty) || 0) > 0);
-      user.bamboos = (user.bamboos || []).filter((l) => Math.floor(Number(l.qty) || 0) > 0);
+      user.seeds = (user.seeds || []).filter((l) => toNonNegInt(l.qty) > 0);
+      user.bamboos = (user.bamboos || []).filter((l) => toNonNegInt(l.qty) > 0);
     }
 
     // —— 收口：脏数据里的 ≥10 碎片顺带合成（不落「碎片 10、籽未生成」中间态）——
@@ -569,7 +570,7 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     return {
       summary: {
         phone: targetPhone,
-        fragments: Math.max(0, Math.floor(Number(user.fragments) || 0)),
+        fragments: toNonNegInt(user.fragments),
         seeds_total: sumLots(user.seeds),
         bamboos_total_pieces: sumLots(user.bamboos),
         jades: (user.jades || []).length,
@@ -637,6 +638,9 @@ export async function opsLogs(filters = {}) {
 /**
  * `GET /admin/assets/user`（§5.4）：仅 `chief_editor`（路由层鉴权）；查某用户资产总览
  * （字段名对齐 `/assets/summary` 公开形态，仅把「本人」改为 `phone`）。
+ * **玉口径 = 全量原始记录**（`include_mounted`）：后台必须看到「已镶嵌玉去哪了、镶进哪棵树」
+ * —— `jades` 枚数与 `jade_list` 都含已镶嵌、且保留 `mounted_tree_id`（用户面 `/assets/summary`
+ * 仍只出未镶嵌，两端口径就此分开，见 `economy-ledger.summarize` 注释）。
  * 前置：`sweep(now)`（总额与明细均为结算后口径）。
  */
 export async function adminUserAssets(phone, now = new Date()) {
@@ -646,7 +650,7 @@ export async function adminUserAssets(phone, now = new Date()) {
   if (!user) throw httpError(404, `${ERR_USER_NOT_FOUND}: ${target}`);
   return withAssets(target, (assets) => {
     sweep(assets, now);
-    const s = summarize(assets, now);
+    const s = summarize(assets, now, { include_mounted: true });
     return {
       phone: target,
       fragments: s.fragments,
@@ -678,7 +682,7 @@ export async function deleteAccount(phone, now = new Date()) {
   return withAssets(phone, (user) => {
     sweep(user, now);
     const cleared = {
-      fragments: Math.max(0, Math.floor(Number(user.fragments) || 0)),
+      fragments: toNonNegInt(user.fragments),
       seeds: sumLots(user.seeds),
       bamboos: sumLots(user.bamboos),
       jades: (user.jades || []).length,

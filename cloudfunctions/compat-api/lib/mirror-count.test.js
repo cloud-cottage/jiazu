@@ -16,12 +16,13 @@
  *   M1 真源 gu_39038_01（树 + details 副本）→ 200，`mirror_count` 与真源树文件动态推导一致，`person_count`
  *      快照 21 + 不变量（people 总数 − 显式点名的被排除 handle 数：I000292 / I000293 / I000294），既有出参字段逐字段仍在；
  *   M2 真源 gu 树源文件中 `external_mirror==='true'` 的 handle 集合**动态推导**，且**包含式点名**
- *      I000143 / I000292 / I000293 / I000294 / I000367（不写死总数，真源再漂不再假红）；
+ *      I000292 / I000293 / I000294 / I000367（不写死总数，真源再漂不再假红；原 I000143 顾清学 已在真源
+ *      就地反转为非镜像，见下方点名集合注释）；
  *   M3 无镜像树（含「有 external_person_handle 但非镜像」「external_mirror:'false'」）→ 0；
  *   M4 严格口径 + 缺 handle 异常数据仍计入（夹具 tree）；
  *   M5 权限档位变化（guest / 已登录非成员 / 树成员）`mirror_count` 与 `person_count` 恒定不变 —— 且用 computeAccess
  *      直证这些镜像节点在 guest 档确实被裁掉（证明计数与权限裁剪解耦）；真源 gu 的镜像数同样动态推导；
- *   M6 真源 ji_23395_01 → `mirror_count` 动态一致（包含式点名 I000209 / I000253 / I000291 / I000365）、
+ *   M6 真源 ji_23395_01 → `mirror_count` 动态一致（包含式点名 I000253 / I000291 / I000365）、
  *      `person_count` 快照 61 + 不变量（people 总数 − 排除集：**2026-09-19 清理后 ji 排除集为空** ——
  *      姑父 I000238 / 妹夫 I000240 等 28 个非成员真节点已从真源删除，故不变量右项即真源 people 总数本身）；
  *   M7 真源体检：config/tree-meta.json + migrate-output/{trees,collections} 逐字节未变。
@@ -190,10 +191,18 @@ const assertGidsInRealTree = (tid, gids) => {
   for (const gid of gids) assert.ok(present.has(gid), `点名的节点 ${gid} 必须仍存在于真源 ${tid}`);
 };
 
-/** 真源 gu 的镜像 handle 点名（包含式断言，不约束总数） */
-const GU_MIRROR_GIDS = ['I000143', 'I000292', 'I000293', 'I000294', 'I000367'];
-/** 真源 ji 的镜像 handle 点名 */
-const JI_MIRROR_GIDS = ['I000209', 'I000253', 'I000291', 'I000365'];
+/**
+ * 真源 gu 的镜像 handle 点名（包含式断言，不约束总数）。
+ * 原点名 I000143（顾清学）已在真源就地反转为非镜像（external_mirror / external_tree /
+ * external_link_type 全为空串），故移出点名集合；其余点名节点仍为 `'true'`。
+ * 点名仅作「真源未被再次漂移」的锚，总数一律由 realMirrors() 动态推导。
+ */
+const GU_MIRROR_GIDS = ['I000292', 'I000293', 'I000294', 'I000367'];
+/**
+ * 真源 ji 的镜像 handle 点名（包含式断言，不约束总数）。
+ * 原点名 I000209（季花）已在真源就地反转为非镜像，故移出点名集合。
+ */
+const JI_MIRROR_GIDS = ['I000253', 'I000291', 'I000365'];
 /** 真源 gu 被新口径（纯血缘图）排除的 handle 点名：婚入男镜像 I000292 + 其子 child 镜像 I000293 / I000294 */
 const GU_EXCLUDED_GIDS = ['I000292', 'I000293', 'I000294'];
 /**
@@ -244,7 +253,7 @@ test('M1 真源 gu_39038_01：mirror_count 与真源动态一致、person_count 
   assert.equal(typeof body.access.hide_tail, 'number');
 });
 
-test("M2 真源 gu 树源文件：external_mirror === 'true' 的 handle 集合动态推导，且包含点名的 5 个", () => {
+test("M2 真源 gu 树源文件：external_mirror === 'true' 的 handle 集合动态推导，且包含点名的 4 个", () => {
   const m = realMirrors('gu_39038_01');
   assert.ok(m.length > 0, 'gu 树必须存在镜像节点');
   const gids = m.map((p) => p.gramps_id);
@@ -252,7 +261,7 @@ test("M2 真源 gu 树源文件：external_mirror === 'true' 的 handle 集合�
   for (const gid of GU_MIRROR_GIDS) {
     assert.ok(
       gids.includes(gid),
-      `点名镜像 ${gid} 必须命中（I000143 founder / I000292 marriage / I000293 child / I000294 child / I000367 marriage）`,
+      `点名镜像 ${gid} 必须命中（I000292 marriage / I000293 child / I000294 child / I000367 marriage）`,
     );
   }
   assert.equal(new Set(gids).size, gids.length, 'gramps_id 不得重复');
@@ -328,7 +337,7 @@ test('M6 真源 ji_23395_01：mirror_count 动态一致、person_count 快照 61
   assert.equal(srcMirrors('ji_23395_01').length, mirrors.length, '源文件口径一致');
   const gids = mirrors.map((p) => p.gramps_id);
   for (const gid of JI_MIRROR_GIDS) {
-    assert.ok(gids.includes(gid), `点名镜像 ${gid} 必须命中（I000209 founder / I000253 marriage / I000291 marriage / I000365 marriage）`);
+    assert.ok(gids.includes(gid), `点名镜像 ${gid} 必须命中（I000253 marriage / I000291 marriage / I000365 marriage）`);
   }
   assert.equal(
     body.person_count,

@@ -17,7 +17,10 @@
  *   GET  /spirit | POST /spirit/mount-jade | /spirit/charge（时流子域 · docs/spirit-domain.spec.md §6 / §7）
  *   GET  /market/listings（guest 可读）| GET /market/my | POST /market/list | /market/cancel | /market/buy |
  *   /market/official-buy（市集 + 官方竹简每日限量发售 · docs/economy-market.spec.md §6 / §7；挂单与家族树无关 K7）
- *   POST /assets/signin（签到：北京时间自然日各 1 碎片；同日重复 409「今日已签到」，§6-2）
+ *   POST /assets/signin（签到：北京时间自然日各 1 次；同日重复 409「今日已签到」，§6-2）
+ *      —— 已改为**调用任务中心同一入口**（`POST /tasks/claim {task:'signin'}`），与签到任务共用同一 `signin_date` 判定
+ *   GET  /tasks/today | POST /tasks/claim（任务中心：三条每日任务三态 + 手动领取；领取即 friend-ops 奖励池入口）
+ *      —— 任务枚举逐字 `signin`（签到）/ `invite`（邀请新用户注册）/ `write`（平台写操作）
  *   GET  /messages | POST /messages/read（站内信中心：四类预警惰性生成 + 已读，docs/economy-ops.spec.md §4）
  *   POST /admin/assets/grant | GET /admin/assets/logs | /admin/assets/user（资产运维 · 仅 chief_editor，§5）
  *   POST /account/delete（账号注销：注销前置挂单检查 → 清空四类资产 + account_clear 流水，§7 / K10）
@@ -27,6 +30,7 @@
  *   POST /admin/split-tree | /admin/remove-branch-link
  *   POST /admin/chain-append | /admin/chain-append-batch（总谱续编：单节点续编 / 批量「一条线」最多 10 代·单事务）
  *   POST /admin/delete-node（删除节点：连同全部后代 / 仅本节点·子女上提一级；跨树引用 → 409 拒绝）
+ *   POST /admin/sibling-reorder（调整同胞排行：重排 family.child_handles[] 位次；1 片 / 次，no-op 不扣费）
  *   POST /admin/establish-branch（立支：祖先链并入宗谱 + 新建家族树；9999 颗石榴籽 · docs/branch-clan-ops.spec.md）
  *   POST /admin/converge-clan（汇宗：源树整体并入他树普通节点；0 片 0 籽 + 灵气折损并入）
  *   POST /admin/add-spouse | /admin/add-child（跨树婚姻家庭的子女自动归到真身树）
@@ -46,6 +50,9 @@ import * as eco from './lib/economy-fee.js';
 import * as spirit from './lib/economy-spirit.js';
 import * as market from './lib/economy-market.js';
 import * as ops from './lib/economy-ops.js';
+// 邀请链路（邀请码 = 邀请人手机号）：新集合 jiazu_invites + 注册可选填邀请码 + GET /invite/me / POST /invite/accept
+// 口径 = Zang 裁定 v3（I-1…I-9）；兰帖碎片发奖用真源导出 addScrollFragments（I-7，不写第二版）。
+import * as invite from './lib/invite.js';
 import { getAnchor, setAnchor, clearAnchor, canEditPerson } from './lib/scope.js';
 import * as tw from './lib/tree-write.js';
 import * as mr from './lib/marriage.js';
@@ -442,11 +449,40 @@ async function handleRequest(event) {
       const nickname = String(body.nickname || '').trim().slice(0, 30);
       if (!/^1\d{10}$/.test(phone)) return send(400, { error: '手机号格式不正确' });
       if (await colGet('jiazu_users', phone)) return send(409, { error: '该手机号已注册，请直接登录' });
+      // 邀请码（I-3；**可选入参**）：缺省 / 空 = 无邀请，行为与既有完全一致。
+      // 校验（格式 / 自邀 / 邀请人已注册 / 被邀请人尚无记录）**全部先于建用户** ——
+      // 不过 → 400 且不建号、不写 jiazu_invites；被邀请人已有记录 → 静默忽略（不报错、不重发奖）。
+      const inviteCode = body.invite_code;
+      const inviteCheck = await invite.resolveInvite(inviteCode, phone);
+      if (!inviteCheck.ok) return send(inviteCheck.status, { error: inviteCheck.error, code: inviteCheck.code });
       const v = await verifyCode(phone, code);
       if (!v.ok) return send(401, { error: v.message });
       const user = await findOrCreateUser(phone, nickname || undefined);
+      // 发奖（9 石榴籽碎片 + 11 兰帖碎片，归**邀请人**；I-4/I-5）+ 写邀请记录（I-1）。
+      // 日限超限 → **静默不发放**，但**不回滚注册**（注册照常 201）；本步骤不改变响应形状。
+      await invite.applyInvite(phone, inviteCode, { now: new Date() });
       const token = signJwt({ sub: phone, phone, role: user.role }, 7 * 24 * 3600);
       return send(201, { token, phone, nickname: user.nickname, role: user.role });
+    }
+
+    // ================= 邀请链路（Zang 裁定 v3 · I-1…I-9） =================
+    // 邀请码 = 邀请人手机号（I-2）；`GET /invite/me` / `POST /invite/accept` **均需登录**：
+    // 无效 / 缺失 token → 401（**不得降级 guest**）。本段**必须注册在树编辑闸门之前**
+    // （闸门 = 下方 `缺少 X-Tree-Id`，同段先例 = /auth/* / /assets/* / /messages）。
+    // 错误体统一 `{ error, code }`（`code` 逐字登记，先例 = 既有 `TREE_FUND_RETIRED`）。
+    if (pathname === '/invite/me' && method === 'GET') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      return send(200, await invite.inviteStats(u.phone, new Date()));
+    }
+
+    if (pathname === '/invite/accept' && method === 'POST') {
+      const u = await authUser(headers);
+      if (!u) return send(401, { error: '未登录或登录已过期' });
+      // 备用通道：已注册用户补填邀请码；校验与发奖**与注册路径同一套**（共用 lib/invite.js）。
+      const r = await invite.applyInvite(u.phone, parseBody(event).invite_code, { required: true, now: new Date() });
+      if (!r.ok) return send(r.status, { error: r.error, code: r.code });
+      return send(200, r);
     }
 
     if (pathname === '/auth/me' && method === 'GET') {
@@ -678,17 +714,34 @@ async function handleRequest(event) {
     if (pathname === '/assets/signin' && method === 'POST') {
       const u = await authUser(headers);
       if (!u) return send(401, { error: '未登录或登录已过期' });
-      const now = new Date();
-      const today = ledger.beijingDate(now); // 北京时间（UTC+8）自然日
-      const r = await ledger.mutateAssets(u.phone, (user) => {
-        ledger.sweep(user, now);
-        if (user.signin_date === today) throw httpError(409, '今日已签到'); // 同日重复 → 整单不写（资产不变）
-        user.signin_date = today;
-        ledger.recordTx(user, { type: 'signin', delta: { fragments: 1 }, desc: '每日签到 +1 碎片' }, now);
-        const added = ledger.addFragments(user, 1, now); // 满 10 立即合成（§5-1）
-        return { fragments: added.fragments, synthesized: added.synthesized, seed_lot: added.seed_lots[0] || null, signin_date: today };
-      });
-      return send(200, { ok: true, ...r });
+      // ⚠️ 本单改动（Zang 裁定 · 任务中心接线）：签到卡**不再是第二套发奖实现** ——
+      //   它改为调用任务中心**同一入口** `task-center.claimTask(phone, 'signin', now)`：
+      //   · 幂等标记 = 同一 `signin_date`（签到任务与签到卡共用同一判定 ⇒ 任何一方先领，另一方即已领，**绝不双发**）；
+      //   · 奖励口径 = R-5（本人基础：石榴籽碎片 1 + 竹片 1；池按领取时刻生效好友数均分，走
+      //     friend-ops.distributeFriendRewards）；
+      //   · 既有出参形状**逐字保留**（`fragments` / `synthesized` / `seed_lot` / `signin_date`、
+      //     同日重复 409 `{ error: '今日已签到' }`、未登录 401），前端与 assets.test.js 零改动。
+      try {
+        const tc = await import('./lib/task-center.js');
+        const r = await tc.claimTask(u.phone, 'signin', new Date());
+        return send(200, {
+          ok: true,
+          fragments: r.detail.fragments,
+          synthesized: r.detail.synthesized,
+          seed_lot: r.detail.seed_lot,
+          signin_date: r.detail.signin_date,
+          task: r.task,
+          day: r.day,
+          state: r.state,
+          state_text: r.state_text,
+          reward: r.reward,
+        });
+      } catch (e) {
+        if (isSystemFailure(e)) return send(500, { error: eco.INTERNAL_ERROR_TEXT, status: 500 });
+        // 同日重复：**逐字保留**既有文案与形状（`{"error":"今日已签到"}` + 409，资产一字节不变）
+        if (e?.code === 'TASK_ALREADY_CLAIMED') return send(409, { error: '今日已签到' });
+        return send(Number(e?.status) || 409, { error: e?.message || '签到失败' });
+      }
     }
 
     // ================= 时流子域（docs/spirit-domain.spec.md §6 / §7 · P2 第二段） =================
@@ -826,6 +879,193 @@ async function handleRequest(event) {
       } catch (e) {
         return send(e.status || 400, eco.errorPayload(e));
       }
+    }
+
+    // ================= 好友域（docs/friend-domain.spec.md · 批2-D 收尾：路由接线） =================
+    // 本段路径逐字（Zang 本单指令表；既有同类多词动作多写连字符，但三段式路径亦有先例
+    // `/admin/market/official-stock`，故本表按指令逐字落 `/friends/renew/request` 等）：
+    //   GET  /friends                              入参：登录身份；**先 sweepFriends 惰性 sweep**，再 listFriends
+    //   POST /friends/invite                       {to}
+    //   POST /friends/accept                       {relation_token}
+    //   POST /friends/reject                       {relation_token}
+    //   POST /friends/cancel                       {relation_token}
+    //   POST /friends/renew/request                {relation_token}
+    //   POST /friends/renew/confirm                {relation_token}
+    //   POST /friends/renew/cancel                 {relation_token}
+    //   POST /friends/dissolve                     {relation_token}
+    //   POST /assets/scroll/decompose              {count}（调 ledger 既有 decomposeScroll；兰帖【分解】路由本轮建）
+    // 鉴权：一律 Bearer 登录（未登录 401，**不降级 guest**；非关系当事人由 friends.js 守卫 → 403 语义）；
+    // 入参标识一律 `relation_token`（裁定 3：不透明句柄，出参**不出**明文手机号 / 不出关系 _id）。
+    // 本段**必须注册在树编辑闸门之前**（与 /assets/* /market/* /messages 同段，闸门会先拦「缺少 X-Tree-Id」）。
+    // 出参壳（与 lib 的 `{ ok, error:{ code, status, message } }` 一一映射）：
+    //   成功 `{ ok:true, message, data:{…} }`；失败 `{ ok:false, error:{ code, status, message, reason? } }` + 对应 HTTP 码。
+    //   **绝不**回显本机路径 / 系统级异常（`isSystemFailure` 判据 → 500 + 通用文案）；错误码取 friend-ops / friends 既有表。
+    if (
+      pathname === '/friends' ||
+      pathname.startsWith('/friends/') ||
+      pathname === '/assets/scroll/decompose'
+    ) {
+      const friendOps = await import('./lib/friend-ops.js');
+      /** 好友域 / 兰帖分解的统一出参壳（lib 的返回壳 → HTTP） */
+      const friendShell = (res) => {
+        if (res && res.ok) {
+          const { ok: _ok, message, ...data } = res;
+          return send(200, { ok: true, message: message || '操作成功', data });
+        }
+        const err = (res && res.error) || {};
+        const status = Number(err.status) || 400;
+        const body = { ok: false, error: { code: err.code || 'FRIEND_OPS_FAILED', status, message: err.message || '好友域操作失败' } };
+        if (err.reason !== undefined) body.error.reason = err.reason;
+        return send(status, body);
+      };
+
+      if (pathname === '/friends' && method === 'GET') {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'FRIEND_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        // ① 惰性 sweep（好友域读写入口先结算；本路由只取其副作用，不回显 sweep 明细 —— 明细含关系 _id）
+        await friendOps.sweepFriends(new Date());
+        // ② 只读列表（一律 relation_token）
+        return friendShell(await friendOps.listFriends(u.phone, new Date()));
+      }
+
+      if (pathname === '/friends/invite' && method === 'POST') {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'FRIEND_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        return friendShell(await friendOps.sendFriendInvite(u.phone, parseBody(event).to, new Date()));
+      }
+
+      // 九条「按 relation_token 操作」的路由（入参字段名逐字 = relation_token）
+      const FRIEND_TOKEN_ROUTES = {
+        '/friends/accept': (ops, u, token) => ops.acceptFriendInvite(token, u.phone, new Date()),
+        '/friends/reject': (ops, u, token) => ops.rejectFriendInvite(token, u.phone, new Date()),
+        '/friends/cancel': (ops, u, token) => ops.cancelFriendInvite(token, u.phone, new Date()),
+        '/friends/renew/request': (ops, u, token) => ops.requestRenewal(token, u.phone, new Date()),
+        '/friends/renew/confirm': (ops, u, token) => ops.confirmRenewal(token, u.phone, new Date()),
+        '/friends/renew/cancel': (ops, u, token) => ops.cancelRenewal(token, u.phone, new Date()),
+        '/friends/dissolve': (ops, u, token) => ops.dissolveFriend(token, u.phone, new Date()),
+      };
+      if (method === 'POST' && FRIEND_TOKEN_ROUTES[pathname]) {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'FRIEND_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        return friendShell(await FRIEND_TOKEN_ROUTES[pathname](friendOps, u, parseBody(event).relation_token));
+      }
+
+      if (pathname === '/assets/scroll/decompose' && method === 'POST') {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'FRIEND_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        const raw = parseBody(event).count;
+        const count = raw === undefined || String(raw).trim() === '' ? 1 : Number(raw);
+        if (!Number.isInteger(count) || count <= 0) {
+          return send(400, { ok: false, error: { code: 'INVALID_COUNT', status: 400, message: 'count 必须为正整数（1 枚 = 100 片）' } });
+        }
+        try {
+          const now = new Date();
+          // ⚠️ 缺陷 D-1（本单修复 · 后端强制校验续约锁定）：
+          //   续约锁定**只占用、不扣除**（F-B：锁落在关系文档 `pending.locked_*`，那 1 枚成品兰帖
+          //   仍留在 `jiazu_assets` 里）。前端对【分解】置灰**可被 curl 直接绕过**（锁定只在关系域留痕，
+          //   分解路由原先零校验）。故此处必须先取「未超时的续约待确认关系所锁定的片数」，再算
+          //   **可分解枚数 = floor((总片数 − 锁定片数) / 100)**；请求枚数超出 ⇒ 409 整单拒绝（一片不扣）。
+          //   锁定读数唯一来源 = friend-ops 的 `lockedScrollPieces`（只读、零写入；超时的锁由内存 sweep 清空）。
+          let locked = { pieces: 0, locks: [] };
+          try {
+            locked = await friendOps.lockedScrollPieces(u.phone, now);
+          } catch (le) {
+            if (isSystemFailure(le)) {
+              return send(500, { ok: false, error: { code: 'INTERNAL_ERROR', status: 500, message: eco.INTERNAL_ERROR_TEXT } });
+            }
+            // 读不到锁 ⇒ **失败关闭**（宁可拒分解，也不放行可能被锁定的那 1 枚）
+            return send(409, {
+              ok: false,
+              error: { code: 'SCROLL_LOCKED_CHECK_FAILED', status: 409, message: '无法校验续约锁定状态，请稍后重试' },
+            });
+          }
+          const lockedPieces = Math.max(0, Math.floor(Number(locked?.pieces) || 0));
+          const r = await ledger.mutateAssets(u.phone, (user) => {
+            ledger.sweep(user, now); // 资产入口先惰性结算（§5-4-1），照 /assets/summary 体例
+            const totalPieces = ledger.sumLots(user.scrolls || []);
+            const availablePieces = Math.max(0, totalPieces - lockedPieces); // 总片数 − 锁定片数 = 可用片数
+            const capacity = Math.floor(availablePieces / ledger.SCROLL_PIECES_PER_SCROLL); // 可分解枚数
+            if (count > capacity) {
+              const e = httpError(
+                409,
+                `可用兰帖不足：共 ${totalPieces} 片，其中 ${lockedPieces} 片已被续约锁定（只占用未扣除），` +
+                  `可用 ${availablePieces} 片 ⇒ 最多可分解 ${capacity} 枚，本次请求分解 ${count} 枚`,
+              );
+              e.code = 'SCROLL_LOCKED_INSUFFICIENT';
+              e.detail = { total_pieces: totalPieces, locked_pieces: lockedPieces, available_pieces: availablePieces, capacity, requested: count };
+              throw e;
+            }
+            const decomposed = ledger.decomposeScroll(user, count, now); // 唯一实现 = 账本既有导出（不另写一套）
+            return { ...decomposed, locked_pieces: lockedPieces, available_pieces: availablePieces, capacity };
+          });
+          return send(200, { ok: true, message: '兰帖已分解', data: r });
+        } catch (e) {
+          // 系统级失败 → 500 + 通用文案（绝不回显 e.message / 路径 / stack）
+          if (isSystemFailure(e)) {
+            return send(500, { ok: false, error: { code: 'INTERNAL_ERROR', status: 500, message: eco.INTERNAL_ERROR_TEXT } });
+          }
+          const body = {
+            ok: false,
+            error: { code: e?.code || 'SCROLL_DECOMPOSE_FAILED', status: Number(e?.status) || 409, message: e?.message || '兰帖分解失败' },
+          };
+          if (e?.detail !== undefined) body.error.detail = e.detail;
+          return send(Number(e?.status) || 409, body);
+        }
+      }
+
+      // 本前缀下的其余路径 / 方法 ⇒ 404（不落到下方树编辑闸门，避免误报「缺少 X-Tree-Id」）
+      return send(404, { ok: false, error: { code: 'FRIEND_ROUTE_NOT_FOUND', status: 404, message: `未知好友域路由：${method} ${pathname}` } });
+    }
+
+    // ================= 任务中心（批3 · lib/task-center.js：三条每日任务 + 手动领取） =================
+    // 本段即**缺陷 D-2 的接线**：`friend-ops.distributeFriendRewards`（F-C 好友奖励池）自本单起
+    //   从「无任何路由入口、全仓仅测试可调」变为**经任务领取可达**（用户面唯一可达路径）。
+    // 路由表（逐字）：
+    //   GET  /tasks/today                   当日三任务三态（未达标 / 可领取 / 已领取）+ 奖励口径（只读、零写入）
+    //   POST /tasks/claim   { task }        手动领取（**唯一发奖入口**）；task ∈ signin / invite / write
+    // 鉴权：一律 Bearer 登录（未登录 401，**不降级 guest**）；本段**必须注册在树编辑闸门之前**。
+    // 出参壳：成功 `{ ok:true, message, data:{…} }`；失败 `{ ok:false, error:{ code, status, message, reason? } }`
+    //   （**中文文案，绝不静默失败**；系统级失败 → 500 + 通用文案，绝不回显路径 / stack）。
+    // 幂等：同一北京自然日 (用户, 任务) 只可领一次；`signin` 与既有签到卡**共用同一 `signin_date`** 判定
+    //   （签到卡已改为调用本模块同一入口，见下方 `/assets/signin`，**不存在第二套数值**）。
+    if (pathname === '/tasks/today' || pathname === '/tasks/claim') {
+      const tc = await import('./lib/task-center.js');
+      /** 任务中心统一失败出参（系统级失败 → 500 通用文案，其余沿用结构化 code/status/中文 message） */
+      const taskFail = (e, fallbackCode, fallbackMessage) => {
+        if (isSystemFailure(e)) {
+          return send(500, { ok: false, error: { code: 'INTERNAL_ERROR', status: 500, message: eco.INTERNAL_ERROR_TEXT } });
+        }
+        const status = Number(e?.status) || 409;
+        const body = { ok: false, error: { code: e?.code || fallbackCode, status, message: e?.message || fallbackMessage } };
+        if (e?.reason !== undefined) body.error.reason = e.reason;
+        if (e?.detail !== undefined) body.error.detail = e.detail;
+        return send(status, body);
+      };
+
+      if (pathname === '/tasks/today' && method === 'GET') {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'TASK_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        try {
+          const view = await tc.tasksToday(u.phone, new Date());
+          return send(200, { ok: true, message: '当日任务已读取', data: view });
+        } catch (e) {
+          return taskFail(e, 'TASK_READ_FAILED', '任务读取失败');
+        }
+      }
+
+      if (pathname === '/tasks/claim' && method === 'POST') {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'TASK_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        try {
+          const r = await tc.claimTask(u.phone, parseBody(event).task, new Date());
+          return send(200, { ok: true, message: `任务「${r.title}」奖励已领取`, data: r });
+        } catch (e) {
+          return taskFail(e, 'TASK_CLAIM_FAILED', '任务领取失败');
+        }
+      }
+
+      // 本前缀下的其余路径 / 方法 ⇒ 404（不落到下方树编辑闸门，避免误报「缺少 X-Tree-Id」）
+      return send(404, { ok: false, error: { code: 'TASK_ROUTE_NOT_FOUND', status: 404, message: `未知任务中心路由：${method} ${pathname}` } });
     }
 
     // ================= 运营侧（docs/economy-ops.spec.md · P4） =================
@@ -1947,6 +2187,51 @@ async function handleRequest(event) {
         return send(200, result);
       } catch (e) {
         return send(e.status || 400, eco.errorPayload(e, gate?.refunded ? { fee_refunded: true } : {}));
+      }
+    }
+
+    // 调整同胞排行（子女标签排序）：把家族 `child_handles[]` 重排为提交顺序。
+    // 排行真源 = 数组位次（**不新增任何字段**）：读路径 `profileFamily` 已按序输出 `children`，前端零改动即生效。
+    // 计费：1 片 / 次（一次「确定保存」= 一次计费，与被动移位的兄弟数量无关）；闸门顺序严格沿用既有四步
+    // 鉴权 → 只读预检 → 余额预检 → 扣费 → 落库（校验先于扣费；no-op 不扣费不写库）。
+    // body: { tree_id, family_handle, person_handle, child_handles: [...] }
+    // —— 一次提交只动**一段** family（多配偶家族分段排序，跨段不得合并提交）
+    if (pathname === '/admin/sibling-reorder' && method === 'POST') {
+      const body = parseBody(event);
+      const reorderFam = String(body.family_handle || '').trim();
+      const reorderPerson = String(body.person_handle || '').trim();
+      if (!reorderFam) return send(400, { error: '缺少 family_handle' });
+      if (!reorderPerson) return send(400, { error: '缺少 person_handle' });
+      if (!Array.isArray(body.child_handles)) return send(400, { error: '缺少 child_handles（须为数组）' });
+      const reorderTreeId = String(body.tree_id || treeId || '').trim();
+      if (!reorderTreeId) return send(400, { error: '缺少 tree_id' });
+      let gate = null; // 闸门（冲正标记随 catch 回显：fee_refunded）
+      try {
+        // ① 鉴权：登录 + 非 guest + 总谱 chief_editor + 既有 canEditPerson 范围判定（X-Tree-Id + person_handle）
+        const u = await requireWriteUser(headers, reorderTreeId, pathname, reorderPerson, false);
+        // ② 只读预检（始祖真身 / 上层镜像 → 403，**必须拦在扣费之前**，被拒请求不得产生任何资产流水）
+        await fa.assertFounderEditable(await getTree(reorderTreeId), reorderPerson, MASTER_TREE_ID);
+        // ③④⑤⑥ 集合校验（family 404 / 集合不等价 400，先于扣费）→ 扣费 1 片（整单拒绝 409）→ 落库 → 失败冲正
+        gate = feeGate(u.phone, 'sibling_reorder');
+        const result = await tw.reorderChildren({
+          treeId: reorderTreeId,
+          familyHandle: reorderFam,
+          personHandle: reorderPerson,
+          childHandles: body.child_handles.map((h) => String(h ?? '')),
+          masterTreeId: MASTER_TREE_ID,
+          charge: gate.charge,
+          refund: gate.refund,
+        });
+        // no-op（提交序与现状逐位相同，含拖回原位）：不扣费、不写库 → 200 + noop:true + 0 片（余额取当前实际值）
+        if (result.noop) {
+          const q = await eco.quoteBamboo(u.phone, 0);
+          return send(200, { ...result, fee: { unit: 'bamboos', pieces: 0, balance: q.current, balance_after: q.current } });
+        }
+        return send(200, result);
+      } catch (e) {
+        const payload = eco.errorPayload(e, gate?.refunded ? { fee_refunded: true } : {});
+        // 业务错误沿用自身 status（400 / 403 / 404 / 409）；系统级失败 → 500 + 通用文案（errorStatusOf 口径）
+        return send(errorStatusOf(e, payload), payload);
       }
     }
 

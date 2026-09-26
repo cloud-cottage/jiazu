@@ -327,3 +327,100 @@ export interface SetTreeOriginResult {
   /** 发源地来源节点 */
   source: { handle: string; gramps_id: string; name: string };
 }
+
+// ---- 调整同胞排行（子女标签拖曳排序；`POST /admin/sibling-reorder`） ----
+
+/**
+ * 请求体（`POST /admin/sibling-reorder`）。
+ *
+ * **一次提交只动一段 family** 的 `child_handles`（多配偶家族按 family 分段排序，跨段不得合并提交）。
+ */
+export interface SiblingReorderPayload {
+  family_handle: string;
+  /** 被拖动的那个子女节点（后端计费 `ref.person_handle` 与位次文案都按它算） */
+  person_handle: string;
+  /** 提交的新数组序：必须是该 family 现有子女集合的一个排列（等长 / 同元素 / 无重复，否则 400） */
+  child_handles: string[];
+}
+
+/** 扣费回执（与 `api.ts` 的 `FeeInfo` 同形；`noop` 时路由回 `pieces: 0`） */
+export interface SiblingReorderFee {
+  unit: 'bamboos' | 'seeds';
+  pieces: number;
+  balance: number;
+  balance_after: number;
+}
+
+/** 出参（`POST /admin/sibling-reorder` 成功 200；字段逐字照后端 `reorderChildren` 回执） */
+export interface SiblingReorderResult {
+  ok: boolean;
+  tree_id: string;
+  family_handle: string;
+  person_handle: string;
+  person_name: string;
+  /** 新位次（1 起 = `child_handles` 下标 + 1） */
+  position: number;
+  /** 原位次（1 起） */
+  previous_position: number;
+  child_handles: string[];
+  /** 位次发生变化的节点（**含被拖动的本人**）；不计费、仅供前端预览 */
+  shifted: string[];
+  /** true = 提交序与现状逐位相同（含拖回原位）：未扣费、未写库 */
+  noop: boolean;
+  changed: boolean;
+  /** 落盘后的树文件真值（noop 时不返回） */
+  version?: number;
+  updated_at?: string;
+  /** noop / 0 片时为 `{ unit:'bamboos', pieces:0, balance, balance_after }` */
+  fee: SiblingReorderFee | null;
+}
+
+/** 调整排行模态框的分段入参：一个配偶家族 = 一段（`children` 顺序即服务端当前排行） */
+export interface SiblingReorderSegment {
+  family_handle: string;
+  /** 配偶姓名（未记录 → 空串；分段标签用） */
+  spouse_name: string;
+  children: Array<{ handle: string; name: string }>;
+}
+
+// ---- 兰帖域（`docs/economy.spec.md` §15；**只增字段、既有形状一字不改**） ----
+//
+// 字段名**逐字**取自后端 `summarize` 出参（`cloudfunctions/compat-api/lib/economy-ledger.js`：
+// `scroll_fragments` / `scroll_fragment_cap` / `scrolls_total_pieces` / `scrolls_item_count` /
+// `scroll_lot_count` / `scroll_lots`）。落点说明：既有 `AssetsSummary` 定义在 `business/api.ts`，
+// 本单白名单不改该文件 ⇒ 兰帖出参在此登记，由 `business/inventory.ts` 以
+// `AssetsSummary & Partial<ScrollSummaryFields>` 取交集（旧后端不返这些字段时可按缺省处理）。
+
+/**
+ * 兰帖批次（`jiazu_assets.users[<手机号>].scrolls[]`，与 `seeds` / `bamboos` / `jades` 并列）。
+ * **计量单位 = 片**；**`expires_at` 恒 `null`（永久，无期限）** —— 写入由后端显式传 `null`，
+ * 前端只读、不写、不排入到期排序。
+ */
+export interface ScrollLot {
+  /** 批次 id */
+  id: string;
+  /** 数量（**片**） */
+  qty: number;
+  /** **恒 `null`** = 永久有效（类型保留 `string | null` 只为与既有批次形状同构） */
+  expires_at: string | null;
+  /** 来源（如 `scroll_synth` = 碎片满 100 自动合成 / `admin` = 运营发放） */
+  source: string;
+  /** 创建时刻（ISO 字符串） */
+  created_at: string;
+}
+
+/** 兰帖域 `summarize` 追加出参（前端**只读展示**，不二次推导、不重算上限） */
+export interface ScrollSummaryFields {
+  /** 兰帖碎片（0–99；满 100 由**后端**自动合成 1 枚兰帖，前端只展示） */
+  scroll_fragments: number;
+  /** 兰帖碎片上限（服务端常量，当前 99） */
+  scroll_fragment_cap: number;
+  /** 兰帖总片数 */
+  scrolls_total_pieces: number;
+  /** 兰帖总片数折算的**整格数**（向下取整；与行囊 100 片/格同口径） */
+  scrolls_item_count: number;
+  /** 兰帖批次数（`scroll_lots` 的条数） */
+  scroll_lot_count: number;
+  /** 兰帖原始批次数组（后端不筛选、不增删字段） */
+  scroll_lots: ScrollLot[];
+}

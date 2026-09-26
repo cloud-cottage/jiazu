@@ -927,6 +927,60 @@ test('注销前置（K10）：存在 status=open 挂单 → 409「请先撤销�
   assert.equal((await call('/account/delete', 'POST', bearerAs(me, 'user'))).statusCode, 200, '他人挂单无碍本人注销');
 });
 
+// ---- ⑦-2 玉归属读侧口径（口径 v6） ----
+
+test('GET /assets/summary 玉归属（v6）：只返未镶嵌玉、`jades_total` 同口径，原始记录一字节不动', async () => {
+  const phone = await newUser();
+  const mounted = { ...jade(null, 'jd_own_m'), mounted_tree_id: 'tree_v6_a' };
+  const mountedDated = { ...jade(isoPlus(30), 'jd_own_m2'), mounted_tree_id: 'tree_v6_b' };
+  await seedAssets(phone, {
+    fragments: 0,
+    seeds: [],
+    bamboos: [],
+    jades: [mounted, mountedDated, jade(null, 'jd_free_1'), jade(isoPlus(50), 'jd_free_2'), jade(isoPlus(60), 'jd_free_3')],
+    txs: [],
+    signin_date: '',
+  });
+
+  const s = jsonBody(await call('/assets/summary', 'GET', bearer(phone)));
+  assert.equal(s.jades_total, 3, '2 已镶嵌 + 3 未镶嵌 ⇒ `jades_total` 只计未镶嵌');
+  assert.deepEqual(s.jades.map((j) => j.id), ['jd_free_1', 'jd_free_2', 'jd_free_3'], '出参只含未镶嵌玉');
+  for (const j of s.jades) assert.equal(j.mounted_tree_id, undefined, '出参不得带 mounted_tree_id');
+  // 未镶嵌玉原有字段不受影响（永久标记 / 到期时刻）
+  assert.equal(s.jades.find((j) => j.id === 'jd_free_1').permanent, true);
+  assert.ok(s.jades.find((j) => j.id === 'jd_free_2').expires_at);
+
+  // 原始记录保留：**读侧过滤、零落写**（不迁移、不删除、不改写）
+  const raw = await readAssets(phone);
+  assert.equal(raw.jades.length, 5, '真源仍 5 枚（已镶嵌的没有被删）');
+  assert.deepEqual(raw.jades.map((j) => j.id), ['jd_own_m', 'jd_own_m2', 'jd_free_1', 'jd_free_2', 'jd_free_3'], '原始顺序不变');
+  assert.equal(raw.jades.find((j) => j.id === 'jd_own_m').mounted_tree_id, 'tree_v6_a', 'mounted_tree_id 原样保留');
+  assertInvariants(raw, 'summary 玉归属');
+
+  // 全为已镶嵌 → 一枚都不返（不崩、不给 [object]）
+  await seedAssets(phone, { fragments: 0, seeds: [], bamboos: [], jades: [mounted], txs: [], signin_date: '' });
+  const only = jsonBody(await call('/assets/summary', 'GET', bearer(phone)));
+  assert.equal(only.jades_total, 0);
+  assert.deepEqual(only.jades, []);
+
+  // 后台运维面 vs 用户面口径对照（Zang 裁定）：后台 = **全量原始记录**（含已镶嵌 + `mounted_tree_id`）；
+  // 用户面 `/assets/summary` = 只出未镶嵌（上面已断言）。
+  await seedAssets(phone, { fragments: 0, seeds: [], bamboos: [], jades: [mounted, jade(null, 'jd_free_9')], txs: [], signin_date: '' });
+  const userSide = jsonBody(await call('/assets/summary', 'GET', bearer(phone)));
+  assert.equal(userSide.jades_total, 1, '用户面：只计未镶嵌');
+  assert.deepEqual(userSide.jades.map((j) => j.id), ['jd_free_9'], '用户面：只出未镶嵌玉');
+  const adminRes = await call('/admin/assets/user', 'GET', bearerAs(CHIEF, 'chief_editor'), { phone });
+  assert.equal(adminRes.statusCode, 200, adminRes.body);
+  const snap = jsonBody(adminRes);
+  assert.equal(snap.jades, 2, '后台枚数 = 全量（含已镶嵌）');
+  assert.deepEqual(snap.jade_list.map((j) => j.id), ['jd_own_m', 'jd_free_9'], '后台出全量原始记录，顺序同真源');
+  assert.equal(snap.jade_list.find((j) => j.id === 'jd_own_m').mounted_tree_id, 'tree_v6_a',
+    '后台保留 `mounted_tree_id` ⇒ 后台页「· 已镶嵌 <tree_id>」分支可达（不是死代码）');
+  assert.equal(snap.jade_list.find((j) => j.id === 'jd_free_9').mounted_tree_id, undefined, '未镶嵌玉不带 mounted_tree_id');
+  // 后台读侧同样零落写：真源一字节不动
+  assert.deepEqual((await readAssets(phone)).jades.map((j) => j.id), ['jd_own_m', 'jd_free_9'], '后台读取不改真源');
+});
+
 // ---- ⑧ 真源未变 ----
 
 test('本文件全程未写真实数据：config/tree-meta.json 与 migrate-output/ 逐字节未变', () => {

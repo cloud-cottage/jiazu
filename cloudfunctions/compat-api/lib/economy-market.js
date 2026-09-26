@@ -39,6 +39,7 @@ import {
   recordTx,
   sumLots,
   sweep,
+  toNonNegInt,
   withAssets,
 } from './economy-ledger.js';
 import * as wallet from './wallet.js';
@@ -133,7 +134,7 @@ export function tradeId() {
  * 边界：1/50/99 → 0（免收）；100 → 1；101 → 1；199 → 1；200 → 2；999 → 9；1000 → 10。
  */
 export function feeOf(priceSeeds) {
-  const price = Math.max(0, Math.floor(Number(priceSeeds) || 0));
+  const price = toNonNegInt(priceSeeds);
   return Math.floor((price * FEE_RATE_PERCENT) / FEE_RATE_DENOMINATOR);
 }
 
@@ -145,7 +146,7 @@ export function feeOf(priceSeeds) {
  * - `waived`      = `fee_seeds === 0`（免收）
  */
 export function feeBreakdown(priceSeeds) {
-  const price_seeds = Math.max(0, Math.floor(Number(priceSeeds) || 0));
+  const price_seeds = toNonNegInt(priceSeeds);
   const fee_seeds = feeOf(price_seeds);
   return {
     price_seeds,
@@ -164,7 +165,7 @@ export function lockedPieces(phone, listings) {
   let sum = 0;
   for (const l of listings || []) {
     if (!l || l.status !== 'open' || l.seller_phone !== phone) continue;
-    sum += Math.max(0, Math.floor(Number(l.pieces) || 0));
+    sum += toNonNegInt(l.pieces);
   }
   return sum;
 }
@@ -267,7 +268,7 @@ export function releaseOfficial(official, now = new Date()) {
   const last = typeof o.last_release_date === 'string' ? o.last_release_date : '';
   const released = isOpen && last < today;
   if (released) {
-    o.stock[today] = Math.max(0, Math.floor(Number(o.daily_stock) || 0));
+    o.stock[today] = toNonNegInt(o.daily_stock);
     o.last_release_date = today;
   }
   return {
@@ -278,7 +279,7 @@ export function releaseOfficial(official, now = new Date()) {
     open_at: `${today}T${RELEASE_AT}:00+08:00`,
     open_at_ms: openMs,
     release_at: RELEASE_AT,
-    stock_left_today: Math.max(0, Math.floor(Number(o.stock[today]) || 0)),
+    stock_left_today: toNonNegInt(o.stock[today]),
   };
 }
 
@@ -300,14 +301,14 @@ function byExpiryAsc(a, b) {
  * - 不足 → 抛 409（文案「部分竹片已过期，请撤单后重挂」）。
  */
 export function bambooSlices(sellerUser, pieces, now = new Date()) {
-  const need = Math.max(0, Math.floor(Number(pieces) || 0));
+  const need = toNonNegInt(pieces);
   const available = sumLots(sellerUser?.bamboos);
   if (available < need) throw bambooInsufficient(need, available, ERR_BAMBOO_EXPIRED);
   const taken = [];
   let left = need;
   for (const lot of [...(sellerUser.bamboos || [])].sort(byExpiryAsc)) {
     if (left <= 0) break;
-    const qty = Math.max(0, Math.floor(Number(lot.qty) || 0));
+    const qty = toNonNegInt(lot.qty);
     if (qty <= 0) continue;
     const take = Math.min(qty, left);
     taken.push({ lot_id: lot.id, qty: take, expires_at: lot.expires_at ?? null });
@@ -339,8 +340,8 @@ export function bambooSlices(sellerUser, pieces, now = new Date()) {
  *   receive:Array<{qty:number,expires_at:string|null,source:string}>, buyer_seeds_available:number}}
  */
 export function planTrade({ listing, sellerUser, buyerUser, listings = [], now = new Date() } = {}) {
-  const price_seeds = Math.max(0, Math.floor(Number(listing?.price_seeds) || 0));
-  const pieces = Math.max(0, Math.floor(Number(listing?.pieces) || 0));
+  const price_seeds = toNonNegInt(listing?.price_seeds);
+  const pieces = toNonNegInt(listing?.pieces);
   const { fee_seeds, seller_got, destroyed, waived } = feeBreakdown(price_seeds);
   // 卖方：去掉**本挂单自身占量**后的可用片数（其余 open 挂单仍占量）
   const lockedOthers = lockedPieces(listing?.seller_phone, listings);
@@ -357,7 +358,7 @@ export function planTrade({ listing, sellerUser, buyerUser, listings = [], now =
 /** 买方侧记账（在 `withAssets` mutator 内调用）：FIFO 扣籽 + 接收批次（`expires_at` 继承）+ `Tx{market_buy}` */
 export function applyBuyerSide(buyerUser, plan, trade_id, now = new Date(), listing = {}) {
   const charge = chargeLots(buyerUser.seeds, plan.price_seeds, 'seed');
-  buyerUser.seeds = (buyerUser.seeds || []).filter((l) => Math.floor(Number(l.qty) || 0) > 0);
+  buyerUser.seeds = (buyerUser.seeds || []).filter((l) => toNonNegInt(l.qty) > 0);
   const lots = [];
   for (const g of plan.receive || []) {
     lots.push(
@@ -388,13 +389,13 @@ export function applySellerSide(sellerUser, plan, trade_id, now = new Date(), li
   let left = plan.pieces;
   for (const s of plan.slices || []) {
     const lot = byId.get(s.lot_id);
-    const qty = Math.max(0, Math.floor(Number(lot?.qty) || 0));
+    const qty = toNonNegInt(lot?.qty);
     if (!lot || qty < s.qty) throw bambooInsufficient(plan.pieces, sumLots(sellerUser.bamboos), ERR_BAMBOO_EXPIRED);
     lot.qty = qty - s.qty;
     left -= s.qty;
   }
   if (left > 0) throw bambooInsufficient(plan.pieces, sumLots(sellerUser.bamboos), ERR_BAMBOO_EXPIRED);
-  sellerUser.bamboos = (sellerUser.bamboos || []).filter((l) => Math.floor(Number(l.qty) || 0) > 0);
+  sellerUser.bamboos = (sellerUser.bamboos || []).filter((l) => toNonNegInt(l.qty) > 0);
   let seed_lot = null;
   if (plan.seller_got > 0) seed_lot = addLot(sellerUser, 'seed', plan.seller_got, { source: 'market', now });
   recordTx(
@@ -450,7 +451,7 @@ export function officialPayload(official, release, now = new Date()) {
   const rel = release || releaseOfficial({ stock: {}, daily_stock: o.daily_stock, last_release_date: '' }, now);
   return {
     price_fen: Math.floor(Number(o.price_fen) || DEFAULT_PRICE_FEN),
-    daily_stock: Math.max(0, Math.floor(Number(o.daily_stock) || 0)),
+    daily_stock: toNonNegInt(o.daily_stock),
     stock_left_today: rel.stock_left_today,
     release_at: RELEASE_AT,
     released: rel.released_today,

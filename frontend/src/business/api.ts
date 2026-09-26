@@ -26,6 +26,8 @@ import type {
   FamilyRef,
   EstablishBranchResult,
   ConvergeClanResult,
+  SiblingReorderPayload,
+  SiblingReorderResult,
 } from './types';
 
 // API 基础路径
@@ -1297,6 +1299,27 @@ export async function reparentNode(
   });
 }
 
+/**
+ * 调整同胞排行（子女标签排序）：把某段 family 的 `child_handles[]` 重排为提交顺序。
+ *
+ * **一次提交只动一段 family**（多配偶家族分段排序，`family_handle` 必传）；1 片 / 次，
+ * no-op（提交序与现状逐位相同，含拖回原位）由后端裁定 → `noop:true` + `fee.pieces:0`，不扣费不写库。
+ * 错误分支：缺参 / 集合不等价 400，只读节点 403，余额不足 409（`ASSET_INSUFFICIENT`），
+ * 系统级失败 500（通用文案 + `fee_refunded`）。
+ */
+export async function siblingReorder(
+  treeId: string,
+  payload: SiblingReorderPayload,
+  token: string,
+): Promise<SiblingReorderResult> {
+  return authedFetch(treeId, '/admin/sibling-reorder', 'POST', token, {
+    tree_id: treeId,
+    family_handle: payload.family_handle,
+    person_handle: payload.person_handle,
+    child_handles: payload.child_handles,
+  });
+}
+
 // ---- 删除节点（危险区，仅管理员） ----
 
 /** 删除模式：subtree = 连本节点带全部后代（默认）；promote = 仅本节点，子女上提一级 */
@@ -2271,6 +2294,18 @@ export interface SpiritJade {
   expires_at: string | null;
 }
 
+/**
+ * 已镶玉的**注入者**（`GET /spirit` 出参 `injector`；后端读侧反查，**不下发手机号**）。
+ * 三态：对象 + `person_handle` 有值 → 可点档案链接；对象 + `person_handle === null` →
+ * 注入者无本树节点；`injector === null` → 注入者信息不可考。
+ */
+export interface SpiritInjector {
+  /** 展示名（昵称；昵称缺失时后端用脱敏手机号兜底，仍不含完整手机号） */
+  nickname: string;
+  /** 注入者在本树的锚点节点 handle；无锚点 / 锚点跨树 → null */
+  person_handle: string | null;
+}
+
 /** 时流子域状态（GET /spirit?tree_id=<tree_id>） */
 export interface SpiritInfo {
   tree_id: string;
@@ -2288,6 +2323,8 @@ export interface SpiritInfo {
   /** 缓冲期剩余天数 */
   buffer_days_left: number;
   jade: SpiritJade | null;
+  /** 注入者（已镶玉区块展示；未镶嵌 / 反查不到 → null） */
+  injector: SpiritInjector | null;
   /** 灌注流水（倒序最近 100 条；非成员/guest 为 []） */
   logs: SpiritLogItem[];
   logs_total: number;

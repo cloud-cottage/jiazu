@@ -413,6 +413,139 @@ function unlinkFamily(tree, fam) {
   }
 }
 
+// ---- 同胞排行（子女标签排序）----
+
+/**
+ * 子女集合等价判定（**纯函数**，无 IO）：提交的 `child_handles` 与家族现有 `child_handles`
+ * 是否「等长、同元素、无重复」——**只允许排列，不允许增删成员**（改挂靠有别的路由）。
+ * 顺序不参与判定（本函数就是用来判「集合」，位次差异由调用方自己比）。
+ */
+export function sameChildHandleSet(current, submitted) {
+  const a = (current || []).map((h) => String(h ?? ''));
+  const b = (submitted || []).map((h) => String(h ?? ''));
+  if (a.length !== b.length) return false;
+  if (new Set(b).size !== b.length) return false; // 提交侧不得有重复
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((h, i) => h === sortedB[i]);
+}
+
+/** 家族记录不存在的统一拒绝文案（路由 / 写路径同字面） */
+export const FAMILY_NOT_FOUND_TEXT = '家族记录不存在';
+/** 子女集合不等价的统一拒绝文案（路由 / 写路径同字面；docs 与前端**不得**另写一套） */
+export const CHILD_SET_MISMATCH_TEXT = '子女列表须与现有子女完全一致（等长 / 同元素 / 无重复）';
+
+/**
+ * 调整同胞排行（`POST /admin/sibling-reorder` 的写路径）。
+ *
+ * 排行真源 = `tree.families[<familyHandle>].child_handles[]` 的**数组位次**（**不新增任何字段**）：
+ * 读路径 `profileFamily`（`index.js`）已按数组序输出 `children`，前端零改动即生效。
+ *
+ * 闸门顺序（docs/economy-fee.spec.md §4-3，路由负责①鉴权 / ②只读预检，本函数负责③以后）：
+ *   ③ 集合校验（先于扣费：family 不存在 → 404；集合不等价 / person 不在列表 → 400）
+ *   → ④ 余额预检 + 扣费（整单拒绝 409；no-op 一律不进入扣费）
+ *   → ⑤ 落库（`store.updateTree`：乐观锁 + 失败原地回滚）
+ *   → ⑥ 落库失败 → 原路返还同一批次（`refund` 回调）
+ *
+ * **no-op**：提交序与现值逐位相同（含拖回原位）→ 不扣费、不写库，返回 `noop:true` + `fee:null`
+ * （路由据此回 0 片；与 `eco.isPersonUnchanged` 同一口径，见 `index.js` PUT /people）。
+ *
+ * 一次调用只动**一段** family 的 `child_handles`（多配偶家族分段排序，一次拖动 = 一次计费）。
+ *
+ * @param {object} p
+ * @param {string} p.treeId
+ * @param {string} p.familyHandle
+ * @param {string} p.personHandle 被拖动的那个子女节点（计费 `ref.person_handle` + desc 位次都按它算）
+ * @param {string[]} p.childHandles 提交的新数组序（必须是现有子女集合的一个排列）
+ * @param {string} [p.masterTreeId] 总谱 tree_id（本函数内再做一次只读预检；不传 = 不判镜像只读）
+ * @param {Function} [p.charge] 闸门扣费回调（`eco.charger(phone, 'sibling_reorder')`）
+ * @param {Function} [p.refund] 落库失败冲正回调
+ */
+export async function reorderChildren({
+  treeId,
+  familyHandle,
+  personHandle,
+  childHandles,
+  masterTreeId = '',
+  charge = null,
+  refund = null,
+} = {}) {
+  if (!treeId) throw fail('缺少 tree_id');
+  if (!familyHandle) throw fail('缺少 family_handle');
+  if (!personHandle) throw fail('缺少 person_handle');
+  if (!Array.isArray(childHandles)) throw fail('缺少 child_handles（须为数组）');
+
+  const tree0 = await getTree(treeId);
+  if (!tree0) throw fail(`树不存在: ${treeId}`, 404);
+  const person = tree0.people?.[personHandle];
+  if (!person) throw fail('节点不存在', 404);
+  const fam0 = tree0.families?.[familyHandle];
+  if (!fam0) throw fail(FAMILY_NOT_FOUND_TEXT, 404);
+
+  const current = (fam0.child_handles || []).map((h) => String(h ?? ''));
+  const next = childHandles.map((h) => String(h ?? ''));
+  // 集合校验（校验先于扣费）：等长 / 同元素 / 无重复，否则 400（绝不接受增删成员的数组）
+  if (!sameChildHandleSet(current, next)) throw fail(CHILD_SET_MISMATCH_TEXT, 400);
+  if (!current.includes(personHandle)) throw fail('person_handle 不在该家族的子女列表中', 400);
+  // 只读预检（防御层，与路由的 `fa.assertFounderEditable` 同一判据函数 `personEditLockMessage`：
+  // 只读节点（始祖真身 / 上层镜像…）→ 403，**不扣费、不写库**。
+  // 数组内其它成员（含镜像）只跟着移位，不单独判定。
+  if (masterTreeId) {
+    const lockMsg = await personEditLockMessage(person, tree0, masterTreeId);
+    if (lockMsg) throw fail(lockMsg, 403);
+  }
+
+  const personName = person.name || '';
+  const position = next.indexOf(personHandle) + 1; // 新位次（1 起）
+  const previousPosition = current.indexOf(personHandle) + 1; // 原位次（1 起）
+  const report = {
+    ok: true,
+    tree_id: treeId,
+    family_handle: familyHandle,
+    person_handle: personHandle,
+    person_name: personName,
+    position,
+    previous_position: previousPosition,
+    child_handles: next,
+    /* 位次发生变化的节点（**含被拖动的本人**）；不计费、仅供前端预览 */
+    shifted: next.filter((h, i) => current.indexOf(h) !== i),
+  };
+
+  // no-op：新序与现值逐位相同 → 不扣费、不写库（version / updated_at 不动，无任何 txs 流水）
+  if (current.length === next.length && current.every((h, i) => h === next[i])) {
+    return { ...report, noop: true, changed: false, fee: null };
+  }
+
+  let charged = null;
+  try {
+    await updateTree(treeId, async (tree) => {
+      const fam = tree.families?.[familyHandle];
+      if (!fam) throw fail(FAMILY_NOT_FOUND_TEXT, 404); // 竞态：并发删家族
+      // 扣费在落库之前（闭包首步）：409 整单拒绝 → 抛错 → 树不写；落库失败 → catch 里冲正
+      if (charge) {
+        charged = await charge({
+          dry_run: false,
+          tree_id: treeId,
+          person_handle: personHandle,
+          person_name: personName,
+          position,
+          // 人类可读 desc（口径「调整排行：<姓名> 第 <位次> 位」）
+          desc: `调整排行：${personName} 第 ${position} 位`,
+        });
+      }
+      fam.child_handles = next; // 就地重排（只动这一段 family，其余成员引用不变）
+      const problems = checkTreeIntegrity(tree);
+      if (problems.length) throw fail(`排行调整后结构校验失败：${problems.slice(0, 3).join('；')}`, 500);
+    });
+  } catch (e) {
+    if (refund) await refund(charged); // 落库失败 → 原路返还同一批次（best-effort，绝不掩盖原始错误）
+    throw e;
+  }
+  // 落盘后的真值（version / updated_at 取磁盘现值，不猜自增结果）
+  const saved = await getTree(treeId);
+  return { ...report, noop: false, changed: true, version: saved?.version, updated_at: saved?.updated_at, fee: charged ? charged.fee : null };
+}
+
 // ---- 中华世本源流链（zhonghua）续编 ----
 
 /** 详情文档 attributes → { key: value } 映射 */
