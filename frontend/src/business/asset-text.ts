@@ -193,7 +193,7 @@ export const SCROLL_PIECES_UNIT = '片';
 
 /**
  * 兰帖整道具（张）的量词（**恒「张」**；1 张 = 100 片）。
- * 单点：凡数字为**整道具数**（张）时一律经本常量拼装；片数分文一律用 `SCROLL_PIECES_UNIT`。
+ * 单点：数字为**整道具数**（张）时经本常量拼装；数字为**片数**时一律用 `SCROLL_PIECES_UNIT`。
  * 注：`business/inventory.ts` 的 `KIND_QTY_UNIT.scroll = '张'` 是行囊角标自有字面（本批未并，登记为后续收敛）。
  */
 export const SCROLL_ITEM_UNIT = '张';
