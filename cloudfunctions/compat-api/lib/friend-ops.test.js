@@ -13,7 +13,7 @@
  *   ⑥  F-C② **3 个生效好友 + 池 1 碎片 ⇒ 每人 0、余数销毁**（零头也落 delta 全 0 的审计条）
  *   ⑦  F-C⑤ 分母**不含**缓冲期 / 待邀请 / 已到期未 sweep 的 active（唯一口径 = isActiveAt）
  *   ⑧  F-C④ 好友收到的碎片**不再触发**新的池分发（正向：第三人零变化；反向：显式以 B 为触发者才分发）
- *   ⑨  F-B 锁定：不足 1 枚拒（SCROLL_INSUFFICIENT）；通过则 pending 记锁、**资产未扣**；**锁定后不可二次发起**
+ *   ⑨  F-B 锁定：不足 1 张拒（SCROLL_INSUFFICIENT）；通过则 pending 记锁、**资产未扣**；**锁定后不可二次发起**
  *   ⑩  F-B 超时失效 ⇒ 锁解除、**零流水**、可重新发起；拒绝 / 撤回 ⇒ 解锁且零流水
  *   ⑪  F-B 确认 ⇒ **双边各扣 1 枚**（读回资产验证：发起方扣的正是锁定那一批）；任一方不足 ⇒ 409 零扣减、锁定保留
  *   ⑫  v4① 到期天数三算例：365 / 395 / 725 天
@@ -29,7 +29,7 @@
  *   ⑳  **裁定 2 ＋ 本单修正①**：第二笔扣减可控失败 ⇒ **补偿回写**（双方 lot 明细逐字节回到开工前）＋ 冲正 `fee_refund` 流水
  *       ＋ 关系 history 补偿审计 ＋ 返回 `RENEW_DEDUCT_ROLLED_BACK`（**仅补偿也失败**才 `RENEW_DEDUCT_PARTIAL`）
  *       ＋ **关系文档零变更**（version / renewals / expires_at / pending 逐字段与开工前相同，锁保留）＋ 可重试确认
- *   ㉑  **本单修正①·正对照**：正常路径 —— **先双边扣减、后推进关系**（双边各扣 1 枚 + 各 1 条 `scroll_consume`、
+ *   ㉑  **本单修正①·正对照**：正常路径 —— **先双边扣减、后推进关系**（双边各扣 1 张 + 各 1 条 `scroll_consume`、
  *       renewals +1、expires_at 按 365 + 30×n 重算、pending 清空解锁、version 恰 +1、零冲正、双方各一条通知）
  *   ㉒  **本单修正②**：`TX_TYPES` 白名单**并回字面** —— `scroll_consume` 在 `economy-ledger.js` 字面内、
  *       白名单**无重复项**（Set 大小 == 长度）、`friend-ops.js` **零运行期 `push`**（源码判据 ＋ recordTx 旁证）
@@ -194,7 +194,7 @@ async function activeRelation(T0) {
   return { a, b, id: rid(a, b), token: T(rid(a, b)), T0, expires: acc.relation.expires_at };
 }
 
-/** 发 N 枚成品兰帖（N × 100 碎片 → ledger 自动合成 N 个 qty=100 的 ScrollLot） */
+/** 发 N 张成品兰帖（N × 100 碎片 → ledger 自动合成 N 个 qty=100 的 ScrollLot） */
 async function giveScrolls(phone, n, now) {
   return L.withAssets(phone, (user) => L.addScrollFragments(user, n * L.SCROLL_PIECES_PER_SCROLL, now));
 }
@@ -328,7 +328,7 @@ test('F-E 邀请/接受/续约待确认/续约成功/解除 五条通知复用�
   noPlainPhone(ok(await OPS.requestRenewal(r.token, r.a, w), 'requestRenewal'), 'requestRenewal');
   assert.equal(msgItems(r.b).length, 2);
   assert.equal(msgItems(r.b)[1].title, '好友续约待确认');
-  assert.match(msgItems(r.b)[1].text, /^【好友续约】.*发起续约申请（已锁定 1 枚兰帖）/);
+  assert.match(msgItems(r.b)[1].text, /^【好友续约】.*发起续约申请（已锁定 1 张兰帖）/);
   noPlainPhone(ok(await OPS.confirmRenewal(r.token, r.b, w), 'confirmRenewal'), 'confirmRenewal');
   assert.equal(msgItems(r.a).length, 2, '发起方只收「被接受」+「续约成功」（续约待确认发给对方）');
   assert.equal(msgItems(r.a)[1].title, '好友续约成功');
@@ -547,7 +547,7 @@ test('F-C④ 分发路径不调用任何活动触发逻辑：好友收到的碎�
 });
 
 // ══ ⑨ F-B 锁定：不足拒 / 记锁不扣 / 不可二次发起 ════════════════════════════════
-test('F-B 续约锁定：不足 1 枚拒（SCROLL_INSUFFICIENT）；通过则 pending 记锁且资产未扣；锁定后不可二次发起', async () => {
+test('F-B 续约锁定：不足 1 张拒（SCROLL_INSUFFICIENT）；通过则 pending 记锁且资产未扣；锁定后不可二次发起', async () => {
   const T0 = '2026-09-01T00:00:00.000Z';
   const r = await activeRelation(T0);
   const w = at(r.expires, -3); // 续约窗口内
@@ -559,7 +559,7 @@ test('F-B 续约锁定：不足 1 枚拒（SCROLL_INSUFFICIENT）；通过则 pe
   assert.equal(await pieces(r.a), 0, '资产零变化');
   // ② 只有 99 片（不足 1 枚 = 100 片）⇒ 仍拒
   await L.withAssets(r.a, (user) => L.addScrollFragments(user, 99, T0));
-  failsWith(await OPS.requestRenewal(r.token, r.a, w), 'SCROLL_INSUFFICIENT', '99 片不足 1 枚');
+  failsWith(await OPS.requestRenewal(r.token, r.a, w), 'SCROLL_INSUFFICIENT', '99 片不足 1 张');
   // ③ 补足 1 枚 ⇒ 通过：pending 记锁（九字段）+ 资产**未扣除**
   await giveScrolls(r.a, 1, T0);
   const lotId = (await scrollsOf(r.a)).find((l) => l.qty > 0).id;
@@ -654,8 +654,8 @@ test('F-B 超时失效 ⇒ 锁解除、零流水、可重新发起；对方拒�
 test('F-B 确认 ⇒ 双边各扣 1 枚（发起方扣的正是锁定那一批）；任一方不足 ⇒ 拒且零扣减、锁定保留', async () => {
   const T0 = '2026-11-01T00:00:00.000Z';
   const r = await activeRelation(T0);
-  await giveScrolls(r.a, 2, T0); // 发起方 2 枚（锁定取第一个 qty>0 的批次）
-  await giveScrolls(r.b, 1, T0); // 确认方 1 枚
+  await giveScrolls(r.a, 2, T0); // 发起方 2 张（锁定取第一个 qty>0 的批次）
+  await giveScrolls(r.b, 1, T0); // 确认方 1 张
   const w = at(r.expires, -2);
   const req = ok(await OPS.requestRenewal(r.token, r.a, w), 'requestRenewal');
   assert.equal(await pieces(r.a), 200, '锁定不扣除');
@@ -998,7 +998,7 @@ test('裁定 1 scroll_consume：双边扣减**各写一笔**账本流水（可�
     const tx = list[0];
     assert.deepEqual(tx.delta, { scrolls: -100 }, 'delta 逐字 = { scrolls: -100 }（本仓兰帖计量单位 = 片）');
     assert.deepEqual(Object.keys(tx.delta), ['scrolls']);
-    assert.equal(-tx.delta.scrolls, 1 * L.SCROLL_PIECES_PER_SCROLL, '1 枚 = 100 片');
+    assert.equal(-tx.delta.scrolls, 1 * L.SCROLL_PIECES_PER_SCROLL, '1 张 = 100 片');
     assert.deepEqual(Object.keys(tx.ref).sort(), ['peer_masked', 'relation_token', 'role', 'source']);
     assert.equal(tx.ref.source, 'friend_renew');
     assert.equal(tx.ref.relation_token, token, 'ref 带 relation_token（**不带** relation_id）');
@@ -1029,8 +1029,8 @@ test('裁定 2 补偿回滚：第二笔失败 ⇒ 还原已扣批次（双方 lo
   await F.createInvite(a, b, { now: T0 });
   await F.acceptInvite(rid(a, b), b, { now: T0 });
   const token = T(rid(a, b));
-  await giveScrolls(a, 2, T0); // 发起方 2 枚（2 个批次）
-  await giveScrolls(b, 1, T0); // 确认方 1 枚
+  await giveScrolls(a, 2, T0); // 发起方 2 张（2 个批次）
+  await giveScrolls(b, 1, T0); // 确认方 1 张
   const w = at(T0, 364);
   ok(await OPS.requestRenewal(token, a, w), 'requestRenewal');
 
@@ -1175,7 +1175,7 @@ test('本单修正 正对照：正常路径——先双边扣减、后推进关�
   const conf = ok(await OPS.confirmRenewal(token, b, w), 'confirmRenewal');
   noPlainPhone(conf, 'confirmRenewal(正对照)');
 
-  // ① 双边扣减**均发生**（先资产）：各 1 枚、各一笔 scroll_consume
+  // ① 双边扣减**均发生**（先资产）：各 1 张、各一笔 scroll_consume
   assert.deepEqual(conf.charged.map((c) => c.role), ['initiator', 'confirmer'], '扣减顺序：发起方在前');
   assert.deepEqual(conf.charged.map((c) => c.pieces), [100, 100]);
   assert.equal('phone' in conf.charged[0], false, '出参脱敏投影不得含 phone 明文字段');

@@ -68,7 +68,7 @@ export const SCROLL_FRAGMENT_NAME = '兰帖残页';
 export const SCROLL_STATUS_PERMANENT = '永久有效';
 
 /**
- * 兰帖**锁定态**文案（逐字；单点）—— 续约申请等待对方确认期间，发起方自持的那枚兰帖
+ * 兰帖**锁定态**文案（逐字；单点）—— 续约申请等待对方确认期间，发起方自持的那张兰帖
  * 已被关系域的 `pending.locked_*` 占用（只占用、不扣除），行囊内该兰帖格须显示本行。
  * 判据由 `business/friends.ts` 从 `GET /friends` 的 `pending` 推导（不新增后端字段）。
  */
@@ -76,7 +76,7 @@ export const SCROLL_LOCK_TEXT = '续约待确认 · 锁定中';
 
 /**
  * 兰帖【分解】相关文案（**单点**）—— 口径真源 = `docs/friend-domain.spec.md` §17-7 / §17-8（R-7）：
- * **1 枚成品兰帖 = 100 片，分解返还 99 片**（每枚留 1 片损耗；返 100 会在返还瞬间触发「满 100 自动合成」
+ * **1 张成品兰帖 = 100 片，分解返还 99 片**（每张留 1 片损耗；返 100 会在返还瞬间触发「满 100 自动合成」
  * ⇒ 分解成为空操作）。数值由调用方传入（`inventory.ts` 的常量），**本模块不复制比例常量**
  * （避免两模块互相 import 成环）。
  */
@@ -86,7 +86,7 @@ export const SCROLL_DECOMPOSE_TITLE = '⚠️ 分解兰帖确认';
 
 /**
  * 兰帖分解确认正文（逐行渲染，不合并、不改标点）：
- * `count` 枚、每枚 `piecesPerItem` 片、每枚留 `perLoss = piecesPerItem − refundPerItem` 片损耗。
+ * `count` 张、每张 `piecesPerItem` 片、每张留 `perLoss = piecesPerItem − refundPerItem` 片损耗。
  */
 export function scrollDecomposeConfirmLines(
   count: number,
@@ -97,9 +97,9 @@ export function scrollDecomposeConfirmLines(
   const perLoss = Math.max(0, piecesPerItem - refundPerItem);
   const pieces = n * piecesPerItem;
   return [
-    `本次将分解 ${n} 枚${SCROLL_NAME}（每枚 ${piecesPerItem} 片），共扣减 ${pieces} 片。`,
-    `分解返还 ${n * refundPerItem} 片${SCROLL_FRAGMENT_NAME}（每枚留 ${perLoss} 片损耗，共损耗 ${n * perLoss} 片）。`,
-    `返还的${SCROLL_FRAGMENT_NAME}满 ${piecesPerItem} 个由后端自动合成 1 枚${SCROLL_NAME}。`,
+    `本次将分解 ${n} 张${SCROLL_NAME}（每张 ${piecesPerItem} 片），共扣减 ${pieces} 片。`,
+    `分解返还 ${n * refundPerItem} 片${SCROLL_FRAGMENT_NAME}（每张留 ${perLoss} 片损耗，共损耗 ${n * perLoss} 片）。`,
+    `返还的${SCROLL_FRAGMENT_NAME}满 ${piecesPerItem} 片由后端自动合成 1 张${SCROLL_NAME}。`,
     '是否确认分解？',
   ];
 }
@@ -107,22 +107,22 @@ export function scrollDecomposeConfirmLines(
 /** 兰帖格属性提示层的分解比例行（**先让用户看到比例，再谈操作**） */
 export function scrollDecomposeHintLine(piecesPerItem: number, refundPerItem: number): string {
   const perLoss = Math.max(0, piecesPerItem - refundPerItem);
-  return `分解 1 枚${SCROLL_NAME}：${piecesPerItem} 片 ⇒ 返还 ${refundPerItem} 片${SCROLL_FRAGMENT_NAME}（留 ${perLoss} 片损耗）`;
+  return `分解 1 张${SCROLL_NAME}：${piecesPerItem} 片 ⇒ 返还 ${refundPerItem} 片${SCROLL_FRAGMENT_NAME}（留 ${perLoss} 片损耗）`;
 }
 
 /**
- * 兰帖「格数 / 枚数」两口径行（`docs/economy.spec.md` §14-13 —— **两者不是同一个数、不得混用**）：
+ * 兰帖「格数 / 张数」两口径行（`docs/economy.spec.md` §14-13 —— **两者不是同一个数、不得混用**）：
  * - **格数**（展示层唯一口径）= 行囊占格，**含余数格**（整格 + 零头另占 1 格）；
- * - **枚数**（整道具数，= 接口 `scrolls_item_count` 口径）= `floor(片总数 / ${piecesPerItem})`。
- * 实测同体例：**250 片 ⇒ 3 格 / 2 枚**。行囊内**一律以格数**渲染占格与逐格角标。
+ * - **张数**（整道具数，= 接口 `scrolls_item_count` 口径）= `floor(片总数 / ${piecesPerItem})`。
+ * 实测同体例：**250 片 ⇒ 3 格 / 2 张**。行囊内**一律以格数**渲染占格与逐格角标。
  */
 export function scrollCaliberLine(cells: number, items: number, piecesPerItem: number): string {
-  return `行囊口径：占 ${cells} 格（含余数格）· 整道具 ${items} 枚（1 枚 = ${piecesPerItem} 片）—— 格数与枚数不同数，勿混`;
+  return `行囊口径：占 ${cells} 格（含余数格）· 整道具 ${items} 张（1 张 = ${piecesPerItem} 片）—— 格数与张数不同数，勿混`;
 }
 
-/** 余数格（不足 1 枚成品兰帖）⇒【分解】未达标原因（**必须显示出来，不得静默**） */
+/** 余数格（不足 1 张成品兰帖）⇒【分解】未达标原因（**必须显示出来，不得静默**） */
 export function scrollRemainderReasonLine(count: number, piecesPerItem: number): string {
-  return `本格为余数（${count} 片），不足 1 枚${SCROLL_NAME}（${piecesPerItem} 片），无法分解`;
+  return `本格为余数（${count} 片），不足 1 张${SCROLL_NAME}（${piecesPerItem} 片），无法分解`;
 }
 
 /** 可分解的兰帖被待确认的续约申请锁定（`scrollLock`）⇒【分解】未达标原因（**必须显示，不得静默**） */
@@ -131,12 +131,12 @@ export function scrollLockedReasonLine(): string {
 }
 
 /**
- * 兰帖碎片的状态行：满 `perItem` 由**后端**自动合成 1 枚兰帖（前端只展示、不做合成）。
- * 逐字 = `满 <perItem> 自动合成 1 枚兰帖`；`perItem` 由 `business/inventory.ts` 的常量传入
+ * 兰帖碎片的状态行：满 `perItem` 片由**后端**自动合成 1 张兰帖（前端只展示、不做合成）。
+ * 逐字 = `满 <perItem> 自动合成 1 张兰帖`；`perItem` 由 `business/inventory.ts` 的常量传入
  * （避免两模块互相 import 成环）。
  */
 export function scrollFragmentSynthLine(perItem: number): string {
-  return `满 ${perItem} 自动合成 1 枚${SCROLL_NAME}`;
+  return `满 ${perItem} 自动合成 1 张${SCROLL_NAME}`;
 }
 
 // ============ 道具诗句（Kevin 2026-09-25 逐字给定 · **唯一真源**） ============
@@ -173,14 +173,23 @@ export function assetPoem(kind: string): string {
 
 /**
  * 石榴籽碎片 / 竹片的展示名与单位（**逐字**；与 `business/inventory.ts` 的 `KIND_NAME.fragment = '石榴籽碎片'`
- * 及 `KIND_QTY_UNIT.fragment = '个'` 同字面 —— 两册各写一份会漂移，新增页面一律引用本模块，勿再抄一遍）。
+ * 及 `KIND_QTY_UNIT.fragment = '片'` 同字面 —— 两册各写一份会漂移，新增页面一律引用本模块，勿再抄一遍）。
  * 「竹片」= 既有竹片的**片**口径（`docs/task-center.spec.md` §6-1：「竹简碎片」= 既有竹片，**不新增碎片层**），
  * 故本模块**不**新造「竹简碎片」这个名字。
  */
 export const SEED_FRAGMENT_NAME = '石榴籽碎片';
-export const SEED_FRAGMENT_UNIT = '个';
+/** 石榴籽碎片量词（碎片类一律「片」；2026-09-26 由「个」改定） */
+export const SEED_FRAGMENT_UNIT = '片';
 export const BAMBOO_PIECES_NAME = '竹片';
 export const BAMBOO_PIECES_UNIT = '片';
+
+/**
+ * 兰帖片数单位（**恒「片」**）。
+ * 「张」是**整道具数**的量词（1 张 = 100 片），片数是**另一个量**；凡数字为片数时一律标「片」
+ * （`docs/economy.spec.md` §14-13 ①格数 / ②张数 两口径不得混用；2026-09-26 量词裁定 A5）。
+ * 单点：行囊提示层的兰帖数量行由 `business/inventory.ts` 引用本常量，勿在组件里散落「片」字面。
+ */
+export const SCROLL_PIECES_UNIT = '片';
 
 /**
  * 资产字段名 → 展示名（**单点**；任务中心读接口出参的品类数量键经此渲染）。

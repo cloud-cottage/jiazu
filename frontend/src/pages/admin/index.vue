@@ -253,7 +253,7 @@
             <view v-if="snapshot" class="snap">
               <view class="snap-row">
                 <text class="snap-label">碎片</text>
-                <text class="snap-value">{{ snapshot.fragments }} / 9</text>
+                <text class="snap-value">{{ snapshot.fragments }} / 9 片</text>
               </view>
               <view class="snap-row">
                 <text class="snap-label">石榴籽</text>
@@ -268,6 +268,14 @@
                 <text class="snap-value">{{ snapshotJadeCount }} 枚</text>
               </view>
               <view class="snap-row">
+                <text class="snap-label">兰帖</text>
+                <text class="snap-value">{{ snapshot.scrolls_item_count ?? 0 }} 张（{{ snapshot.scrolls_total_pieces ?? 0 }} 片）</text>
+              </view>
+              <view class="snap-row">
+                <text class="snap-label">兰帖残页</text>
+                <text class="snap-value">{{ snapshot.scroll_fragments ?? 0 }} / {{ snapshot.scroll_fragment_cap ?? 99 }} 片</text>
+              </view>
+              <view class="snap-row">
                 <text class="snap-label">最近签到</text>
                 <text class="snap-value">{{ snapshot.signin_date || '—' }}</text>
               </view>
@@ -280,6 +288,10 @@
               <view v-for="j in snapshotJades" :key="j.id" class="snap-lot">
                 石榴籽玉 {{ j.id }} · {{ j.expires_at ? '到期 ' + formatTime(j.expires_at) : '永久' }}
                 <template v-if="j.mounted_tree_id"> · 已镶嵌 {{ j.mounted_tree_id }}</template>
+              </view>
+              <!-- 兰帖批次：`ScrollLot.expires_at` 恒 `null`（永久）⇒ 恒显示「永久」，不走 `formatTime(undefined)` -->
+              <view v-for="lot in snapshotScrollLots" :key="lot.id" class="snap-lot">
+                兰帖批次 {{ lot.id }} · {{ lot.qty }} 片 · 永久
               </view>
             </view>
           </view>
@@ -333,6 +345,8 @@ import { fetchUserList, setUserRole, setAnchor, fetchLeaveRequests, approveLeave
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { ManagedUser, LeaveRequestItem, JoinRequestItem, OpsLog, AdminAssetSnapshot } from '@/business/api';
 import type { AssetDelta, Jade } from '@/business/api';
+import { SCROLL_PIECES_PER_ITEM } from '@/business/inventory';
+import type { ScrollLot } from '@/business/types';
 import type { PersonSummary } from '@/business/types';
 import { personIdDisplay } from '@/business/format';
 
@@ -523,21 +537,28 @@ async function rejectJoin(jr: JoinRequestItem) {
 
 // ---- 资产运维（docs/economy-ops.spec.md §5，仅 chief_editor） ----
 
-type DeltaKey = 'fragments' | 'seeds' | 'bamboos' | 'jades';
+type DeltaKey = 'fragments' | 'seeds' | 'bamboos' | 'jades' | 'scrolls' | 'scroll_fragments';
 
-/** 四类资产输入项（docs/economy.spec.md §3：碎片 / 石榴籽 / 竹片 / 石榴籽玉） */
+/**
+ * 六类资产输入项（docs/economy.spec.md §3 + §15：碎片 / 石榴籽 / 竹片 / 石榴籽玉 / 兰帖 / 兰帖残页）。
+ * 顺序 = 后端 `DELTA_KEYS` 顺序 = 表单显示序；量词随品类（碎片类「片」、兰帖「张」）。
+ */
 const DELTA_FIELDS: Array<{ key: DeltaKey; label: string; unit: string }> = [
-  { key: 'fragments', label: '碎片', unit: '个（可负）' },
+  { key: 'fragments', label: '碎片', unit: '片（可负）' },
   { key: 'seeds', label: '石榴籽', unit: '颗（可负）' },
   { key: 'bamboos', label: '竹片', unit: '片（可负）' },
   { key: 'jades', label: '石榴籽玉', unit: '枚（可负）' },
+  { key: 'scrolls', label: '兰帖', unit: '张（可负，1 张 = 100 片）' },
+  { key: 'scroll_fragments', label: '兰帖残页', unit: '片（可负）' },
 ];
 
 /** 资产运维区仅 chief_editor 可见（非总编显示提示条，与后端 403「需要总编辑权限」一致） */
 const isChief = computed(() => isAuthenticated() && authState.role === 'chief_editor');
 
 const grantPhone = ref('');
-const grantDelta = ref<Record<DeltaKey, string>>({ fragments: '', seeds: '', bamboos: '', jades: '' });
+const grantDelta = ref<Record<DeltaKey, string>>({
+  fragments: '', seeds: '', bamboos: '', jades: '', scrolls: '', scroll_fragments: '',
+});
 const grantReason = ref('');
 const grantEvidence = ref('');
 const grantError = ref('');
@@ -555,6 +576,8 @@ const logsError = ref('');
 const logsLoading = ref(false);
 
 const snapshotJades = computed<Jade[]>(() => (snapshot.value ? jadeListOf(snapshot.value) : []));
+/** 兰帖批次（后端 §A4 追加出参；旧后端不返 ⇒ 空数组，不抛错） */
+const snapshotScrollLots = computed<ScrollLot[]>(() => snapshot.value?.scroll_lots || []);
 const snapshotJadeCount = computed(() => (snapshot.value ? jadeCountOf(snapshot.value) : 0));
 
 function setDelta(key: DeltaKey, value: string) {
@@ -568,7 +591,9 @@ function parseDeltaInput(): AssetDelta {
     const raw = (grantDelta.value[f.key] || '').trim();
     if (!raw) continue;
     if (!/^-?\d+$/.test(raw)) throw new Error(`${f.label}数量必须为整数`);
-    delta[f.key] = Number(raw);
+    // 兰帖输入按「张」：提交前 ×100 折算成片（**1 张 = 100 片**；线上一律以片计）
+    // —— 这是全站**唯一**的张 → 片换算点，其余任何地方都不得再折算
+    delta[f.key] = f.key === 'scrolls' ? Number(raw) * SCROLL_PIECES_PER_ITEM : Number(raw);
   }
   return delta;
 }
@@ -602,7 +627,9 @@ async function submitGrant() {
   try {
     await postAdminAssetsGrant({ target_phone: phone, delta, reason, ...(evidence ? { evidence } : {}) });
     uni.showToast({ title: '资产已变更', icon: 'success' });
-    grantDelta.value = { fragments: '', seeds: '', bamboos: '', jades: '' };
+    grantDelta.value = {
+      fragments: '', seeds: '', bamboos: '', jades: '', scrolls: '', scroll_fragments: '',
+    };
     grantReason.value = '';
     grantEvidence.value = '';
     await queryUserAssets(phone);
@@ -655,13 +682,27 @@ async function loadLogs() {
   }
 }
 
+/**
+ * 单项 delta → 文本（量词随品类）。
+ * 兰帖（`scrolls`）线上以**片**计：片数能被 100 整除 ⇒ `N 张兰帖`（N = 片数 ÷ 100，不带小数），
+ * 否则回退 `M 片兰帖`（片数即数值，量词为片）。
+ */
+function deltaValueText(f: { key: DeltaKey; label: string }, v: number): string {
+  if (f.key === 'scrolls') {
+    return v % SCROLL_PIECES_PER_ITEM === 0
+      ? `${v / SCROLL_PIECES_PER_ITEM} 张${f.label}`
+      : `${v} 片${f.label}`;
+  }
+  return `${v} ${f.label}`;
+}
+
 /** delta → 文本（保留符号；0 项不显示） */
 function deltaText(delta: AssetDelta | undefined): string {
   if (!delta) return '';
   const parts: string[] = [];
   for (const f of DELTA_FIELDS) {
     const v = delta[f.key];
-    if (typeof v === 'number' && v !== 0) parts.push(`${v > 0 ? '+' : ''}${v} ${f.label}`);
+    if (typeof v === 'number' && v !== 0) parts.push(`${v > 0 ? '+' : ''}${deltaValueText(f, v)}`);
   }
   return parts.join(' · ') || '—';
 }

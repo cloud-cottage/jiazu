@@ -3,15 +3,15 @@
  *
  * 口径（Kevin 口径 v3 + `docs/economy.spec.md` §15，逐条落地；均为纯函数 / 纯数据，跨端无 DOM）：
  * - **整堆格**：竹简 `floor(bamboos_total_pieces / 100)` 格、石榴籽 `floor(seeds_total / 9999)` 格、
- *   **兰帖 `floor(Σ scrolls[].qty / 100)` 格（100 片 = 1 个道具，与竹简同构）**、
+ *   **兰帖 `floor(Σ scrolls[].qty / 100)` 格（100 片 = 1 张，与竹简同构）**、
  *   石榴籽玉 **1 枚 = 1 格**；角标 = 该类的道具量上限（100 片 / 9999 颗 / 100 片 / 1 枚）；
  *   **玉格不显示数量角标**（`badge = false`，模板据此不渲染角标）；
  * - **玉只计未镶嵌**：`summary.jades` 里 `mounted_tree_id` 非空的玉**不入行囊、不渲染、不计格**
  *   （口径：已镶嵌玉不属于用户了）⇒ 玉格数 / 占格数 / 溢出**一律只按未镶嵌玉计**；
  * - **余数格**：竹简 / 籽 / 兰帖 `% 每格量 > 0` 时**另加 1 格**，角标显示**实际余量**（如 37 片 / 5925 颗）；
- * - **碎片格**：`fragments > 0` 即占 1 格（1–9 个均占 1 格，0 个不占），角标显示**实际个数**（如 3）；
- *   **兰帖碎片（`scroll_fragments`）同口径**：`> 0` 即占 1 格、角标 = **实际个数**（1–99 个仍占 1 格，上限 99、
- *   满 100 由后端自动合成 1 枚兰帖 ⇒ 前端只展示、不判合成）；
+ * - **碎片格**：`fragments > 0` 即占 1 格（1–9 片均占 1 格，0 片不占），角标显示**实际个数**（如 3）；
+ *   **兰帖碎片（`scroll_fragments`）同口径**：`> 0` 即占 1 格、角标 = **实际个数**（1–99 片仍占 1 格，上限 99、
+ *   满 100 由后端自动合成 1 张兰帖 ⇒ 前端只展示、不判合成）；
  *   **v2 的「碎片恒 0 格」与「零头行」已彻底废弃**（模板 / 样式 / 数据字段 / 逻辑一并删除，不留死代码）；
  * - **兰帖永久有效**（`ScrollLot.expires_at` 恒 `null`）⇒ 兰帖格 `expiresAtMs = Infinity`，
  *   **不排入到期排序、不渲染任何「最近到期 / 有效期至」行**（与玉的永久批次同体例）；
@@ -30,6 +30,7 @@ import type { AssetsSummary, BambooLot, Jade, SeedLot } from './api';
 import {
   SCROLL_FRAGMENT_NAME,
   SCROLL_NAME,
+  SCROLL_PIECES_UNIT,
   SCROLL_STATUS_PERMANENT,
   formatAssetDate,
   jadeSubLine,
@@ -44,13 +45,13 @@ export const SEEDS_PER_ITEM = 9999;
 export const JADES_PER_ITEM = 1;
 /** 竹简：100 片 = 1 个道具 */
 export const BAMBOO_PIECES_PER_ITEM = 100;
-/** 兰帖：100 片 = 1 个道具（与竹简 100 片/格**数值相同、物品不同** ⇒ 各自持有常量，**不得共用**） */
+/** 兰帖：100 片 = 1 张（与竹简 100 片/格**数值相同、物品不同** ⇒ 各自持有常量，**不得共用**） */
 export const SCROLL_PIECES_PER_ITEM = 100;
-/** 石榴籽碎片：10 个 = 1 个道具（服务端 `fragment_cap = 9` ⇒ 实测 1–9 个，仍占 1 格） */
+/** 石榴籽碎片：10 片 = 1 颗石榴籽（服务端 `fragment_cap = 9` ⇒ 实测 1–9 片，仍占 1 格） */
 export const FRAGMENTS_PER_ITEM = 10;
 /**
- * 兰帖碎片：100 个 = 1 个道具（服务端 `scroll_fragment_cap = 99` ⇒ 实测 1–99 个仍占 1 格；
- * 满 100 由**后端**自动合成 1 枚兰帖，前端只展示）。与石榴籽碎片各自持有常量，**不得共用**。
+ * 兰帖碎片：100 片 = 1 张兰帖（服务端 `scroll_fragment_cap = 99` ⇒ 实测 1–99 片仍占 1 格；
+ * 满 100 由**后端**自动合成 1 张兰帖，前端只展示）。与石榴籽碎片各自持有常量，**不得共用**。
  */
 export const SCROLL_FRAGMENTS_PER_ITEM = 100;
 /** 道具栏位总数：6 × 6 = 36 */
@@ -116,34 +117,42 @@ const KIND_NAME: Record<InventoryKind, string> = {
   fragment: '石榴籽碎片',
 };
 
-/** 格内原始数量的单位（片 / 枚 / 颗 / 个） */
+/**
+ * 格内原始数量的单位（片 / 枚 / 颗 / 张）。
+ * 兰帖格内原始数量 = **片数** ⇒ 单位「张」只用于整道具数（1 张 = 100 片），片数另标「片」
+ * （`asset-text.ts` 的 `SCROLL_PIECES_UNIT`）；碎片类（石榴籽碎片 / 兰帖残页）一律「片」
+ * （2026-09-26 量词裁定：兰帖「枚」→「张」、碎片类「个」→「片」）。
+ */
 const KIND_QTY_UNIT: Record<InventoryKind, string> = {
   bamboo: '片',
-  scroll: '片',
+  scroll: '张',
   jade: '枚',
   seed: '颗',
-  scrollFragment: '个',
-  fragment: '个',
+  scrollFragment: '片',
+  fragment: '片',
 };
 
-/** 溢出行的计数单位（玉按枚，其余按个道具） */
+/**
+ * 溢出行的计数单位（**计的是道具 / 格数，不是原始量**）：玉按枚、兰帖按张（1 张 = 1 格；
+ * 2026-09-26 量词裁定）、碎片类（石榴籽碎片 / 兰帖残页）按片；竹简 / 籽维持既有「个」（道具数）。
+ */
 const KIND_ITEM_UNIT: Record<InventoryKind, string> = {
   bamboo: '个',
-  scroll: '个',
+  scroll: '张',
   jade: '枚',
   seed: '个',
-  scrollFragment: '个',
-  fragment: '个',
+  scrollFragment: '片',
+  fragment: '片',
 };
 
 /** 换算依据行（逐字） */
 const KIND_CONVERT: Record<InventoryKind, string> = {
-  bamboo: `1 个道具 = ${BAMBOO_PIECES_PER_ITEM} 片竹简`,
-  scroll: `1 个道具 = ${SCROLL_PIECES_PER_ITEM} 片${SCROLL_NAME}`,
-  jade: `1 个道具 = ${JADES_PER_ITEM} 枚石榴籽玉`,
-  seed: `1 个道具 = ${SEEDS_PER_ITEM} 颗石榴籽`,
-  scrollFragment: `1 个道具 = ${SCROLL_FRAGMENTS_PER_ITEM} 个${SCROLL_FRAGMENT_NAME}`,
-  fragment: `1 个道具 = ${FRAGMENTS_PER_ITEM} 个石榴籽碎片`,
+  bamboo: `1 格 = ${BAMBOO_PIECES_PER_ITEM} 片竹简`,
+  scroll: `1 张 = ${SCROLL_PIECES_PER_ITEM} 片${SCROLL_NAME}`,
+  jade: `1 枚石榴籽玉 = ${JADES_PER_ITEM} 格`,
+  seed: `1 格 = ${SEEDS_PER_ITEM} 颗石榴籽`,
+  scrollFragment: `1 格 = ${SCROLL_FRAGMENTS_PER_ITEM} 片${SCROLL_FRAGMENT_NAME}`,
+  fragment: `1 格 = ${FRAGMENTS_PER_ITEM} 片石榴籽碎片`,
 };
 
 /** 溢出提示文案（逐字；玉与「籽 / 竹简 / 碎片 / 兰帖 / 兰帖碎片」两类） */
@@ -245,7 +254,7 @@ function jadeItems(jades: Jade[]): InventoryItem[] {
     });
 }
 
-/** 石榴籽碎片：`fragments > 0` 即占 1 格（1–9 个均 1 格），角标 = 实际个数；无到期概念 */
+/** 石榴籽碎片：`fragments > 0` 即占 1 格（1–9 片均 1 格），角标 = 实际个数；无到期概念 */
 function fragmentItems(fragments: number): InventoryItem[] {
   const count = Math.max(0, Math.floor(Number(fragments) || 0));
   if (count <= 0) return [];
@@ -266,7 +275,7 @@ function fragmentItems(fragments: number): InventoryItem[] {
 }
 
 /**
- * 兰帖：`Σ scrolls[].qty` 按 **100 片 = 1 个道具** 切整堆格，**不足一格的余量另占 1 个余数格**
+ * 兰帖：`Σ scrolls[].qty` 按 **100 片 = 1 张** 切整堆格，**不足一格的余量另占 1 个余数格**
  * （角标 = 实际余量；该类内排最后）—— 口径与竹简 / 籽的余数占格**同体例**（§15-6②）。
  *
  * **每格恒永久**（`ScrollLot.expires_at` 恒 `null`，§15-3）⇒ `expiresAtMs = Infinity`、
@@ -284,8 +293,12 @@ function scrollItems(lots: ScrollLot[]): InventoryItem[] {
     count: qty,
     badge: true,
     tooltipLines: [
-      `${qty} ${KIND_QTY_UNIT.scroll}`,
-      ...(slotKind === 'remainder' ? ['本格为余数 · 不足 1 个完整道具'] : []),
+      // 兰帖按「张」表达量词（`SCROLL_PIECES_PER_ITEM` = 100 片 = 1 张）：整堆格恰为 1 张 ⇒「1 张（100 片）」；
+      // 余数格不足 1 张（< 100 片）⇒ 只标片数（片数不得标成张）
+      slotKind === 'remainder'
+        ? `${qty} ${SCROLL_PIECES_UNIT}`
+        : `${qty / SCROLL_PIECES_PER_ITEM} ${KIND_QTY_UNIT.scroll}（${qty} ${SCROLL_PIECES_UNIT}）`,
+      ...(slotKind === 'remainder' ? [`本格为余数 · 不足 1 ${KIND_QTY_UNIT.scroll}完整${KIND_NAME.scroll}`] : []),
       SCROLL_STATUS_PERMANENT,
       KIND_CONVERT.scroll,
     ],
@@ -298,7 +311,7 @@ function scrollItems(lots: ScrollLot[]): InventoryItem[] {
 }
 
 /**
- * 兰帖碎片：`scroll_fragments > 0` 即占 1 格（1–99 个均 1 格，0 个不占），角标 = **实际个数**；
+ * 兰帖碎片：`scroll_fragments > 0` 即占 1 格（1–99 片均 1 格，0 片不占），角标 = **实际个数**；
  * 无到期概念（标量，永久）。上限由**后端**裁定（`scroll_fragment_cap = 99`：满 100 立即自动合成），
  * 前端只展示、不判合成、不重算上限。
  */

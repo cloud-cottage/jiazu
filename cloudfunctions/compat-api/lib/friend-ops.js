@@ -18,11 +18,11 @@
  *     **不另造第二套通知存储**、**不动 economy-ops.js**。
  *
  * 冻结口径（逐条对 F-A…F-H）：
- *   F-B 续约锁定（Kevin 已裁）：发起 → 在 `withAssets` 内校验发起方**自持 ≥ 1 枚成品兰帖**
- *       （`Σ scrolls[].qty ≥ 100 片`，1 枚 = 一个 qty=100 的 ScrollLot；不足 ⇒ `SCROLL_INSUFFICIENT`，
+ *   F-B 续约锁定（Kevin 已裁）：发起 → 在 `withAssets` 内校验发起方**自持 ≥ 1 张成品兰帖**
+ *       （`Σ scrolls[].qty ≥ 100 片`，1 张 = 一个 qty=100 的 ScrollLot；不足 ⇒ `SCROLL_INSUFFICIENT`，
  *       零写入）→ 通过则把**被锁定的批次 id** 交由 friends.js 记入 `relation.pending.locked_*`
  *       （**只占用、不扣除**），返回值 `locked = { by_masked, pieces, lot_id, at, by_me }` 即可据以扣减；
- *       确认 → **双边各扣 1 枚（各 100 片）**，且**发起方扣的正是锁定那一批**（`chargeLots` 口径）；
+ *       确认 → **双边各扣 1 张（各 100 片）**，且**发起方扣的正是锁定那一批**（`chargeLots` 口径）；
  *       对方拒绝 / 发起方撤回 / 超 7 天未确认 ⇒ **解锁且零流水**。
  *   F-C 奖励池：① 触发者本人基础奖励照发（石榴籽碎片 +1、竹片 +1 片），**触发者不参与池分配**；
  *       ② 池按**领取时刻快照的「生效中好友数」**均分，**向下取整、余数销毁**（唯一口径 = `isActiveAt`）；
@@ -269,12 +269,12 @@ export const FRIEND_NOTICE = {
   },
   renew_pending: {
     title: '好友续约待确认',
-    text: (name) => `【好友续约】${name} 发起续约申请（已锁定 ${LOCKED_PIECES} 枚兰帖），请于 7 天内确认。`,
+    text: (name) => `【好友续约】${name} 发起续约申请（已锁定 ${LOCKED_PIECES} 张兰帖），请于 7 天内确认。`,
   },
   renew_confirmed: {
     title: '好友续约成功',
     text: (name) =>
-      `【好友续约】你与 ${name} 的续约已生效，有效期延长 ${RENEWAL_REWARD_DAYS} 天（双方各消耗 ${LOCKED_PIECES} 枚兰帖）。`,
+      `【好友续约】你与 ${name} 的续约已生效，有效期延长 ${RENEWAL_REWARD_DAYS} 天（双方各消耗 ${LOCKED_PIECES} 张兰帖）。`,
   },
   dissolved: {
     title: '好友关系已解除',
@@ -582,11 +582,11 @@ export async function cancelFriendInvite(relationToken, by, now = new Date()) {
 // ==================== F-B：续约（锁定 → 双边扣减 / 解锁） ====================
 
 /**
- * F-B 发起续约：**在 `withAssets` 锁内**校验发起方自持 ≥ 1 枚成品兰帖
- * （`Σ scrolls[].qty ≥ 100` 片 = 1 枚；不足 ⇒ `SCROLL_INSUFFICIENT`，零写入），
+ * F-B 发起续约：**在 `withAssets` 锁内**校验发起方自持 ≥ 1 张成品兰帖
+ * （`Σ scrolls[].qty ≥ 100` 片 = 1 张；不足 ⇒ `SCROLL_INSUFFICIENT`，零写入），
  * 并把「将被锁定的批次 id」记入关系文档 `pending.locked_*`（**只占用、不扣除**）。
  *
- * **本单 TOCTOU 收口（①+② 同一事务）**：可用性判定（自持 ≥ 1 枚）+ 锁批次选取 + **关系侧落锁**
+ * **本单 TOCTOU 收口（①+② 同一事务）**：可用性判定（自持 ≥ 1 张）+ 锁批次选取 + **关系侧落锁**
  * 全部在**同一次** `withAssets(me, …)` 内完成 —— 「判定 → 落锁」之间不再有第二个窗口
  * （判定通过后资产被并发扣光时，不会留下「锁已落下但那一批早已不存在」的错位）。
  * `withAssets` 的语义：mutator 抛错 ⇒ 资产一字节不回写；关系侧 IO 在同一事务内抛错亦然。
@@ -604,7 +604,7 @@ export async function requestRenewal(relationToken, by, now = new Date()) {
       const total = sumLots(user.scrolls);
       if (total < SCROLL_PIECES_PER_SCROLL) {
         throw friendError('SCROLL_INSUFFICIENT', {
-          message: `兰帖不足，续约需自持 ${LOCKED_PIECES} 枚成品兰帖（当前 ${Math.floor(total / SCROLL_PIECES_PER_SCROLL)} 枚）`,
+          message: `兰帖不足，续约需自持 ${LOCKED_PIECES} 张成品兰帖（当前 ${Math.floor(total / SCROLL_PIECES_PER_SCROLL)} 张）`,
         });
       }
       // FIFO 口径与 chargeLots 一致：兰帖批次恒永久（expires_at 全为 null）⇒ 取第一个 qty > 0 的批次
@@ -631,7 +631,7 @@ export async function requestRenewal(relationToken, by, now = new Date()) {
       avail_pieces: held.avail_pieces,
       notice_id: notice?.id || '',
     };
-  }, '续约申请已发出（已锁定 1 枚兰帖，未扣除）');
+  }, '续约申请已发出（已锁定 1 张兰帖，未扣除）');
 }
 
 /**
@@ -725,7 +725,7 @@ async function renewPlanOf(relationId, me, now) {
 }
 
 /**
- * F-B 确认续约：**双边各扣 1 枚成品兰帖（各 100 片）**，发起方扣的正是本次锁定那一批。
+ * F-B 确认续约：**双边各扣 1 张成品兰帖（各 100 片）**，发起方扣的正是本次锁定那一批。
  *
  * **执行序列（本单修正：先资产、后关系）**：
  *   ⓪ 双边预检（只读快照，任一不足 ⇒ `SCROLL_INSUFFICIENT` **零写入**，申请与锁定保留至超时）；
@@ -756,7 +756,7 @@ export async function confirmRenewal(relationToken, by, now = new Date()) {
       const total = sumLots(snap.scrolls);
       if (total < SCROLL_PIECES_PER_SCROLL) {
         throw friendError('SCROLL_INSUFFICIENT', {
-          message: `兰帖不足，续约需双方各 ${LOCKED_PIECES} 枚成品兰帖（${maskPhone(p)} 当前 ${Math.floor(total / SCROLL_PIECES_PER_SCROLL)} 枚）`,
+          message: `兰帖不足，续约需双方各 ${LOCKED_PIECES} 张成品兰帖（${maskPhone(p)} 当前 ${Math.floor(total / SCROLL_PIECES_PER_SCROLL)} 张）`,
         });
       }
     }
@@ -785,7 +785,7 @@ export async function confirmRenewal(relationToken, by, now = new Date()) {
               type: TX_TYPE_SCROLL_CONSUME,
               delta: { scrolls: -pieces },
               ref: { source: SOURCE_FRIEND_RENEW, relation_token: token, peer_masked: maskPhone(peer), role },
-              desc: `好友续约消耗：${role === 'initiator' ? '发起方' : '确认方'}自持 ${toNonNegInt(deduct.amount_each)} 枚成品兰帖（${pieces} 片）`,
+              desc: `好友续约消耗：${role === 'initiator' ? '发起方' : '确认方'}自持 ${toNonNegInt(deduct.amount_each)} 张成品兰帖（${pieces} 片）`,
             },
             now,
           );
@@ -915,7 +915,7 @@ export async function confirmRenewal(relationToken, by, now = new Date()) {
       charged,
       notice_ids: noticeIds,
     };
-  }, '续约成功（双边各扣 1 枚兰帖）');
+  }, '续约成功（双边各扣 1 张兰帖）');
 }
 
 /**
@@ -969,7 +969,7 @@ export async function dissolveFriend(relationToken, by, now = new Date(), reason
  * 三类奖励的落账口径（**入账一律走 ledger 的导出**；`delta` 键名照 ledger 的 `Tx.delta` 体例）：
  *   seed_fragments   → `addFragments`（满 10 自动合成，ledger 自理）
  *   bamboo_pieces    → `addLot('bamboo', n, { source })`（365 天批次）
- *   scroll_fragments → `addScrollFragments`（满 100 自动合成 1 枚兰帖，ledger 自理）
+ *   scroll_fragments → `addScrollFragments`（满 100 自动合成 1 张兰帖，ledger 自理）
  */
 const GRANT = {
   seed_fragments: { delta: 'fragments', label: '石榴籽碎片', add: (user, n, now) => addFragments(user, n, now) },
@@ -1207,16 +1207,16 @@ export async function distributeFriendRewards(triggerPhone, amounts = {}, now = 
  *
  * 背景（缺陷 D-1）：F-B 的续约锁定**只占用、不扣除** —— 锁定四字段落在关系文档
  * `pending.locked_*`（`locked_by` / `locked_pieces` / `locked_lot_id` / `locked_at`），
- * 那 1 枚成品兰帖**仍留在账本域的资产集合里**（集合名字面只允许出现在 `economy-ledger.js` 内，
+ * 那 1 张成品兰帖**仍留在账本域的资产集合里**（集合名字面只允许出现在 `economy-ledger.js` 内，
  * 本模块不得出现该字面 —— F-A 源码判据）。前端对「兰帖分解」置灰，但
  * `POST /assets/scroll/decompose` **此前不校验锁定** ⇒ 直接 curl 即可把被锁定的那 1 枚分解掉，
- * 置灰形同虚设。本导出给路由层提供**唯一**的锁定读数，使「可分解枚数」在**后端**可判。
+ * 置灰形同虚设。本导出给路由层提供**唯一**的锁定读数，使「可分解张数」在**后端**可判。
  *
  * 口径（逐条）：
  *   ① **超时的不算**：`listRelations` 内部先做**内存 sweep**（`sweepRelation`），
  *      续约申请超 7 天 ⇒ `pending` 被清空（锁随 pending 一并解除，见 friends.js F-8 ②），
  *      故已超时的锁**天然不被计入** —— 不需要也不允许再写第二套超时判定。
- *   ② **只算「本人锁定的」**：`pending.locked_by === phone`。锁定的是**发起方自己的**那 1 枚兰帖
+ *   ② **只算「本人锁定的」**：`pending.locked_by === phone`。锁定的是**发起方自己的**那 1 张兰帖
  *      （F-B：发起方须自持 ≥ 1 枚 ⇒ 占用发起方资产）；对方发起的续约锁的是**对方的**资产，
  *      不占本手机号的可分解额度。故按 `locked_by` 过滤（不是「本人是当事人的全部关系」）。
  *   ③ 只认 `pending.kind === 'renew'`（待邀请 pending 的 `locked_*` 不存在）；

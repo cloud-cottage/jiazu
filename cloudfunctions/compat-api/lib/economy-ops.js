@@ -27,9 +27,12 @@ import { colAll, colGet, colSet } from './store.js';
 import {
   BAMBOO_TTL_DAYS,
   FRAGMENT_SYNTH_THRESHOLD,
+  SCROLL_FRAGMENT_SYNTH_THRESHOLD,
+  SCROLL_PIECES_PER_SCROLL,
   SEED_TTL_DAYS,
   addFragments,
   addLot,
+  addScrollFragments,
   assetInsufficient,
   chargeLots,
   getAssets,
@@ -442,7 +445,12 @@ export async function spiritRecipients(treeId) {
 
 // ==================== §5 运营后台资产运维 ====================
 
-const DELTA_KEYS = ['fragments', 'seeds', 'bamboos', 'jades'];
+/**
+ * `delta` 允许的键（顺序 = 前端「资产运维」表单显示序）：石榴籽碎片 / 石榴籽 / 竹片 / 石榴籽玉 /
+ * 兰帖 / 兰帖残页。**兰帖按「张」表达量词，但键值线上一律以「片」计**（1 张 = 100 片；前端表单
+ * 以张输入、提交前 ×100 折成片 ⇒ 后端收发的 `delta.scrolls` 恒为片数，§A2）。
+ */
+const DELTA_KEYS = ['fragments', 'seeds', 'bamboos', 'jades', 'scrolls', 'scroll_fragments'];
 
 /** delta 归一化与校验（§5.1 校验 4、5）：至少一项、至少一项非 0、每项为整数（可为负） */
 export function normalizeDelta(raw) {
@@ -462,11 +470,38 @@ export function normalizeDelta(raw) {
   return delta;
 }
 
-/** 碎片不足（409，口径同账本扣费不足：`code='ASSET_INSUFFICIENT'` + 原文） */
+/** 石榴籽碎片不足（409，口径同账本扣费不足：`code='ASSET_INSUFFICIENT'` + 原文；量词 = 「片」） */
 function fragmentsInsufficient(need, current) {
   const e = assetInsufficient(need, current, 'fragment');
-  e.message = `资产不足，需 ${need} 个碎片，当前 ${current} 个`;
+  e.message = `资产不足，需 ${need} 片碎片，当前 ${current} 片`;
   e.unit = 'fragments';
+  return e;
+}
+
+/** 兰帖残页不足（409；量词 = 「片」—— 碎片类一律片，与「张」是两回事） */
+function scrollFragmentsInsufficient(need, current) {
+  const e = assetInsufficient(need, current, 'scroll_fragment');
+  e.message = `资产不足，需 ${need} 片兰帖残页，当前 ${current} 片`;
+  e.unit = 'scroll_fragments';
+  return e;
+}
+
+/**
+ * 兰帖（成品）不足（409）：文案必须同时给出**需求张数 + 当前张数 + 当前精确片数**
+ * （例「资产不足，需 2 张兰帖，当前 0 张（50 片）」）。`currentPieces` = 扣除前精确片总数；
+ * 张数一律向下取整（1 张 = 100 片，余片不凑整）。需求片数不是 100 的整数倍时（仅 API 直调可达，
+ * 前端表单送出的恒为 100 的倍数）退回片口径表述，绝不写「1.5 张」这类假张数。
+ * **不得**改账本 `ASSET_UNIT` 表（那是按片计量的内部口径）。
+ */
+function scrollsInsufficient(needPieces, currentPieces) {
+  const currentItems = Math.floor(currentPieces / SCROLL_PIECES_PER_SCROLL);
+  const e = assetInsufficient(needPieces, currentPieces, 'scroll');
+  e.message = needPieces % SCROLL_PIECES_PER_SCROLL === 0
+    ? `资产不足，需 ${needPieces / SCROLL_PIECES_PER_SCROLL} 张兰帖，当前 ${currentItems} 张（${currentPieces} 片）`
+    : `资产不足，需 ${needPieces} 片兰帖，当前 ${currentItems} 张（${currentPieces} 片）`;
+  e.need = needPieces % SCROLL_PIECES_PER_SCROLL === 0 ? needPieces / SCROLL_PIECES_PER_SCROLL : needPieces;
+  e.current = currentItems;
+  e.unit = 'scrolls';
   return e;
 }
 
@@ -476,6 +511,11 @@ function fragmentsInsufficient(need, current) {
  * 校验（任一不通过即整体不写）：手机号格式 400；用户不存在 404；`reason` 必填 400；
  * `delta` 至少一项且至少一项非 0 → 400；每项整数 → 400；负向扣减不足 → **409 资产不足**（整单拒绝，
  * 一字节不写）；发放后 `fragments ≥ 10` → 即时合成（复用账本合成函数，不拒绝、不截断）。
+ *
+ * §A2（六类资产，2026-09-26 裁定）：`jades` 之后追加 **兰帖 `scrolls`**（键值以**片**计，
+ * 1 张 = 100 片；正向 `addLot(..., { expires_at: null })`（**必须显式 null**，无「默认永久」口径）、
+ * 负向按张预检后 `chargeLots(..., 'scroll')`）与 **兰帖残页 `scroll_fragments`**（正向走账本
+ * `addScrollFragments`（满 100 自动合成 1 张，**不拒绝、不截断**，同 `fragments` 先例）、负向预检后标量扣减）。
  *
  * 副作用顺序（同一请求内）：① `jiazu_assets`（批次 / FIFO 扣减 / 碎片取余）→
  * ② `jiazu_ops_logs` 追加 `OpsLog` → ③ 目标用户 `txs` 追加 `Tx{type:'admin_grant'}`。
@@ -526,6 +566,20 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     if (delta.seeds < 0) seedsTaken = chargeLots(user.seeds, -delta.seeds, 'seed').taken;
     let bamboosTaken = null;
     if (delta.bamboos < 0) bamboosTaken = chargeLots(user.bamboos, -delta.bamboos, 'bamboo').taken;
+    // 兰帖（成品）：按**张**预检（片总数不足 need 片即拒），文案给「需求张数 + 当前张数 + 当前精确片数」
+    let scrollsTaken = null;
+    if (delta.scrolls < 0) {
+      const needPieces = -delta.scrolls;
+      const currentPieces = sumLots(user.scrolls);
+      if (currentPieces < needPieces) throw scrollsInsufficient(needPieces, currentPieces);
+      scrollsTaken = chargeLots(user.scrolls, needPieces, 'scroll').taken;
+    }
+    // 兰帖残页：标量预检（不足 409 整单拒绝）
+    if (delta.scroll_fragments < 0) {
+      const need = -delta.scroll_fragments;
+      const current = toNonNegInt(user.scroll_fragments);
+      if (current < need) throw scrollFragmentsInsufficient(need, current);
+    }
 
     // —— 正向发放（批次：籽 / 竹片 365 天、玉永久，`source='admin'`）——
     if (delta.seeds > 0) addLot(user, 'seed', delta.seeds, { ttl_days: SEED_TTL_DAYS, source: 'admin', now });
@@ -533,25 +587,39 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     if (delta.jades > 0) {
       for (let i = 0; i < delta.jades; i += 1) addLot(user, 'jade', 1, { expires_at: null, source: 'admin', now });
     }
+    // 兰帖：**1 张 = 100 片，线上一律以片计** ⇒ 直接按片入一个批次（永久必须显式 null）
+    if (delta.scrolls > 0) {
+      addLot(user, 'scroll', delta.scrolls, { expires_at: null, source: 'admin', now });
+    }
     // 碎片正向：走账本同一函数（`fragments += n` → 满 10 立即合成，§5.1 校验 7 / 单测 #5）
     let synthesized = 0;
     if (delta.fragments > 0) synthesized = addFragments(user, delta.fragments, now).synthesized;
+    // 兰帖残页正向：走账本同一函数（满 100 立即合成 1 张，**不拒绝、不截断**，同 fragments 先例）
+    if (delta.scroll_fragments > 0) addScrollFragments(user, delta.scroll_fragments, now);
 
     // —— 负向落账 ——
     if (delta.fragments < 0) user.fragments = Math.max(0, toNonNegInt(user.fragments) + delta.fragments);
+    if (delta.scroll_fragments < 0) {
+      user.scroll_fragments = Math.max(0, toNonNegInt(user.scroll_fragments) + delta.scroll_fragments);
+    }
     if (jadeTaken) {
       const drop = new Set(jadeTaken);
       user.jades = (user.jades || []).filter((j) => !drop.has(j.id));
     }
     // 扣尽批次就地移除（§5-2-3：不留 qty=0 残留批）
-    if (seedsTaken || bamboosTaken) {
+    if (seedsTaken || bamboosTaken || scrollsTaken) {
       user.seeds = (user.seeds || []).filter((l) => toNonNegInt(l.qty) > 0);
       user.bamboos = (user.bamboos || []).filter((l) => toNonNegInt(l.qty) > 0);
+      user.scrolls = (user.scrolls || []).filter((l) => toNonNegInt(l.qty) > 0);
     }
 
     // —— 收口：脏数据里的 ≥10 碎片顺带合成（不落「碎片 10、籽未生成」中间态）——
     if (Math.floor(Number(user.fragments) || 0) >= FRAGMENT_SYNTH_THRESHOLD) {
       synthesized += addFragments(user, 0, now).synthesized;
+    }
+    // 兰帖残页同口径收口（脏数据 ≥ 100 ⇒ 顺带合成，不落「残页 100 未合成」中间态）
+    if (Math.floor(Number(user.scroll_fragments) || 0) >= SCROLL_FRAGMENT_SYNTH_THRESHOLD) {
+      addScrollFragments(user, 0, now);
     }
 
     // —— 用户侧流水（§5.1 副作用 3）——
@@ -574,6 +642,9 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
         seeds_total: sumLots(user.seeds),
         bamboos_total_pieces: sumLots(user.bamboos),
         jades: (user.jades || []).length,
+        // §A3：兰帖域追加出参（字段名逐字取自账本 summarize 口径；既有字段一字未改）
+        scroll_fragments: toNonNegInt(user.scroll_fragments),
+        scrolls_total_pieces: sumLots(user.scrolls),
         synthesized,
         signin_date: user.signin_date || '',
         log_id: log.id,
@@ -642,6 +713,8 @@ export async function opsLogs(filters = {}) {
  * —— `jades` 枚数与 `jade_list` 都含已镶嵌、且保留 `mounted_tree_id`（用户面 `/assets/summary`
  * 仍只出未镶嵌，两端口径就此分开，见 `economy-ledger.summarize` 注释）。
  * 前置：`sweep(now)`（总额与明细均为结算后口径）。
+ * §A4（2026-09-26 裁定）：追加兰帖域 5 个出参（`scroll_fragments` / `scroll_fragment_cap` /
+ * `scrolls_total_pieces` / `scrolls_item_count` / `scroll_lots`，字段名逐字取自账本 `summarize()`）。
  */
 export async function adminUserAssets(phone, now = new Date()) {
   const target = trimmed(phone);
@@ -660,6 +733,12 @@ export async function adminUserAssets(phone, now = new Date()) {
       seed_lots: s.seed_lots,
       bamboo_lots: s.bamboo_lots,
       jade_list: s.jades,
+      // §A4：兰帖域追加 5 个出参（字段名**逐字**取自账本 `summarize()`，**不得另起名**）
+      scroll_fragments: s.scroll_fragments,
+      scroll_fragment_cap: s.scroll_fragment_cap,
+      scrolls_total_pieces: s.scrolls_total_pieces,
+      scrolls_item_count: s.scrolls_item_count,
+      scroll_lots: s.scroll_lots,
       signin_date: s.signin_date,
     };
   });

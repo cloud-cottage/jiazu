@@ -16,7 +16,7 @@
  *         任何一方先领另一方即视为已领，**绝不双发**（既有签到卡已改为调用同一入口）
  *   三态（T-3）：未达标 / 可领取 / 已领取，未达标一律带中文文案（不得静默失败）
  *   D-1：`POST /assets/scroll/decompose` 必须先扣掉续约锁定片数；
- *         可分解枚数 = floor((总片数 − 锁定片数) / 100)，超出 ⇒ 409 `SCROLL_LOCKED_INSUFFICIENT`
+ *         可分解张数 = floor((总片数 − 锁定片数) / 100)，超出 ⇒ 409 `SCROLL_LOCKED_INSUFFICIENT`
  *
  * 数据安全：COMPAT_OUT_DIR / COMPAT_META_FILE 一律指向 /tmp 副本（照 assets.test.js / friend-ops.test.js）；
  *          文末断言真实 config/ + migrate-output/ 全量 md5 前后一致。
@@ -119,7 +119,7 @@ const bamboosOf = (phone) => assetsOf(phone).then((u) => L.sumLots(u.bamboos));
 const scrollFragsOf = (phone) => assetsOf(phone).then((u) => u.scroll_fragments);
 const piecesOf = (phone) => assetsOf(phone).then((u) => L.sumLots(u.scrolls));
 const seed = (phone, patch) => L.withAssets(phone, (u) => Object.assign(u, patch));
-/** 造 N 枚成品兰帖（N × 100 片 → ledger 自动合成 N 个 qty=100 的批） */
+/** 造 N 张成品兰帖（N × 100 片 → ledger 自动合成 N 个 qty=100 的批） */
 const giveScrolls = (phone, n, now) =>
   L.withAssets(phone, (u) => L.addScrollFragments(u, n * L.SCROLL_PIECES_PER_SCROLL, now));
 /** 造一条**当日**流水（走唯一写路径 recordTx；type 必须在白名单内） */
@@ -506,7 +506,7 @@ test('⑧ D-1：lockedScrollPieces —— 未锁 0 / 发起续约锁 1 / 超时�
 });
 
 // ══ ⑨ D-1 路由面：分解必须扣掉锁定片数（本单核心反证） ═════════════════════════
-test('⑨ D-1：共 100 片 + 锁 1 枚 ⇒ 分解 1 枚被拒（409 SCROLL_LOCKED_INSUFFICIENT）', async () => {
+test('⑨ D-1：共 100 片 + 锁 1 张 ⇒ 分解 1 张被拒（409 SCROLL_LOCKED_INSUFFICIENT）', async () => {
   const now = new Date();
   const a = U.friendB;
   await seed(a, { fragments: 0, scroll_fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], txs: [], signin_date: '' });
@@ -683,7 +683,7 @@ test('⑬ TOCTOU：锁定读与兰帖扣减同锁（持锁期间读不得返回�
   const blank = { fragments: 0, scroll_fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], txs: [], signin_date: '' };
   await seed(me, blank);
   await seed(peer, blank);
-  await giveScrolls(me, 1, now); // 100 片 = 1 枚
+  await giveScrolls(me, 1, now); // 100 片 = 1 张
   const relDocSync = (id) => {
     try {
       return JSON.parse(fs.readFileSync(path.join(TMP, 'collections', 'jiazu_friends.json'), 'utf8'))[id] || null;

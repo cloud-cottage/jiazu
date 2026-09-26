@@ -73,6 +73,11 @@ export interface PersonSummary {
   surname: string;
   birth_date?: string;
   death_date?: string;
+  /**
+   * 葬地（真源 `death_place`；由读响应 `profile.death.place` 派生，后端**仅有卒年时**才输出该键
+   * ⇒ 卒年不详者此字段为 `undefined`）。只读展示用。
+   */
+  death_place?: string;
   gender?: 'M' | 'F' | 'U';
   is_living: boolean;
   /** 称号串（封号·谥号·号，按「封号→谥号→号」顺序拼接；无称号则空串） */
@@ -411,13 +416,13 @@ export interface ScrollLot {
 
 /** 兰帖域 `summarize` 追加出参（前端**只读展示**，不二次推导、不重算上限） */
 export interface ScrollSummaryFields {
-  /** 兰帖碎片（0–99；满 100 由**后端**自动合成 1 枚兰帖，前端只展示） */
+  /** 兰帖残页（0–99 片；满 100 片由**后端**自动合成 1 张兰帖，前端只展示） */
   scroll_fragments: number;
   /** 兰帖碎片上限（服务端常量，当前 99） */
   scroll_fragment_cap: number;
   /** 兰帖总片数 */
   scrolls_total_pieces: number;
-  /** 兰帖总片数折算的**整格数**（向下取整；与行囊 100 片/格同口径） */
+  /** 兰帖总片数折算的**整格数**（向下取整；与行囊 100 片/格同口径；即整道具「张」数） */
   scrolls_item_count: number;
   /** 兰帖批次数（`scroll_lots` 的条数） */
   scroll_lot_count: number;

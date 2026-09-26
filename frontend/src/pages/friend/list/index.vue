@@ -8,7 +8,7 @@
       <t-button size="small" theme="primary" @click="goInvite">邀请好友</t-button>
     </view>
     <text class="fd-hint">
-      好友关系有有效期：到期前进入续约窗口后可发起续约，对方确认后双方各消耗 1 枚兰帖、有效期一并延长。
+      好友关系有有效期：到期前进入续约窗口后可发起续约，对方确认后双方各消耗 1 张兰帖、有效期一并延长。
       到期后进入缓冲期，缓冲期内仍可解除好友。任何时候均可单方【解除好友】：关系立即终止、已消耗的兰帖不返还、历史奖励保留不追回。
     </text>
 
@@ -199,7 +199,7 @@ function waitLine(r: FriendRelation): string {
   }
   return r.pending.initiated_by_me ? '邀请待对方接受' : '邀请待你处理';
 }
-/** 本人发起、待对方确认的续约申请 ⇒ 那枚兰帖在行囊里处于锁定态（文案单点 = business/asset-text.ts） */
+/** 本人发起、待对方确认的续约申请 ⇒ 那张兰帖在行囊里处于锁定态（文案单点 = business/asset-text.ts） */
 function lockLine(r: FriendRelation): string {
   const p = r.pending;
   return p && p.kind === 'renew' && p.locked && p.locked.by_me ? SCROLL_LOCK_TEXT : '';

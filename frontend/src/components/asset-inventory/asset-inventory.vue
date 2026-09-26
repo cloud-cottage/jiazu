@@ -40,7 +40,7 @@
             <image v-else-if="cell.kind === 'scrollFragment'" class="inv-ico" :src="ICON.SCROLL_SHARD" mode="aspectFit" />
             <image v-else class="inv-ico" :src="ICON.FRAGMENT" mode="aspectFit" />
             <text v-if="cell.badge" class="inv-badge" :class="{ 'inv-badge-pop': badgePopIndex === i }">{{ cell.count }}</text>
-            <!-- 兰帖锁定态（好友域续约申请占用的那枚）：格角标 + 属性提示层整句（文案单点 = business/asset-text.ts） -->
+            <!-- 兰帖锁定态（好友域续约申请占用的那张）：格角标 + 属性提示层整句（文案单点 = business/asset-text.ts） -->
             <text v-if="cell.kind === 'scroll' && scrollLock" class="inv-lock">锁</text>
           </template>
           <!--
@@ -70,8 +70,8 @@
       <text v-for="(line, li) in tipCell.tooltipLines" :key="li" class="inv-tip-line">{{ line }}</text>
       <text v-if="tipCell.kind === 'scroll' && scrollLock" class="inv-tip-line inv-tip-lock">{{ scrollLock.text }}</text>
       <!--
-        兰帖格：分解口径行（比例单点 = `business/asset-text.ts`）+ **格数 / 枚数两口径**行
-        （`docs/economy.spec.md` §14-13 —— 格数看行囊（含余数格）、枚数看整道具数，**两者不是同一个数**）。
+        兰帖格：分解口径行（比例单点 = `business/asset-text.ts`）+ **格数 / 张数两口径**行
+        （`docs/economy.spec.md` §14-13 —— 格数看行囊（含余数格）、张数看整道具数，**两者不是同一个数**）。
       -->
       <template v-if="tipCell.kind === 'scroll'">
         <text class="inv-tip-line inv-tip-ratio">{{ scrollHintText }}</text>
@@ -107,8 +107,8 @@
         </view>
       </view>
       <!--
-        兰帖格【分解】（后端 `POST /assets/scroll/decompose` `{count}`，1 枚 = 100 片 ⇒ 返还 99 片）：
-        未达标（余数格不足 1 枚 / 被续约申请锁定）⇒ 按钮置灰 + **层内明写原因** + 点按直出同一句 toast
+        兰帖格【分解】（后端 `POST /assets/scroll/decompose` `{count}`，1 张 = 100 片 ⇒ 返还 99 片）：
+        未达标（余数格不足 1 张 / 被续约申请锁定）⇒ 按钮置灰 + **层内明写原因** + 点按直出同一句 toast
         （三态可见，**不静默**）；达标 ⇒ 打开自绘二次确认框（1030/1031，恒在本层 1010 之上）。
       -->
       <view v-else-if="tipCell.kind === 'scroll'" class="inv-tip-acts">
@@ -201,8 +201,8 @@
  *   触摸后 Chrome 补发的兼容鼠标事件按 `TOUCH_MOUSE_GUARD` 窗口忽略（防 hover 把轻触选中的格抢回去）；
  * - 提示层内直操作：籽格 → 【合成】（`JADE_SYNTH_SEEDS`；籽不足置灰 +「再攒 N 颗」）；
  *   玉格 → 【分解】（免费 / 固定返还 999 颗 / 统一 365 天）；**兰帖格 → 【分解】**
- *   （`POST /assets/scroll/decompose` 按**枚**：1 枚 = 100 片 ⇒ 返还 99 片、每枚留 1 片损耗；
- *   **余数格**（不足 1 枚）与被续约申请**锁定**的枚数 ⇒ 按钮置灰 + 层内明写原因 + 点按直出同一句）；
+ *   （`POST /assets/scroll/decompose` 按**张**：1 张 = 100 片 ⇒ 返还 99 片、每张留 1 片损耗；
+ *   **余数格**（不足 1 张）与被续约申请**锁定**的张数 ⇒ 按钮置灰 + 层内明写原因 + 点按直出同一句）；
  *   二次确认 = **自绘确认框**
  *   （遮罩 1030 / 面板 1031），文案逐字取 `business/jade-ops.ts`、计费与回执口径沿用 `business/asset-guide.ts`
  *   （不另建文案）。**不再调 `uni.showModal`**：`.uni-modal`（999）低于本层（1010）⇒ 旧的「先 `closeTip()`
@@ -285,7 +285,7 @@ const props = withDefaults(defineProps<{
   /** 登录态（未登录：36 空格 + 「登录后即可查看行囊」，不发请求） */
   authenticated?: boolean;
   /**
-   * 兰帖**锁定态**（好友域续约申请：本人发起、等待对方确认期间那枚兰帖被占用）——
+   * 兰帖**锁定态**（好友域续约申请：本人发起、等待对方确认期间那张兰帖被占用）——
    * 由页面从 `GET /friends` 的 `pending` 推导后传入（`business/friends.ts` 的 `scrollLockOf`），
    * 组件只负责渲染（沿用本组件既有格 / 属性提示层体例，不另建第二套列表）。
    * `null` = 无锁定态（不显示任何锁定文案）。
@@ -376,13 +376,13 @@ const busy = ref(false);
 
 // ============ 兰帖（分解 · §14-13 两口径；比例 / 文案单点 = `business/asset-text.ts`） ============
 //
-// 兰帖与玉 / 籽的**关键差异**：分解入参单位 = **成品（整）兰帖枚数**（1 枚 = 100 片），返还每枚 **99** 片
+// 兰帖与玉 / 籽的**关键差异**：分解入参单位 = **成品（整）兰帖张数**（1 张 = 100 片），返还每张 **99** 片
 // （后端 `SCROLL_DECOMPOSE_REFUND`，留 1 片损耗 ⇒ 避免「返还即触发满 100 自动合成」的空操作回环；
 // 口径见 `docs/friend-domain.spec.md` §17-7 / §17-8）。因此：
-// - 【分解】只在**整堆格**（每格恒 100 片）可用；**余数格**（不足 1 枚）不可分解；
-// - 被续约申请锁定的枚数（`scrollLockOf` 投影）不可分解（否则待对方确认时会 409）；
+// - 【分解】只在**整堆格**（每格恒 100 片）可用；**余数格**（不足 1 张）不可分解；
+// - 被续约申请锁定的张数（`scrollLockOf` 投影）不可分解（否则待对方确认时会 409）；
 // - 未达标一律「按钮置灰 + 层内明写原因 + 点按直出同一句」⇒ **三态可见、不静默**。
-/** 每枚成品兰帖片数（`business/inventory.ts` 常量：1 个道具 = 100 片） */
+/** 每张成品兰帖片数（`business/inventory.ts` 常量：100 片 = 1 张） */
 const SCROLL_PIECES = SCROLL_PIECES_PER_ITEM;
 /** 分解每枚的返还片数 = 100 − 1（每枚留 1 片损耗；与后端 `SCROLL_DECOMPOSE_REFUND` 同值，由常量相减得出） */
 const SCROLL_REFUND_PER_ITEM = SCROLL_PIECES_PER_ITEM - 1;
@@ -394,14 +394,14 @@ const scrollPiecesTotal = computed(() => {
 });
 /** §14-13 ① **格数**（展示层唯一口径）= 行囊占格，**含余数格**（整格 100 片 + 零头另占 1 格） */
 const scrollCellCount = computed(() => Math.ceil(scrollPiecesTotal.value / SCROLL_PIECES));
-/** §14-13 ② **枚数**（整道具数，= 接口 `scrolls_item_count` 口径）= `floor(片总数 / 100)` —— **不是格数** */
+/** §14-13 ② **张数**（整道具数，= 接口 `scrolls_item_count` 口径）= `floor(片总数 / 100)` —— **不是格数** */
 const scrollItemCount = computed(() => Math.floor(scrollPiecesTotal.value / SCROLL_PIECES));
-/** 续约申请锁定的兰帖片数（`scrollLockView.pieces` 单位 = 成品枚数 ⇒ × 100 折算成片） */
+/** 续约申请锁定的兰帖片数（`scrollLockView.pieces` 单位 = 成品张数 ⇒ × 100 折算成片） */
 const lockedScrollPieces = computed(() => Math.max(0, props.scrollLock?.pieces || 0) * SCROLL_PIECES);
-/** 可分解枚数 = `floor((片总数 − 锁定片数) / 100)`（锁定中的枚数不参与） */
+/** 可分解张数 = `floor((片总数 − 锁定片数) / 100)`（锁定中的张数不参与） */
 const scrollDecomposableCount = computed(() =>
   Math.floor(Math.max(0, scrollPiecesTotal.value - lockedScrollPieces.value) / SCROLL_PIECES));
-/** 当前兰帖格是否可分解（**整堆格** 且 可分解枚数 ≥ 1） */
+/** 当前兰帖格是否可分解（**整堆格** 且 可分解张数 ≥ 1） */
 const canDecomposeScroll = computed<boolean>(() => {
   const cell = tipCell.value;
   return !!cell && cell.kind === 'scroll' && cell.slotKind === 'stack' && scrollDecomposableCount.value >= 1;
@@ -414,9 +414,9 @@ const scrollDisabledNote = computed<string>(() => {
   if (scrollDecomposableCount.value < 1) return scrollLockedReasonLine();
   return '';
 });
-/** 层内分解比例行（1 枚 = 100 片 ⇒ 返还 99 片，留 1 片损耗） */
+/** 层内分解比例行（1 张 = 100 片 ⇒ 返还 99 片，留 1 片损耗） */
 const scrollHintText = computed<string>(() => scrollDecomposeHintLine(SCROLL_PIECES, SCROLL_REFUND_PER_ITEM));
-/** 层内「格数 / 枚数」两口径行（提示层内并列展示，**不得混用**） */
+/** 层内「格数 / 张数」两口径行（提示层内并列展示，**不得混用**） */
 const scrollCaliberText = computed<string>(() =>
   scrollCaliberLine(scrollCellCount.value, scrollItemCount.value, SCROLL_PIECES));
 
@@ -750,7 +750,7 @@ const FX_LABEL_PROBE: Inventory = buildInventory({
   jades: [{ id: 'fx-label', expires_at: '' }],
   seed_lots: [{ id: 'fx-label', qty: 1, expires_at: '' }],
   fragments: 1,
-  // 兰帖分解的结果浮字要取「个兰帖碎片」的量词 / 道具名 ⇒ 探针需含兰帖碎片（否则该类不显浮字）
+  // 兰帖分解的结果浮字要取「片兰帖残页」的量词 / 道具名 ⇒ 探针需含兰帖残页（否则该类不显浮字）
   scroll_fragments: 1,
 } as unknown as AssetsSummary);
 /** 浮字量词 + 道具名（如 `枚石榴籽玉` / `颗石榴籽`）；取不到则该类不显浮字 */
@@ -873,7 +873,7 @@ let confirmSrc = FX_NO_SLOT;
 /**
  * 自绘二次确认框状态（`null` = 关闭）。
  * 文案 / 按钮文案：合成与玉分解逐字取 `business/jade-ops.ts`；**兰帖分解**逐字取
- * `business/asset-text.ts`（1 枚 = 100 片 ⇒ 返还 99 片）。三者共用同一个确认框（1030/1031）。
+ * `business/asset-text.ts`（1 张 = 100 片 ⇒ 返还 99 片）。三者共用同一个确认框（1030/1031）。
  */
 const confirmKind = ref<'synth' | 'decompose' | 'scroll' | null>(null);
 const confirmJadeId = ref('');
@@ -883,7 +883,7 @@ const confirmTitle = computed<string>(() => {
   return (confirmKind.value === 'synth' ? SYNTH_CONFIRM_TITLE : DECOMPOSE_CONFIRM_TITLE);
 });
 const confirmLines = computed<string[]>(() => {
-  // 兰帖分解：每次 1 枚（100 片 ⇒ 返还 99 片）—— 枚数口径，非格数
+  // 兰帖分解：每次 1 张（100 片 ⇒ 返还 99 片）—— 张数口径，非格数
   if (confirmKind.value === 'scroll') return scrollDecomposeConfirmLines(1, SCROLL_PIECES, SCROLL_REFUND_PER_ITEM);
   return (confirmKind.value === 'synth' ? SYNTH_CONFIRM_BODY : DECOMPOSE_CONFIRM_BODY).split('\n');
 });
@@ -922,7 +922,7 @@ watch(confirmKind, async (kind) => {
 /**
  * 打开自绘确认框（本层保持打开：确认框 **1030/1031** 恒在提示层 **1010** 之上 ⇒ 旧「先 `closeTip()`
  * 再弹框」的绕法**已不需要**；同时**不使用 `uni.showModal`** —— 其 `.uni-modal` 999 会被本层压住）。
- * 三个动作共用：`synth`（籽）/ `decompose`（玉，带 `jadeId`）/ `scroll`（兰帖，按**枚**分解）。
+ * 三个动作共用：`synth`（籽）/ `decompose`（玉，带 `jadeId`）/ `scroll`（兰帖，按**张**分解）。
  */
 function openConfirm(kind: 'synth' | 'decompose' | 'scroll', jadeId = ''): void {
   if (busy.value) return;
@@ -1223,7 +1223,7 @@ function applyTipStyle(): void {
 
 /**
  * 首次渲染（实测高度未知）用的层高估算（px）。
- * 除 `tooltipLines` 外，模板按格型还会附加渲染行（兰帖格：分解比例行 + 格数/枚数行；锁定态：锁定行），
+ * 除 `tooltipLines` 外，模板按格型还会附加渲染行（兰帖格：分解比例行 + 格数/张数行；锁定态：锁定行），
  * 一并计入 —— **只影响首次渲染的摆位**（量到实测高度后由「最多一次」的贴合校正收尾，口径不变）。
  */
 function estimateTipHeight(): number {
@@ -1435,7 +1435,7 @@ async function doDecompose(jadeId: string): Promise<void> {
 }
 
 /**
- * 【兰帖分解】：未达标（余数格不足 1 枚 / 被续约申请锁定）⇒ **直出层内同一句原因**（toast + 失败反馈），
+ * 【兰帖分解】：未达标（余数格不足 1 张 / 被续约申请锁定）⇒ **直出层内同一句原因**（toast + 失败反馈），
  * **绝不静默**；达标 ⇒ 打开自绘二次确认框（`scroll`，1030/1031）。本层保持打开（确认框恒在本层之上）。
  */
 function onScrollDecomposeTap(): void {
@@ -1452,8 +1452,8 @@ function onScrollDecomposeTap(): void {
 }
 
 /**
- * 兰帖分解：**按枚**调 `POST /assets/scroll/decompose`（`count = 1`；1 枚 = 100 片 ⇒ 返还 99 片，
- * 每枚留 1 片损耗）。成功后就地重拉 summary（`refresh`）；回执与失败文案一律后端原文（不吞、不自造）。
+ * 兰帖分解：**按张**调 `POST /assets/scroll/decompose`（`count = 1`；1 张 = 100 片 ⇒ 返还 99 片，
+ * 每张留 1 片损耗）。成功后就地重拉 summary（`refresh`）；回执与失败文案一律后端原文（不吞、不自造）。
  * 特效（V3）：t = 0 起分解特效 → 收束相位（520ms）重拉 summary（**兰帖碎片格**显形 + 角标跳动）
  * → 总时长 680ms 收尾（清特效层 + 数量摘要浮字 + toast）。
  * 失败（409 片数不足 = 整单拒绝 / 400 `INVALID_COUNT` / 401 等）：先失败反馈（520ms），再直出后端 `error.message`。
@@ -1470,8 +1470,8 @@ async function doDecomposeScroll(): Promise<void> {
     const synth = Number(res?.synthesized) || 0;
     const rest = typeof res?.scroll_fragments === 'number' ? `，现余 ${res.scroll_fragments} 个` : '';
     // 道具名取 `business/asset-text.ts` 单点（**显示名更名后不得再硬编码旧名**）；量词与比例仍沿用既有口径
-    const msg = `已分解 ${Number(res?.decomposed) || 1} 枚兰帖（${pieces} 片），返还 ${back} 片${SCROLL_FRAGMENT_NAME}` +
-      (synth > 0 ? `，满 ${SCROLL_FRAGMENTS_PER_ITEM} 已自动合成 ${synth} 枚兰帖` : '') + rest;
+    const msg = `已分解 ${Number(res?.decomposed) || 1} 张兰帖（${pieces} 片），返还 ${back} 片${SCROLL_FRAGMENT_NAME}` +
+      (synth > 0 ? `，满 ${SCROLL_FRAGMENTS_PER_ITEM} 片已自动合成 ${synth} 张兰帖` : '') + rest;
     await fxWait(FX_REVEAL_DECOMP_MS - (Date.now() - startedAt));
     pendingReveal = { kind: 'scrollFragment', at: Date.now() };
     emit('refresh');
@@ -1965,7 +1965,7 @@ onUnmounted(() => {
 }
 /* 属性提示层内的兰帖锁定态整句（文案取自 business/asset-text.ts 的 SCROLL_LOCK_TEXT） */
 .inv-tip-lock { color: #FFC9C9; font-weight: bold; }
-/* 属性提示层内的兰帖分解比例行（比例单点 = business/asset-text.ts：1 枚 = 100 片 ⇒ 返还 99 片） */
+/* 属性提示层内的兰帖分解比例行（比例单点 = business/asset-text.ts：1 张 = 100 片 ⇒ 返还 99 片） */
 .inv-tip-ratio { color: #FFE9C9; }
 /*
   属性提示层内的**道具诗句**（文案单点 = business/asset-text.ts 的 `ASSET_POEMS`，组件内零诗句字面）。

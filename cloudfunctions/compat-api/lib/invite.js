@@ -167,7 +167,7 @@ export async function grantInviteReward(inviterPhone, inviteePhone, now = new Da
     if (countInviteRewardsToday(user, now) >= INVITE_DAILY_LIMIT) {
       return { rewarded: false, reason: 'daily_limit', tx_id: null };
     }
-    // 9 石榴籽碎片（`addFragments`：满 10 自动合成，9 枚不会触发）
+    // 9 石榴籽碎片（`addFragments`：满 10 自动合成，9 片不会触发）
     addFragments(user, INVITE_REWARD_FRAGMENTS, now);
     // 11 兰帖残页（I-7 依赖：真源导出，本模块不写第二版）
     addScrollFragments(user, INVITE_REWARD_SCROLL_FRAGMENTS, now);

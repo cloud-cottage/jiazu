@@ -28,6 +28,7 @@ import type {
   ConvergeClanResult,
   SiblingReorderPayload,
   SiblingReorderResult,
+  ScrollLot,
 } from './types';
 
 // API 基础路径
@@ -312,6 +313,9 @@ function attrKey(a: { type: string | { string: string } }): string {
 
 function toPersonSummary(raw: RawPerson): PersonSummary {
   const { birth, death } = parseDates(raw);
+  // 葬地（真源 `death_place`）：读响应落在 `profile.death.place`（后端**仅有卒年时**才输出该键）——
+  // 缺键 / 空串 → `undefined`（= 该条缺项）
+  const deathPlace = ((raw.profile || raw.extended?.profile)?.death?.place || '').trim();
   // 跨树链接标记（分迁占位 / 出嫁 / 登记始祖）
   let externalTree: string | undefined;
   let externalLinkType: string | undefined;
@@ -336,6 +340,7 @@ function toPersonSummary(raw: RawPerson): PersonSummary {
     surname: raw.primary_name?.surname_list?.find((s) => s.primary)?.surname || '',
     birth_date: birth,
     death_date: death,
+    death_place: deathPlace || undefined,
     gender: genderToString(raw.gender),
     // 显式健在状态优先（compat 已存 is_living，可表达「已故但卒年不详」）；旧数据回退按卒年推断
     is_living: raw.is_living !== undefined ? raw.is_living : !death,
@@ -2167,6 +2172,10 @@ export interface AssetDelta {
   seeds?: number;
   bamboos?: number;
   jades?: number;
+  /** 兰帖（**片**；1 张 = 100 片 —— 线上恒以片计，前端表单以张输入、提交前 ×100 折算） */
+  scrolls?: number;
+  /** 兰帖残页（**片**） */
+  scroll_fragments?: number;
 }
 
 /** 资产流水（type 取值见 docs/economy.spec.md §4-6） */
@@ -2746,6 +2755,16 @@ export interface AdminAssetSnapshot {
   bamboo_lots: BambooLot[];
   /** 玉清单（§5.4 登记字段；与 `jades` 数组形态二者取一） */
   jade_list?: Jade[];
+  /** 兰帖残页片数（§A4 追加；字段名逐字取自后端 `summarize()`） */
+  scroll_fragments?: number;
+  /** 兰帖残页上限（服务端常量，当前 99） */
+  scroll_fragment_cap?: number;
+  /** 兰帖总片数 */
+  scrolls_total_pieces?: number;
+  /** 兰帖总片数折算的整道具**张**数（向下取整） */
+  scrolls_item_count?: number;
+  /** 兰帖原始批次数组（`qty` 以片计、`expires_at` 恒 `null`） */
+  scroll_lots?: ScrollLot[];
   signin_date: string;
 }
 

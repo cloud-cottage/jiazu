@@ -23,7 +23,7 @@ export type FriendStatus = 'pending' | 'active' | 'grace';
 
 /** `pending.locked` 隐私投影（**无明文手机号**，只有「谁锁的」相对本人） */
 export interface FriendLockView {
-  /** 锁定的成品兰帖枚数 */
+  /** 锁定的成品兰帖张数 */
   pieces: number;
   at: string;
   /** 本次锁定是否由本人发起 */
@@ -386,7 +386,7 @@ export function isFriendUnauthorized(e: unknown): boolean {
 
 /** 行囊锁定视图（组件只认这个 prop；文案单点 = `asset-text.ts`） */
 export interface ScrollLockView {
-  /** 被锁定的成品兰帖枚数（多关系同时锁定时求和） */
+  /** 被锁定的成品兰帖张数（多关系同时锁定时求和） */
   pieces: number;
   text: string;
 }
@@ -394,7 +394,7 @@ export interface ScrollLockView {
 /**
  * 从 `GET /friends` 出参推导**本人兰帖**的锁定态：
  * 只认「本人发起、等待对方确认」的续约申请（`pending.locked.by_me`）—— 对方发起的申请锁的是
- * **对方**那枚兰帖，与本人行囊无关。无此类申请 ⇒ `null`（不显示锁定态）。
+ * **对方**那张兰帖，与本人行囊无关。无此类申请 ⇒ `null`（不显示锁定态）。
  */
 export function scrollLockOf(friends: FriendRelation[]): ScrollLockView | null {
   let pieces = 0;
@@ -438,25 +438,25 @@ export const DISSOLVE_CONFIRM_OK_TEXT = '确认解除';
  * ⚠️ **本路由与好友域同注册段**：`cloudfunctions/compat-api/index.js` 的前缀判据逐字含
  * `pathname === '/assets/scroll/decompose'`，未登录同回 **401 `FRIEND_UNAUTHORIZED`** ⇒ 复用本模块的
  * `friendRequest`（同一出参壳 `{ok,message,data}` / 同一 `error.message` 提取口径），**不另起一套请求封装**。
- * `count` 的单位 = **成品（整）兰帖枚数**（1 枚 = 100 片 —— §14-13 ② 枚数口径，**不是格数**）；
+ * `count` 的单位 = **成品（整）兰帖张数**（1 张 = 100 片 —— §14-13 ② 张数口径，**不是格数**）；
  * 片数不足 ⇒ 后端 **409 整单拒绝**（一片不扣、不返还、无流水）。
  */
 export interface ScrollDecomposeResult {
-  /** 实际分解的成品兰帖枚数 */
+  /** 实际分解的成品兰帖张数 */
   decomposed: number;
   /** 扣减的兰帖片数（= `decomposed × 100`） */
   pieces: number;
-  /** 返还的兰帖碎片个数（= `decomposed × 99`，每枚留 1 片损耗） */
+  /** 返还的兰帖残页片数（= `decomposed × 99`，每张留 1 片损耗） */
   refunded: number;
-  /** 分解后的兰帖碎片总量（满 100 由后端自动合成 1 枚兰帖） */
+  /** 分解后的兰帖碎片总量（满 100 由后端自动合成 1 张兰帖） */
   scroll_fragments: number;
-  /** 本次返还触发的自动合成枚数（= 后端返回的 `synthesized`） */
+  /** 本次返还触发的自动合成张数（= 后端返回的 `synthesized`） */
   synthesized: number;
   /** 被扣减的兰帖批次（FIFO 明细；本模块只透传，不做展示拼装） */
   taken: Array<{ id: string; qty: number; expires_at: string }>;
 }
 
-/** 兰帖【分解】：分解 `count` 枚成品兰帖（1 枚 = 100 片；不足 ⇒ 409，不改一处状态） */
+/** 兰帖【分解】：分解 `count` 张成品兰帖（1 张 = 100 片；不足 ⇒ 409，不改一处状态） */
 export async function postDecomposeScroll(count: number): Promise<ScrollDecomposeResult> {
   const { data } = await friendRequest('/assets/scroll/decompose', 'POST', { count });
   return data as unknown as ScrollDecomposeResult;

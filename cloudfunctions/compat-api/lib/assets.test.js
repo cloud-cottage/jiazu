@@ -732,6 +732,103 @@ test('grant 负向：已镶嵌的玉不可扣减（永久销毁口径）→ 409�
   assertInvariants(after, 'grant 扣玉');
 });
 
+test('grant 六类矩阵·兰帖（§A2）：正向按片入批次（source=admin / expires_at=null 永久）+ 负向按张扣减（取尽批次就地移除）；OpsLog / admin_grant 流水含 scrolls 键', async () => {
+  const phone = await newUser();
+  await seedAssets(phone, { fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], scroll_fragments: 0, txs: [], signin_date: '' });
+  const before = { assets: await readAssets(phone), logs: await logsOf() };
+
+  // ① 不足 → 409 整单拒绝；文案必须含「需求张数 + 当前张数 + 当前精确片数」
+  const short = await grant({ target_phone: phone, delta: { scrolls: -100 }, reason: '纠错扣兰帖' });
+  assert.equal(short.statusCode, 409, '0 片 ⇒ 需 1 张必不足');
+  const shortBody = jsonBody(short);
+  assert.equal(shortBody.code, 'ASSET_INSUFFICIENT');
+  assert.equal(shortBody.unit, 'scrolls');
+  assert.equal(shortBody.need, 1, 'need 口径 = 张数');
+  assert.equal(shortBody.current, 0, 'current 口径 = 张数（向下取整）');
+  assert.equal(shortBody.error, '资产不足，需 1 张兰帖，当前 0 张（0 片）');
+  assert.deepEqual(await readAssets(phone), before.assets, '不足：资产一字节不变（无部分扣减）');
+  assert.deepEqual(await logsOf(), before.logs, '不足：不得写审计日志');
+  assert.equal((await txsOf(phone)).length, 0, '不足：不得写用户流水');
+
+  // ② 正向：按**片**入一个批次（1 张 = 100 片；永久必须显式 null、source='admin'）
+  const okBody = jsonBody(await grant({ target_phone: phone, delta: { scrolls: 250 }, reason: '史料奖励' }));
+  assert.equal(okBody.summary.scrolls_total_pieces, 250, 'summary 追加出参为片数');
+  assert.equal(okBody.summary.scroll_fragments, 0);
+  const after = await readAssets(phone);
+  assert.equal(after.scrolls.length, 1, '正向只入一个批次（后台不做整张切分）');
+  assert.equal(after.scrolls[0].qty, 250, '批次量级 = 片（线上一律以片计）');
+  assert.equal(after.scrolls[0].source, 'admin');
+  assert.equal(after.scrolls[0].expires_at, null, '兰帖永久：必须显式 null（无「默认永久」口径）');
+  const log = (await logsOf()).find((l) => l.id === okBody.summary.log_id);
+  assert.deepEqual(log.delta, { scrolls: 250 }, 'OpsLog 保留符号并含新键 scrolls');
+  const tx = (await txsOf(phone)).find((t) => t.type === 'admin_grant');
+  assert.deepEqual(tx.delta, { scrolls: 250 }, '用户流水 delta 含新键（枚举仍 admin_grant，不新增）');
+  assert.equal(tx.operator, CHIEF);
+
+  // ③ 负向：按张扣减（1 张 = 100 片）
+  const minus = jsonBody(await grant({ target_phone: phone, delta: { scrolls: -100 }, reason: '纠错扣减' }));
+  assert.equal(minus.summary.scrolls_total_pieces, 150, '250 − 100 = 150 片');
+  assert.equal((await readAssets(phone)).scrolls[0].qty, 150);
+
+  // ④ 扣尽：批次就地移除（不留 qty=0 残批）
+  assert.equal(jsonBody(await grant({ target_phone: phone, delta: { scrolls: -100 }, reason: '纠错扣减' })).summary.scrolls_total_pieces, 50);
+  const last = jsonBody(await grant({ target_phone: phone, delta: { scrolls: -50 }, reason: '纠错扣减' }));
+  assert.equal(last.summary.scrolls_total_pieces, 0);
+  assert.deepEqual((await readAssets(phone)).scrolls, [], '扣尽批次就地移除（无 0 残批）');
+
+  // ⑤ 需求片数不是 100 的倍数（仅 API 直调可达）：退回片口径表述，绝不写「1.5 张」
+  await grant({ target_phone: phone, delta: { scrolls: 100 }, reason: '再发放' });
+  const odd = jsonBody(await grant({ target_phone: phone, delta: { scrolls: -150 }, reason: '纠错扣减' }));
+  assert.equal(odd.code, 'ASSET_INSUFFICIENT');
+  assert.equal(odd.error, '资产不足，需 150 片兰帖，当前 1 张（100 片）');
+  assertInvariants(await readAssets(phone), 'grant 兰帖');
+});
+
+test('grant 六类矩阵·兰帖残页（§A2）：正向走账本 addScrollFragments（满 100 自动合成 1 张、不拒绝不截断）+ 负向不足 409（文案按片）+ 脏数据 ≥100 顺带收口', async () => {
+  const phone = await newUser();
+  await seedAssets(phone, { fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], scroll_fragments: 0, txs: [], signin_date: '' });
+  const before = { assets: await readAssets(phone), logs: await logsOf() };
+
+  // ① 不足 → 409（量词 = 「片」；与兰帖的「张」是两回事）
+  const short = await grant({ target_phone: phone, delta: { scroll_fragments: -100 }, reason: '纠错扣残页' });
+  assert.equal(short.statusCode, 409);
+  const sb = jsonBody(short);
+  assert.equal(sb.code, 'ASSET_INSUFFICIENT');
+  assert.equal(sb.unit, 'scroll_fragments');
+  assert.equal(sb.need, 100);
+  assert.equal(sb.current, 0);
+  assert.equal(sb.error, '资产不足，需 100 片兰帖残页，当前 0 片');
+  assert.deepEqual(await readAssets(phone), before.assets, '不足：一字节不变');
+  assert.deepEqual(await logsOf(), before.logs, '不足：不写审计日志');
+
+  // ② 正向：250 片 → 当场合成 2 张（200 片）+ 余 50 片（不拒绝、不截断）
+  const okBody = jsonBody(await grant({ target_phone: phone, delta: { scroll_fragments: 250 }, reason: '好友奖励补发' }));
+  assert.equal(okBody.summary.scroll_fragments, 50, '250 片 → 合成 2 张后余 50 片');
+  assert.equal(okBody.summary.scrolls_total_pieces, 200, '合成 2 张 = 200 片');
+  const after = await readAssets(phone);
+  assert.equal(after.scrolls.length, 2, '每张一个新批次（同一写入内完成）');
+  for (const lot of after.scrolls) {
+    assert.equal(lot.qty, 100);
+    assert.equal(lot.source, 'scroll_synth');
+    assert.equal(lot.expires_at, null, '合成批次恒永久（显式 null）');
+  }
+  assert.ok(after.txs.some((t) => t.type === 'scroll_synth'), '自动合成写 scroll_synth 流水');
+  const log = (await logsOf()).find((l) => l.id === okBody.summary.log_id);
+  assert.deepEqual(log.delta, { scroll_fragments: 250 }, 'OpsLog 含新键 scroll_fragments（原样 250，不折算）');
+
+  // ③ 负向扣减（标量，片）：50 − 50 = 0，绝不为负；成品兰帖不受影响
+  const ok = jsonBody(await grant({ target_phone: phone, delta: { scroll_fragments: -50 }, reason: '纠错扣残页' }));
+  assert.equal(ok.summary.scroll_fragments, 0);
+  assert.equal(ok.summary.scrolls_total_pieces, 200, '扣残页不动成品兰帖');
+
+  // ④ 脏数据 ≥ 100：顺带合成，不落「残页 100 未合成」中间态
+  await el.mutateAssets(phone, (u) => { u.scroll_fragments = 150; });
+  const healed = jsonBody(await grant({ target_phone: phone, delta: { seeds: 1 }, reason: '脏数据收口' }));
+  assert.equal(healed.summary.scroll_fragments, 50, '150 残页 ⇒ 顺带合成 1 张 + 余 50');
+  assert.equal(healed.summary.scrolls_total_pieces, 300);
+  assert.equal((await readAssets(phone)).scrolls.length, 3);
+});
+
 test('GET /admin/assets/logs（§5.3）：ts 倒序 + 同刻「后写在前」定序确定、operator / phone 过滤可叠加、limit 默认 50 上限 200；401 / 403', async () => {
   const a = await newUser();
   const b = await newUser();
@@ -824,7 +921,12 @@ test('GET /admin/assets/user（§5.4）：资产总览字段对齐 /assets/summa
   assert.equal(body.jade_list.length, 1);
   assert.equal(body.jade_list[0].expires_at, null);
   assert.equal(body.signin_date, '2026-09-15');
-  assert.deepEqual(Object.keys(body).sort(), ['bamboo_lots', 'bamboos_total_pieces', 'fragments', 'jade_list', 'jades', 'phone', 'seed_lots', 'seeds_total', 'signin_date'].sort());
+  assert.equal(body.scroll_fragments, 0, '§A4 追加出参：兰帖残页片数');
+  assert.equal(body.scroll_fragment_cap, 99, '§A4 追加出参：兰帖残页上限（= 服务端常量）');
+  assert.equal(body.scrolls_total_pieces, 0, '§A4 追加出参：兰帖总片数');
+  assert.equal(body.scrolls_item_count, 0, '§A4 追加出参：兰帖整张数（= 片总数 / 100 向下取整）');
+  assert.deepEqual(body.scroll_lots, [], '§A4 追加出参：兰帖批次数组');
+  assert.deepEqual(Object.keys(body).sort(), ['bamboo_lots', 'bamboos_total_pieces', 'fragments', 'jade_list', 'jades', 'phone', 'scroll_fragment_cap', 'scroll_fragments', 'scroll_lots', 'scrolls_item_count', 'scrolls_total_pieces', 'seed_lots', 'seeds_total', 'signin_date'].sort());
 
   assert.equal((await call('/admin/assets/user', 'GET', bearerAs(CHIEF, 'chief_editor'))).statusCode, 400);
   assert.equal(jsonBody(await call('/admin/assets/user', 'GET', bearerAs(CHIEF, 'chief_editor'))).error, '缺少 phone');

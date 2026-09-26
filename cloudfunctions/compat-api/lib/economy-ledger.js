@@ -5,7 +5,7 @@
  *   §3 四类资产定义 / §4-1 存储契约 / §4-6 枚举
  *   §5-1 碎片上限 9 与自动合成 / §5-2 FIFO + 整单拒绝 / §5-3 有效期 / §5-4 惰性结算 / §5-7 唯一写入路径与原子性
  *   §15 物品域扩展（兰帖残页 `scroll_fragments` 上限 99 + 满 100 自动合成；兰帖批次 `scrolls` 恒永久；
- *     1 枚 = 100 片 = 1 行囊格；分解 1 枚返 99 碎片，避开「分解即合成」回环）
+ *     1 张 = 100 片 = 1 行囊格；分解 1 张返 99 碎片，避开「分解即合成」回环）
  *
  * **已知限制（总监 2026-09-16 拍板：暂不改，部署前重构）**：资产集合当前为**全体用户共用单文档**
  * `_id='global'`，并发保护**仅进程内锁**（下方 `assetsLocks`，同实例内已串行化）——**云端多实例并发会丢更新 / 双花**。
@@ -36,11 +36,11 @@ export const FRAGMENT_PER_SEED = 10;
 
 /** 兰帖残页上限（§15-2 · R-2） */
 export const SCROLL_FRAGMENT_CAP = 99;
-/** 兰帖残页自动合成阈值：满此数立即合成 1 枚成品兰帖、碎片取余（§15-2 / §15-4 · R-2） */
+/** 兰帖残页自动合成阈值：满此数立即合成 1 张成品兰帖、碎片取余（§15-2 / §15-4 · R-2） */
 export const SCROLL_FRAGMENT_SYNTH_THRESHOLD = 100;
-/** 每枚成品兰帖的片数（= 1 个行囊格；换算 `floor(Σqty / 本值)`，§15-3 / §15-6② · R-6 / R-11） */
+/** 每张成品兰帖的片数（= 1 个行囊格；换算 `floor(Σqty / 本值)`，§15-3 / §15-6② · R-6 / R-11） */
 export const SCROLL_PIECES_PER_SCROLL = 100;
-/** 兰帖分解返还：1 枚 → 99 兰帖残页（留 1 片为损耗，避开「分解即合成」回环，§15-4 · R-7） */
+/** 兰帖分解返还：1 张 → 99 兰帖残页（留 1 片为损耗，避开「分解即合成」回环，§15-4 · R-7） */
 export const SCROLL_DECOMPOSE_REFUND = 99;
 /** 好友奖励产出（竹片 / 兰帖的批次来源新增取值，R-1 / R-3；登记要求见 §15-5②③） */
 export const SOURCE_FRIEND_REWARD = 'friend_reward';
@@ -85,7 +85,7 @@ export const TX_TYPES = [
   'market_buy',
   'official_buy',
   // P4（docs/economy.spec.md §15-5⑥ · R-10）追加兰帖物品域取值（命名不与既有 19 项重名）：
-  //   `scroll_synth`（兰帖残页满 100 自动合成 1 枚成品兰帖）、
+  //   `scroll_synth`（兰帖残页满 100 自动合成 1 张成品兰帖）、
   //   `scroll_decompose`（兰帖分解返还 99 碎片）。冲正仍只用既有 `fee_refund`。
   'scroll_synth',
   'scroll_decompose',
@@ -359,7 +359,7 @@ export function sweep(user, now = new Date()) {
 /**
  * 碎片累加 + 满 10 立即合成（§5-1-2/3）：`fragments += n` → 每满 10 立即合成 1 颗籽
  * （每颗一个新 SeedLot：365 天、`source='fragment_synth'`），碎片取余；合成写一条 `fragment_synth` 流水。
- * 合成与碎片累加在同一份 user 记录内完成——不存在「碎片 10 个、籽未生成」的中间态。
+ * 合成与碎片累加在同一份 user 记录内完成——不存在「碎片 10 片、籽未生成」的中间态。
  * @returns {{fragments:number, synthesized:number, seed_lots:object[]}}
  */
 export function addFragments(user, n, now = new Date()) {
@@ -392,10 +392,10 @@ export function addFragments(user, n, now = new Date()) {
 
 /**
  * 兰帖残页累加 + 满 100 立即合成（R-2 / R-13，与 `addFragments` 逐条同构）：
- * `scroll_fragments += n` → 每满 100 立即合成 1 枚成品兰帖（每枚一个新 ScrollLot：100 片、
+ * `scroll_fragments += n` → 每满 100 立即合成 1 张成品兰帖（每张一个新 ScrollLot：100 片、
  * `expires_at = null`（永久，**显式传入**）、`source = 'scroll_synth'`），碎片取余；合成写一条
  * `scroll_synth` 流水（`delta` 含 `scroll_fragments` 与 `scrolls` **两个键**的变动量）。
- * 累加与合成在同一份 user 记录内**一次完成** —— **不存在「碎片 100 个、兰帖未生成」的中间态**。
+ * 累加与合成在同一份 user 记录内**一次完成** —— **不存在「碎片 100 片、兰帖未生成」的中间态**。
  * @returns {{scroll_fragments:number, synthesized:number, scroll_lots:object[]}}
  */
 export function addScrollFragments(user, n, now = new Date()) {
@@ -424,7 +424,7 @@ export function addScrollFragments(user, n, now = new Date()) {
           scroll_fragments: -scroll_lots.length * SCROLL_FRAGMENT_SYNTH_THRESHOLD,
           scrolls: scroll_lots.length * SCROLL_PIECES_PER_SCROLL,
         },
-        desc: `兰帖残页满 ${SCROLL_FRAGMENT_SYNTH_THRESHOLD} 自动合成 ${scroll_lots.length} 枚兰帖`,
+        desc: `兰帖残页满 ${SCROLL_FRAGMENT_SYNTH_THRESHOLD} 自动合成 ${scroll_lots.length} 张兰帖`,
       },
       now,
     );
@@ -433,7 +433,7 @@ export function addScrollFragments(user, n, now = new Date()) {
 }
 
 /**
- * 兰帖分解（R-7）：`n` 枚成品兰帖（每枚 = 100 片）→ 返还 `n × 99` 兰帖残页（每枚留 1 片为损耗）。
+ * 兰帖分解（R-7）：`n` 张成品兰帖（每张 = 100 片）→ 返还 `n × 99` 兰帖残页（每张留 1 片为损耗）。
  * - **为什么返 99 而不是 100（R-7 理由）**：返还 100 片会在返还瞬间触发「满 100 自动合成」⇒ 分解成为
  *   **空操作**（分完又合回去）；返 99 片即可避开「分解即合成」回环。**与玉的免费无损耗口径并存、不互套**
  *   （玉产出籽批次不触发自动合成，兰帖产出碎片标量会触发）。
@@ -452,7 +452,7 @@ export function decomposeScroll(user, n = 1, now = new Date()) {
       {
         type: 'scroll_decompose',
         delta: { scroll_fragments: refunded, scrolls: -pieces },
-        desc: `分解 ${count} 枚兰帖（${pieces} 片），返还 ${refunded} 个兰帖残页（损耗 ${count} 片）`,
+        desc: `分解 ${count} 张兰帖（${pieces} 片），返还 ${refunded} 片兰帖残页（损耗 ${count} 片）`,
       },
       now,
     );

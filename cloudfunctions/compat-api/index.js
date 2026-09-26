@@ -956,15 +956,15 @@ async function handleRequest(event) {
         const raw = parseBody(event).count;
         const count = raw === undefined || String(raw).trim() === '' ? 1 : Number(raw);
         if (!Number.isInteger(count) || count <= 0) {
-          return send(400, { ok: false, error: { code: 'INVALID_COUNT', status: 400, message: 'count 必须为正整数（1 枚 = 100 片）' } });
+          return send(400, { ok: false, error: { code: 'INVALID_COUNT', status: 400, message: 'count 必须为正整数（1 张 = 100 片）' } });
         }
         try {
           const now = new Date();
           // ⚠️ 缺陷 D-1（本单修复 · 后端强制校验续约锁定）：
-          //   续约锁定**只占用、不扣除**（F-B：锁落在关系文档 `pending.locked_*`，那 1 枚成品兰帖
+          //   续约锁定**只占用、不扣除**（F-B：锁落在关系文档 `pending.locked_*`，那 1 张成品兰帖
           //   仍留在 `jiazu_assets` 里）。前端对【分解】置灰**可被 curl 直接绕过**（锁定只在关系域留痕，
           //   分解路由原先零校验）。故此处必须先取「未超时的续约待确认关系所锁定的片数」，再算
-          //   **可分解枚数 = floor((总片数 − 锁定片数) / 100)**；请求枚数超出 ⇒ 409 整单拒绝（一片不扣）。
+          //   **可分解张数 = floor((总片数 − 锁定片数) / 100)**；请求张数超出 ⇒ 409 整单拒绝（一片不扣）。
           //   锁定读数唯一来源 = friend-ops 的 `lockedScrollPieces`（只读、零写入；超时的锁由内存 sweep 清空）。
           let locked = { pieces: 0, locks: [] };
           try {
@@ -973,7 +973,7 @@ async function handleRequest(event) {
             if (isSystemFailure(le)) {
               return send(500, { ok: false, error: { code: 'INTERNAL_ERROR', status: 500, message: eco.INTERNAL_ERROR_TEXT } });
             }
-            // 读不到锁 ⇒ **失败关闭**（宁可拒分解，也不放行可能被锁定的那 1 枚）
+            // 读不到锁 ⇒ **失败关闭**（宁可拒分解，也不放行可能被锁定的那 1 张）
             return send(409, {
               ok: false,
               error: { code: 'SCROLL_LOCKED_CHECK_FAILED', status: 409, message: '无法校验续约锁定状态，请稍后重试' },
@@ -984,12 +984,12 @@ async function handleRequest(event) {
             ledger.sweep(user, now); // 资产入口先惰性结算（§5-4-1），照 /assets/summary 体例
             const totalPieces = ledger.sumLots(user.scrolls || []);
             const availablePieces = Math.max(0, totalPieces - lockedPieces); // 总片数 − 锁定片数 = 可用片数
-            const capacity = Math.floor(availablePieces / ledger.SCROLL_PIECES_PER_SCROLL); // 可分解枚数
+            const capacity = Math.floor(availablePieces / ledger.SCROLL_PIECES_PER_SCROLL); // 可分解张数
             if (count > capacity) {
               const e = httpError(
                 409,
                 `可用兰帖不足：共 ${totalPieces} 片，其中 ${lockedPieces} 片已被续约锁定（只占用未扣除），` +
-                  `可用 ${availablePieces} 片 ⇒ 最多可分解 ${capacity} 枚，本次请求分解 ${count} 枚`,
+                  `可用 ${availablePieces} 片 ⇒ 最多可分解 ${capacity} 张，本次请求分解 ${count} 张`,
               );
               e.code = 'SCROLL_LOCKED_INSUFFICIENT';
               e.detail = { total_pieces: totalPieces, locked_pieces: lockedPieces, available_pieces: availablePieces, capacity, requested: count };

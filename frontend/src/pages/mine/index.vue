@@ -14,6 +14,9 @@
           size="small"
           class="role-tag"
         >{{ roleName(authState.role) }}</t-tag>
+        <!-- 绑定信息降级为用户卡内一行：已绑定 ⇒ 树名 + 我的节点；未绑定 ⇒ 可点「去家谱列表」（tabBar 切换） -->
+        <text v-if="isAuthenticated() && anchor" class="bind-line">🌳 {{ boundTreeName }} · 我的节点 {{ anchorPersonName || anchor.person_handle }}</text>
+        <text v-else-if="isAuthenticated()" class="bind-line">尚未加入任何家族树 · <text class="bind-line-link" @click="goHall">去家谱列表</text></text>
       </view>
       <view class="user-action">
         <t-button
@@ -53,48 +56,25 @@
       >签</view>
       <view class="sign-body">
         <text class="sign-title">每日签到</text>
-        <text class="sign-hint">{{ signedToday ? '今日已签到' : '轻触印章 · 领 1 枚石榴籽碎片' }}</text>
+        <text class="sign-hint">{{ signedToday ? '今日已签到' : '轻触印章 · 领 1 片石榴籽碎片' }}</text>
+        <!-- 今日奖励入口（子包页 pages/task/index）：不显示 x/3 进度，本行不新增取数 -->
+        <text class="sign-reward" @click="goTaskCenter">今日奖励 · 去领取 →</text>
         <text v-if="signError" class="sign-error">{{ signError }}</text>
       </view>
     </view>
 
-    <!-- 我的家族树（绑定状态 + 加入/解绑入口） -->
-    <view v-if="isAuthenticated()" class="bind-card">
-      <view class="bind-header">
-        <text class="bind-title">🌳 我的家族树</text>
-        <t-tag v-if="anchor" theme="primary" variant="light" size="small">已绑定</t-tag>
-        <t-tag v-else theme="default" variant="light" size="small">未绑定</t-tag>
-      </view>
-
-      <view v-if="anchor" class="bind-body">
-        <view class="bind-row">
-          <text class="bind-label">家族</text>
-          <text class="bind-value">{{ boundTreeName }}</text>
+    <!-- 家族互动（好友域入口 · 子包 pages/friend）：位置 = 每日签到卡之后、功能菜单卡之前 -->
+    <view v-if="isAuthenticated()" class="interact-card">
+      <text class="interact-title">🤝 家族互动</text>
+      <view class="friend-entry">
+        <view class="fe-item" @click="goFriends">
+          <text class="fe-icon">👥</text>
+          <text class="fe-text">好友列表</text>
         </view>
-        <view class="bind-row">
-          <text class="bind-label">我的节点</text>
-          <text class="bind-value">{{ anchorPersonName || anchor.person_handle }}</text>
+        <view class="fe-item" @click="goInviteFriend">
+          <text class="fe-icon">＋</text>
+          <text class="fe-text">邀请好友</text>
         </view>
-        <view v-if="anchorError" class="bind-error">{{ anchorError }}</view>
-        <t-button
-          size="small"
-          variant="outline"
-          theme="warning"
-          class="bind-btn"
-          :loading="leaving"
-          @click="openLeaveModal"
-        >申请解绑</t-button>
-        <text class="bind-hint">一人一树终身制：解绑需家族树主理人审批，通过后可改绑其他家族树</text>
-      </view>
-
-      <view v-else class="bind-body">
-        <text class="bind-empty">尚未加入任何家族树</text>
-        <t-button
-          size="small"
-          theme="primary"
-          class="bind-btn"
-          @click="goHall"
-        >去家族馆加入</t-button>
       </view>
     </view>
 
@@ -163,6 +143,13 @@
           arrow
           @click="go('/pages/about/about')"
         />
+        <t-cell
+          v-if="isAuthenticated() && anchor"
+          title="🔓 申请解绑"
+          description="一人一树终身制 · 解绑需主理人审批"
+          arrow
+          @click="openLeaveModal"
+        />
       </t-cell-group>
     </view>
 
@@ -197,7 +184,6 @@ import AssetInventory from '@/components/asset-inventory/asset-inventory.vue';
 const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
 const anchorPersonName = ref('');
 const boundTreeName = ref('未绑定');
-const anchorError = ref('');
 const showLeaveModal = ref(false);
 const leaveReason = ref('');
 const leaveError = ref('');
@@ -210,7 +196,7 @@ const inventorySummary = ref<AssetsSummary | null>(null);
 const inventoryError = ref('');
 const inventoryLoading = ref(false);
 /**
- * 兰帖锁定态（好友域续约申请：本人发起、等待对方确认期间那枚兰帖被占用）——
+ * 兰帖锁定态（好友域续约申请：本人发起、等待对方确认期间那张兰帖被占用）——
  * 由 `GET /friends` 的 `pending` 推导后交给行囊组件渲染；`null` = 无锁定态。
  */
 const scrollLock = ref<ScrollLockView | null>(null);
@@ -268,39 +254,38 @@ function maskPhone(phone: string): string {
 async function loadAnchor() {
   const token = getAuthToken();
   if (!token) return;
-  anchorError.value = '';
   try {
     anchor.value = await fetchMyAnchor(token);
-    if (anchor.value) {
-      // 树名（tree-meta）
-      try {
-        const meta = await fetchTreeMetaRemote();
-        for (const [, entry] of Object.entries(meta.trees)) {
-          if (entry.tree_id === anchor.value.tree_id) {
-            boundTreeName.value = entry.display_title || entry.tree_id;
-            break;
-          }
-        }
-      } catch {
-        boundTreeName.value = anchor.value.tree_id;
-      }
-      // 节点名（读该树 person）
-      try {
-        const res = await fetch(`/api/people/${anchor.value.person_handle}?profile=all`, {
-          headers: { 'X-Tree-Id': anchor.value.tree_id },
-        });
-        if (res.ok) {
-          const p = await res.json();
-          const pn = p.primary_name || {};
-          anchorPersonName.value =
-            (pn.surname_list?.[0]?.surname || '') + (pn.first_name || '') || anchor.value.person_handle;
-        }
-      } catch {
-        /* 读不到节点名则显示 handle */
+  } catch {
+    /* 读不到绑定状态：保持 null（绑定行按未绑定渲染），不打扰用户 */
+    anchor.value = null;
+  }
+  if (!anchor.value) return;
+  // 树名（tree-meta）
+  try {
+    const meta = await fetchTreeMetaRemote();
+    for (const [, entry] of Object.entries(meta.trees)) {
+      if (entry.tree_id === anchor.value.tree_id) {
+        boundTreeName.value = entry.display_title || entry.tree_id;
+        break;
       }
     }
-  } catch (e: any) {
-    anchorError.value = e.message || '加载绑定状态失败';
+  } catch {
+    boundTreeName.value = anchor.value.tree_id;
+  }
+  // 节点名（读该树 person）
+  try {
+    const res = await fetch(`/api/people/${anchor.value.person_handle}?profile=all`, {
+      headers: { 'X-Tree-Id': anchor.value.tree_id },
+    });
+    if (res.ok) {
+      const p = await res.json();
+      const pn = p.primary_name || {};
+      anchorPersonName.value =
+        (pn.surname_list?.[0]?.surname || '') + (pn.first_name || '') || anchor.value.person_handle;
+    }
+  } catch {
+    /* 读不到节点名则显示 handle */
   }
 }
 
@@ -331,6 +316,20 @@ async function doLeave() {
 
 function goHall() {
   uni.switchTab({ url: '/pages/index/index' });
+}
+
+/** 家族互动入口：两个页面都在子包 `pages/friend`（与家谱页两格同形同文案） */
+function goFriends() {
+  uni.navigateTo({ url: '/pages/friend/list/index' });
+}
+
+function goInviteFriend() {
+  uni.navigateTo({ url: '/pages/friend/invite/index' });
+}
+
+/** 今日奖励入口（子包页 pages/task/index，标题「领取今日奖励」） */
+function goTaskCenter() {
+  uni.navigateTo({ url: '/pages/task/index' });
 }
 
 function goLogin() {
@@ -533,6 +532,9 @@ onMounted(() => {
 .user-name { font-size: 18px; font-weight: bold; display: block; }
 .user-phone { font-size: 12px; color: #E8D5C0; display: block; margin-top: 2px; }
 .role-tag { margin-top: 4px; }
+/* 绑定信息行（用户卡内、角色标签之下）：暖色系小字，不与角色标签抢视觉 */
+.bind-line { font-size: 12px; color: #E8D5C0; display: block; margin-top: 6px; line-height: 1.5; }
+.bind-line-link { color: #FFF6EA; text-decoration: underline; }
 .user-action { flex-shrink: 0; }
 
 /* 每日签到（古风印章式独立卡；位于行囊卡下方；不展示碎片进度） */
@@ -560,22 +562,26 @@ onMounted(() => {
 .sign-body { flex: 1; }
 .sign-title { font-size: 16px; font-weight: bold; color: #3E2723; letter-spacing: 2px; display: block; }
 .sign-hint { font-size: 12px; color: #B08D57; display: block; margin-top: 4px; }
+/* 今日奖励入口行（不显示 x/3 进度） */
+.sign-reward { font-size: 12px; color: #8B4513; display: block; margin-top: 6px; }
 .sign-error { font-size: 12px; color: #C62828; display: block; margin-top: 4px; }
 
-/* 我的家族树 */
-.bind-card {
-  background: #fff; border-radius: 14px; padding: 16px;
+/* 家族互动（白底暖描边卡，与 sign-card 同族 14 圆角 / 轻投影；两格入口样式迁自家谱页 .friend-entry / .fe-*） */
+.interact-card {
+  background: #fff; border: 1px solid #E3D3BE; border-radius: 14px; padding: 16px;
   margin-bottom: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.05);
 }
-.bind-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.bind-title { font-size: 16px; font-weight: bold; color: #3E2723; }
-.bind-row { display: flex; margin-bottom: 8px; }
-.bind-label { font-size: 13px; color: #999; width: 64px; flex-shrink: 0; }
-.bind-value { font-size: 14px; color: #3E2723; flex: 1; }
-.bind-empty { font-size: 13px; color: #999; display: block; margin-bottom: 10px; }
-.bind-btn { margin-top: 10px; }
-.bind-hint { font-size: 11px; color: #B5A594; display: block; margin-top: 10px; line-height: 1.5; }
-.bind-error { font-size: 12px; color: #C62828; margin-top: 8px; }
+.interact-title { font-size: 16px; font-weight: bold; color: #3E2723; display: block; }
+.friend-entry { display: flex; gap: 10px; margin-top: 12px; }
+.fe-item {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  padding: 10px 0; border-radius: 12px;
+  background: linear-gradient(180deg, #FFFDF8, #F8F0E5);
+  border: 1px solid #E3D3BE;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+}
+.fe-icon { font-size: 16px; margin-right: 6px; }
+.fe-text { font-size: 13px; color: #8B4513; }
 
 /* 弹窗 */
 .modal-mask {
@@ -591,6 +597,7 @@ onMounted(() => {
 .modal-sub { font-size: 12px; color: #999; display: block; text-align: center; margin: 6px 0 14px; }
 .field { margin-bottom: 10px; }
 .modal-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.bind-error { font-size: 12px; color: #C62828; margin-top: 8px; }
 
 .menu-card :deep(.t-cell-group) { border-radius: 12px; overflow: hidden; }
 .danger-card { margin-top: 16px; }

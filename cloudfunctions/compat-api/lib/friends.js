@@ -5,7 +5,7 @@
  *   ① **时间单位一律「天」，自然月实现作废**：基础有效期 = 365 天；每次成功续约叠加奖励有效期 = 30 天；
  *      到期时刻 = T0 + (365 + 30 × reward_months) 天（reward_months = 累计成功续约数）。
  *      v3 的自然月算术（addMonths 及月末溢出处理）**已整体删除，不留死代码**。
- *   ② **续约申请期道具锁定**：renewRequest 通过校验后即锁定发起方 1 枚兰帖（`locked_*` 四字段），
+ *   ② **续约申请期道具锁定**：renewRequest 通过校验后即锁定发起方 1 张兰帖（`locked_*` 四字段），
  *      **发起时锁定但不扣除**（道具仍属用户持有，仅被占用）；解除只有三情形：对方确认（⇒ 转为扣减）/
  *      对方拒绝 / 发起方撤回 / 超 7 天未确认（后三者 ⇒ **解锁且不产生任何流水**）。
  *   ③ 两条守卫：renewConfirm **只能由关系另一方执行**；关系 dissolved 后到达的任何
@@ -80,10 +80,10 @@ export const FRIEND_ERRORS = {
   FRIEND_NOT_PARTY: { status: 409, message: '你不是该好友关系的当事人' },
   FRIEND_STATE_INVALID: { status: 409, message: '当前状态不允许该操作' },
   NOT_IN_RENEW_WINDOW: { status: 409, message: '未进入续约窗口（到期前 30 天内才可发起续约）' },
-  SCROLL_INSUFFICIENT: { status: 409, message: '兰帖不足，续约需双方各 1 枚成品兰帖' },
+  SCROLL_INSUFFICIENT: { status: 409, message: '兰帖不足，续约需双方各 1 张成品兰帖' },
   RENEW_ALREADY_PENDING: {
     status: 409,
-    message: '已有待确认的续约申请（发起方 1 枚兰帖已锁定），不可重复发起',
+    message: '已有待确认的续约申请（发起方 1 张兰帖已锁定），不可重复发起',
   },
   RENEW_SELF_CONFIRM: { status: 409, message: '续约须由关系另一方确认，发起方不能自己确认' },
 };
@@ -514,7 +514,7 @@ export async function cancelInvite(relationId, byPhone, opts = {}) {
 /**
  * F-5 / v4 ②：发起续约申请（**只写状态与锁定，不碰资产、不扣除**）
  * 前置：status = active、已进入续约窗口（now ≥ expires_at − 30 天）、**无待确认申请**、
- *       发起方自持 1 枚兰帖。通过校验后即**锁定**发起方 1 枚兰帖（发起时锁定但不扣除）。
+ *       发起方自持 1 张兰帖。通过校验后即**锁定**发起方 1 张兰帖（发起时锁定但不扣除）。
  * @param {string} relationId
  * @param {string} byPhone 发起方手机号（当事人）
  * @param {{now?:Date|string, has_self_scroll?:boolean, locked_lot_id?:string}} [opts]
@@ -589,7 +589,7 @@ export async function renewRequest(relationId, byPhone, opts = {}) {
 
 /**
  * F-5 / v4 ②③：**对方**确认续约 → renewals +1、reward_months +1、expires_at 按 **T0 锚点**重算
- * （T0 + 365 + 30 × reward_months 天）；发起方那枚锁定道具转为**应扣减**（由调用方在资产事务内扣）。
+ * （T0 + 365 + 30 × reward_months 天）；发起方那张锁定道具转为**应扣减**（由调用方在资产事务内扣）。
  * 双边各再校一次：`has_self_scroll`（确认方）/ `has_initiator_scroll`（发起方，申请后可能已花掉）
  * 任一不足 ⇒ 409 **整单拒绝、零写入**，申请与锁定保留至超时。
  *
@@ -601,7 +601,7 @@ export async function renewRequest(relationId, byPhone, opts = {}) {
  * @returns {Promise<{ok:true, relation_id:string, relation:object, events:object[],
  *   deduct:{phones:string[], amount_each:number, locked:{by:string,pieces:number,lot_id:string,at:string}}}>}
  *   `deduct` = 调用方应扣的**哪一方、各多少片**：`phones` 双边各扣 `amount_each` 片；
- *   其中 `deduct.locked`（`by` = 发起方）那 1 片即本次申请锁定的那枚（按 `lot_id` 对应）。
+ *   其中 `deduct.locked`（`by` = 发起方）那 1 片即本次申请锁定的那张（按 `lot_id` 对应）。
  * 拒绝：FRIEND_NOT_FOUND（404）/ FRIEND_STATE_INVALID（409，缓冲期不可续约 / 无申请 / **dissolved 终态**）/
  *       **RENEW_SELF_CONFIRM（409，发起方自确认）** / FRIEND_NOT_PARTY（409，第三方）/ SCROLL_INSUFFICIENT（409）
  */
@@ -624,11 +624,11 @@ export async function renewConfirm(relationId, byPhone, opts = {}) {
     if (opts.has_self_scroll === false || opts.has_initiator_scroll === false) {
       throw friendError('SCROLL_INSUFFICIENT'); // 409 整单拒绝：零写入，申请与锁定保留至超时
     }
-    const locked = lockOf(req); // 发起方那枚锁定道具：确认 ⇒ 由「占用」转为「应扣减」
+    const locked = lockOf(req); // 发起方那张锁定道具：确认 ⇒ 由「占用」转为「应扣减」
     relation.renewals = (Number(relation.renewals) || 0) + 1;
     relation.reward_months = (Number(relation.reward_months) || 0) + 1; // 累计成功续约数
     relation.expires_at = baseExpiresAt(relation.created_at, relation.reward_months); // v4 ①：恒锚 T0
-    relation.pending = null; // 锁随 pending 一并释放（该枚转为扣减，不再占用）
+    relation.pending = null; // 锁随 pending 一并释放（该张转为扣减，不再占用）
     const event = pushEvent(relation, {
       at,
       type: 'renew_confirmed',
