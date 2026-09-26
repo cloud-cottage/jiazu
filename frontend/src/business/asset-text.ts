@@ -192,6 +192,40 @@ export const BAMBOO_PIECES_UNIT = '片';
 export const SCROLL_PIECES_UNIT = '片';
 
 /**
+ * 兰帖整道具（张）的量词（**恒「张」**；1 张 = 100 片）。
+ * 单点：凡数字为**整道具数**（张）时一律经本常量拼装；片数分文一律用 `SCROLL_PIECES_UNIT`。
+ * 注：`business/inventory.ts` 的 `KIND_QTY_UNIT.scroll = '张'` 是行囊角标自有字面（本批未并，登记为后续收敛）。
+ */
+export const SCROLL_ITEM_UNIT = '张';
+
+// ============ 资产变动（delta）文案**单点**（资产页流水 + 后台资产变动日志共用） ============
+
+/**
+ * 兰帖 delta（`AssetDelta.scrolls`，线上**恒以片计**）→ 展示片段（**不含正负号**，符号由调用方按页面前缀）：
+ * - 片数可被 `piecesPerItem` 整除 ⇒ `N 张兰帖`（N = 片数 ÷ perItem，**绝不出小数张**）；
+ * - 否则 ⇒ `M 片兰帖`（数值即片数）。
+ *
+ * `piecesPerItem` 由调用方传入 `business/inventory.ts` 的 `SCROLL_PIECES_PER_ITEM`
+ * （**本模块不复制比例常量**，避免两模块 `import` 成环 —— 同 `scrollFragmentSynthLine` / `scrollCaliberLine`
+ * 的既有约定）。**换算式只有本函数一份**：`pages/assets/index.vue`（我的资产流水）与
+ * `pages/admin/index.vue`（资产变动日志）一律经本函数，页面内**不得再写 `% 100`**。
+ */
+export function scrollDeltaLabel(pieces: number, piecesPerItem: number): string {
+  const v = Number(pieces) || 0;
+  return v % piecesPerItem === 0
+    ? `${v / piecesPerItem} ${SCROLL_ITEM_UNIT}${SCROLL_NAME}`
+    : `${v} ${SCROLL_PIECES_UNIT}${SCROLL_NAME}`;
+}
+
+/**
+ * 兰帖残页 delta（`AssetDelta.scroll_fragments`，**片**）→ 展示片段（恒 `N 片兰帖残页`；
+ * 残页不论是否满 100 都是**片**口径，不做任何张数换算）。
+ */
+export function scrollFragmentDeltaLabel(count: number): string {
+  return `${Number(count) || 0} ${SEED_FRAGMENT_UNIT}${SCROLL_FRAGMENT_NAME}`;
+}
+
+/**
  * 资产字段名 → 展示名（**单点**；任务中心读接口出参的品类数量键经此渲染）。
  * 未知字段 → **原样返回字段名**（绝不新造中文名，也绝不猜品类）。
  */

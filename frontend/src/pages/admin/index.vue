@@ -345,6 +345,7 @@ import { fetchUserList, setUserRole, setAnchor, fetchLeaveRequests, approveLeave
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import type { ManagedUser, LeaveRequestItem, JoinRequestItem, OpsLog, AdminAssetSnapshot } from '@/business/api';
 import type { AssetDelta, Jade } from '@/business/api';
+import { scrollDeltaLabel, scrollFragmentDeltaLabel } from '@/business/asset-text';
 import { SCROLL_PIECES_PER_ITEM } from '@/business/inventory';
 import type { ScrollLot } from '@/business/types';
 import type { PersonSummary } from '@/business/types';
@@ -684,15 +685,13 @@ async function loadLogs() {
 
 /**
  * 单项 delta → 文本（量词随品类）。
- * 兰帖（`scrolls`）线上以**片**计：片数能被 100 整除 ⇒ `N 张兰帖`（N = 片数 ÷ 100，不带小数），
- * 否则回退 `M 片兰帖`（片数即数值，量词为片）。
+ * 兰帖域（`scrolls` / `scroll_fragments`）**走 `business/asset-text.ts` 单点**（与「我的资产」流水页同一函数）：
+ * 兰帖线上以**片**计 ⇒ 可整张 `N 张兰帖`、非整百 `M 片兰帖`；残页恒 `N 片兰帖残页`。
+ * 本页**不写第二份换算**。
  */
 function deltaValueText(f: { key: DeltaKey; label: string }, v: number): string {
-  if (f.key === 'scrolls') {
-    return v % SCROLL_PIECES_PER_ITEM === 0
-      ? `${v / SCROLL_PIECES_PER_ITEM} 张${f.label}`
-      : `${v} 片${f.label}`;
-  }
+  if (f.key === 'scrolls') return scrollDeltaLabel(v, SCROLL_PIECES_PER_ITEM);
+  if (f.key === 'scroll_fragments') return scrollFragmentDeltaLabel(v);
   return `${v} ${f.label}`;
 }
 

@@ -1209,7 +1209,7 @@ export async function distributeFriendRewards(triggerPhone, amounts = {}, now = 
  * `pending.locked_*`（`locked_by` / `locked_pieces` / `locked_lot_id` / `locked_at`），
  * 那 1 张成品兰帖**仍留在账本域的资产集合里**（集合名字面只允许出现在 `economy-ledger.js` 内，
  * 本模块不得出现该字面 —— F-A 源码判据）。前端对「兰帖分解」置灰，但
- * `POST /assets/scroll/decompose` **此前不校验锁定** ⇒ 直接 curl 即可把被锁定的那 1 枚分解掉，
+ * `POST /assets/scroll/decompose` **此前不校验锁定** ⇒ 直接 curl 即可把被锁定的那 1 张分解掉，
  * 置灰形同虚设。本导出给路由层提供**唯一**的锁定读数，使「可分解张数」在**后端**可判。
  *
  * 口径（逐条）：
@@ -1217,7 +1217,7 @@ export async function distributeFriendRewards(triggerPhone, amounts = {}, now = 
  *      续约申请超 7 天 ⇒ `pending` 被清空（锁随 pending 一并解除，见 friends.js F-8 ②），
  *      故已超时的锁**天然不被计入** —— 不需要也不允许再写第二套超时判定。
  *   ② **只算「本人锁定的」**：`pending.locked_by === phone`。锁定的是**发起方自己的**那 1 张兰帖
- *      （F-B：发起方须自持 ≥ 1 枚 ⇒ 占用发起方资产）；对方发起的续约锁的是**对方的**资产，
+ *      （F-B：发起方须自持 ≥ 1 张 ⇒ 占用发起方资产）；对方发起的续约锁的是**对方的**资产，
  *      不占本手机号的可分解额度。故按 `locked_by` 过滤（不是「本人是当事人的全部关系」）。
  *   ③ 只认 `pending.kind === 'renew'`（待邀请 pending 的 `locked_*` 不存在）；
  *      `locked_pieces` 一律过 `toNonNegInt`（脏数据不放大、不缩水为负）。

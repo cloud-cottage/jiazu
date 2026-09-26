@@ -148,9 +148,10 @@ import {
   postMessagesRead,
 } from '@/business/api';
 import type { AssetDelta, AssetsSummary, ExpiringAsset, MessageItem } from '@/business/api';
-import { formatAssetDate as formatDate } from '@/business/asset-text';
+import { formatAssetDate as formatDate, scrollDeltaLabel, scrollFragmentDeltaLabel } from '@/business/asset-text';
 import { isAuthenticated } from '@/business/auth';
 import { ICON } from '@/business/icons';
+import { SCROLL_PIECES_PER_ITEM } from '@/business/inventory';
 import { JADE_SYNTH_SEEDS } from '@/business/jade-ops';
 
 /** 即将过期查询窗口（docs/economy.spec.md §11-11：默认 30 天） */
@@ -180,11 +181,22 @@ const TX_TYPE_LABELS: Record<string, string> = {
   fee_refund: '费用冲正',
 };
 
-const DELTA_UNITS: Array<{ key: keyof AssetDelta; unit: string }> = [
-  { key: 'fragments', unit: '碎片' },
-  { key: 'seeds', unit: '颗' },
-  { key: 'bamboos', unit: '片' },
-  { key: 'jades', unit: '枚' },
+/**
+ * 流水 delta 的**六类**品类序与单项文案（**逐字**与后台「资产变动日志」一致）。
+ * 兰帖域（`scrolls` / `scroll_fragments`）**不在本表自算换算** —— 一律走 `business/asset-text.ts` 的
+ * `scrollDeltaLabel` / `scrollFragmentDeltaLabel` 单点：兰帖可整张 ⇒ `2 张兰帖`、非整百 ⇒ `150 片兰帖`、
+ * 残页恒 `99 片兰帖残页`。
+ *
+ * 此前本表只列四类，`admin_grant` 流水里含 `scrolls` / `scroll_fragments` 的 delta 因逐项取键**被静默丢弃**
+ * （既不显示也不告警）—— 补齐为六类即修复（2026-09-26，缺陷 = 质检观察项 1）。
+ */
+const DELTA_UNITS: Array<{ key: keyof AssetDelta; text: (v: number) => string }> = [
+  { key: 'fragments', text: (v) => `${v} 碎片` },
+  { key: 'seeds', text: (v) => `${v} 颗` },
+  { key: 'bamboos', text: (v) => `${v} 片` },
+  { key: 'jades', text: (v) => `${v} 枚` },
+  { key: 'scrolls', text: (v) => scrollDeltaLabel(v, SCROLL_PIECES_PER_ITEM) },
+  { key: 'scroll_fragments', text: (v) => scrollFragmentDeltaLabel(v) },
 ];
 
 const summary = ref<AssetsSummary | null>(null);
@@ -349,12 +361,13 @@ function txTypeLabel(type: string): string {
   return TX_TYPE_LABELS[type] || type;
 }
 
+/** delta → 文本（保留符号；0 项不显示；兰帖 / 残页文案与换算经 `asset-text.ts` 单点） */
 function txDeltaText(delta: AssetDelta | undefined): string {
   if (!delta) return '';
   const parts: string[] = [];
-  for (const { key, unit } of DELTA_UNITS) {
+  for (const { key, text } of DELTA_UNITS) {
     const v = delta[key];
-    if (typeof v === 'number' && v !== 0) parts.push(`${v > 0 ? '+' : ''}${v} ${unit}`);
+    if (typeof v === 'number' && v !== 0) parts.push(`${v > 0 ? '+' : ''}${text(v)}`);
   }
   return parts.join(' · ');
 }
