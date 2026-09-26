@@ -739,14 +739,15 @@ test('grant 六类矩阵·兰帖（§A2）：正向按片入批次（source=admi
   await seedAssets(phone, { fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], scroll_fragments: 0, txs: [], signin_date: '' });
   const before = { assets: await readAssets(phone), logs: await logsOf() };
 
-  // ① 不足 → 409 整单拒绝；文案必须含「需求张数 + 当前张数 + 当前精确片数」
+  // ① 不足 → 409 整单拒绝；文案必须含「需求张数 + 当前张数 + 当前精确片数」；
+  //    机器可读 need / current 一律**片**（与 unit='scrolls' / 存储 / 请求 delta 同分母，§14-6）
   const short = await grant({ target_phone: phone, delta: { scrolls: -100 }, reason: '纠错扣兰帖' });
   assert.equal(short.statusCode, 409, '0 片 ⇒ 需 1 张必不足');
   const shortBody = jsonBody(short);
   assert.equal(shortBody.code, 'ASSET_INSUFFICIENT');
   assert.equal(shortBody.unit, 'scrolls');
-  assert.equal(shortBody.need, 1, 'need 口径 = 张数');
-  assert.equal(shortBody.current, 0, 'current 口径 = 张数（向下取整）');
+  assert.equal(shortBody.need, 100, 'need 口径 = 片（= 1 张 × 100）');
+  assert.equal(shortBody.current, 0, 'current 口径 = 精确片数（不得取整成张）');
   assert.equal(shortBody.error, '资产不足，需 1 张兰帖，当前 0 张（0 片）');
   assert.deepEqual(await readAssets(phone), before.assets, '不足：资产一字节不变（无部分扣减）');
   assert.deepEqual(await logsOf(), before.logs, '不足：不得写审计日志');

@@ -491,6 +491,14 @@ function scrollFragmentsInsufficient(need, current) {
  * （例「资产不足，需 2 张兰帖，当前 0 张（50 片）」）。`currentPieces` = 扣除前精确片总数；
  * 张数一律向下取整（1 张 = 100 片，余片不凑整）。需求片数不是 100 的整数倍时（仅 API 直调可达，
  * 前端表单送出的恒为 100 的倍数）退回片口径表述，绝不写「1.5 张」这类假张数。
+ *
+ * **机器可读字段一律为「片」**：`need` / `current` 恒取 `assetInsufficient()` 落下的片值，
+ * 与 `unit='scrolls'` 的线上存储口径、与请求 `delta.scrolls` **同分母**（§14-2 / §14-6：
+ * `need` 以片为机器可读值、`current` **不得**四舍五入成张）；**「张」只活在上面的人文文案里**。
+ * 已修正的历史缺陷（本函数只再设 `message` / `unit`，不再触碰 `need` / `current`）：
+ * 曾把 `need` 覆写成「张」、`current` 取整成「张」⇒ 需求片数不可整除时同一响应体内出现
+ * 「片 + 张」**两套单位**，消费者直拼两数（如「本次需 {need} …，当前可用 {current} …」）即读错。
+ *
  * **不得**改账本 `ASSET_UNIT` 表（那是按片计量的内部口径）。
  */
 function scrollsInsufficient(needPieces, currentPieces) {
@@ -499,8 +507,6 @@ function scrollsInsufficient(needPieces, currentPieces) {
   e.message = needPieces % SCROLL_PIECES_PER_SCROLL === 0
     ? `资产不足，需 ${needPieces / SCROLL_PIECES_PER_SCROLL} 张兰帖，当前 ${currentItems} 张（${currentPieces} 片）`
     : `资产不足，需 ${needPieces} 片兰帖，当前 ${currentItems} 张（${currentPieces} 片）`;
-  e.need = needPieces % SCROLL_PIECES_PER_SCROLL === 0 ? needPieces / SCROLL_PIECES_PER_SCROLL : needPieces;
-  e.current = currentItems;
   e.unit = 'scrolls';
   return e;
 }
