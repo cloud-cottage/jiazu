@@ -117,7 +117,7 @@ test('① 常量与错误码字面：集合名 / 奖励 9+11 / 日限 3 / 四个
 // ===================== ⑥ I-7 兰帖依赖逐字断言 =====================
 
 test('⑥ I-7 兰帖依赖已就绪：真源导出名与取值逐字（不自写第二版）', () => {
-  assert.equal(el.SCROLL_FRAGMENT_CAP, 99);
+  assert.equal(el.SCROLL_FRAGMENT_CAP, 999, '单格容纳上限（展示层口径，非拒绝阈值）');
   assert.equal(el.SCROLL_FRAGMENT_SYNTH_THRESHOLD, 100);
   assert.equal(el.SCROLL_PIECES_PER_SCROLL, 100, '真源导出名 = SCROLL_PIECES_PER_SCROLL（非 SCROLL_PIECES_PER_ITEM）');
   assert.equal(typeof el.addScrollFragments, 'function');

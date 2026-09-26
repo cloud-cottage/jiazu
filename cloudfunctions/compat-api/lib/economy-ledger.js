@@ -4,16 +4,22 @@
  * 唯一真源：docs/economy.spec.md
  *   §3 四类资产定义 / §4-1 存储契约 / §4-6 枚举
  *   §5-1 碎片上限 9 与自动合成 / §5-2 FIFO + 整单拒绝 / §5-3 有效期 / §5-4 惰性结算 / §5-7 唯一写入路径与原子性
- *   §15 物品域扩展（兰帖残页 `scroll_fragments` 上限 99 + 满 100 自动合成；兰帖批次 `scrolls` 恒永久；
+ *   §15 物品域扩展（兰帖残页 `scroll_fragments` 单格 999 片口径 + **手动合成**消耗 100 片；
+ *     兰帖批次 `scrolls` 恒永久；
  *     1 张 = 100 片 = 1 行囊格；分解 1 张返 99 碎片，避开「分解即合成」回环）
+ *
+ * **2026-09-26 Kevin 当面裁定（本域口径变更，逐条冻结）**：取消「残页满 100 自动合成」⇒ 全部合成
+ * 改为**用户手动**触发（`synthesizeScroll`，入口 = 行囊残页格属性提示层【合成】按钮，一次 1 张）；
+ * 残页**照收、不拒绝、不截断**（无上限校验）；`SCROLL_FRAGMENT_CAP` 语义降为**单格容纳上限 / 展示层口径**。
+ * 历史 `source: 'scroll_synth'` 批次与历史流水一律保留、不改写、不删（**存量不迁移**）。
  *
  * **已知限制（总监 2026-09-16 拍板：暂不改，部署前重构）**：资产集合当前为**全体用户共用单文档**
  * `_id='global'`，并发保护**仅进程内锁**（下方 `assetsLocks`，同实例内已串行化）——**云端多实例并发会丢更新 / 双花**。
  * 部署前**必须**重构为「**每手机号一文档 + version 乐观锁（CAS）重试**」，本限制登记见 docs/PENDING_DEPLOY.md。
  *
  * 分层（纯函数与 IO 分离，便于单测）：
- *   - 纯函数（只操作传入的 user 记录，无 IO）：sweep / addFragments / addScrollFragments / decomposeScroll /
- *     chargeLots / addLot / sumLots / recordTx / nextLotId / beijingDate / summarize / expiringItems
+ *   - 纯函数（只操作传入的 user 记录，无 IO）：sweep / addFragments / addScrollFragments / synthesizeScroll /
+ *     decomposeScroll / chargeLots / addLot / sumLots / recordTx / nextLotId / beijingDate / summarize / expiringItems
  *   - IO 层：withAssets（colGet → mutator → colSet 整体回写；**同一手机号串行化**，模式同 store.js 的
  *     treeWriteLocks）/ mutateAssets / getAssets
  *
@@ -34,9 +40,20 @@ export const FRAGMENT_PER_SEED = 10;
 
 // ---- §15-2 / §15-3 兰帖域常量（R-2 / R-6 / R-7 / R-9；既有常量取值一律不动） ----
 
-/** 兰帖残页上限（§15-2 · R-2） */
-export const SCROLL_FRAGMENT_CAP = 99;
-/** 兰帖残页自动合成阈值：满此数立即合成 1 张成品兰帖、碎片取余（§15-2 / §15-4 · R-2） */
+/**
+ * 兰帖残页**单格容纳上限**（展示层口径 · 2026-09-26 Kevin 裁定 `99` → `999`）。
+ *
+ * 语义 = **行囊里每 999 片残页占 1 格**（超出部分另起一格，占格数 = `ceil(片数 / 本值)`；
+ * 整格角标 = 999、余数格角标 = 余数），**不是拒绝阈值** —— 残页照收、不拒绝、不截断，
+ * 后端（`addScrollFragments` / `synthesizeScroll` / `grantAssets`）一律不做上限校验。
+ */
+export const SCROLL_FRAGMENT_CAP = 999;
+/**
+ * 兰帖残页**手动合成门槛** = 合成 1 张成品兰帖所需片数（取值仍是 `100`，未变）。
+ *
+ * 2026-09-26 裁定：**取消满 100 自动合成** ⇒ 本常量不再是「自动触发阈值」，而是
+ * 「满此数**可手动**合成 1 张」的门槛（一次恰好消耗 100 片、余数保留）。
+ */
 export const SCROLL_FRAGMENT_SYNTH_THRESHOLD = 100;
 /** 每张成品兰帖的片数（= 1 个行囊格；换算 `floor(Σqty / 本值)`，§15-3 / §15-6② · R-6 / R-11） */
 export const SCROLL_PIECES_PER_SCROLL = 100;
@@ -44,7 +61,7 @@ export const SCROLL_PIECES_PER_SCROLL = 100;
 export const SCROLL_DECOMPOSE_REFUND = 99;
 /** 好友奖励产出（竹片 / 兰帖的批次来源新增取值，R-1 / R-3；登记要求见 §15-5②③） */
 export const SOURCE_FRIEND_REWARD = 'friend_reward';
-/** 兰帖批次来源：兰帖残页满 100 自动合成（§15-5③；与 `Tx.type` 的 `scroll_synth` 同字面） */
+/** 兰帖批次来源：兰帖残页**手动**合成（2026-09-26 裁定；与 `Tx.type` 的 `scroll_synth` 同字面，存量批次沿用） */
 export const SCROLL_SOURCE_SYNTH = 'scroll_synth';
 
 /** GET /assets/expiring 默认阈值天数（§11-11） */
@@ -85,7 +102,7 @@ export const TX_TYPES = [
   'market_buy',
   'official_buy',
   // P4（docs/economy.spec.md §15-5⑥ · R-10）追加兰帖物品域取值（命名不与既有 19 项重名）：
-  //   `scroll_synth`（兰帖残页满 100 自动合成 1 张成品兰帖）、
+  //   `scroll_synth`（兰帖残页手动合成 1 张成品兰帖；2026-09-26 前为「满 100 自动合成」，字面沿用）、
   //   `scroll_decompose`（兰帖分解返还 99 碎片）。冲正仍只用既有 `fee_refund`。
   'scroll_synth',
   'scroll_decompose',
@@ -285,8 +302,8 @@ export function recordTx(user, tx, now = new Date()) {
  *   `delta` **绝不出现 `null` / `NaN`**；
  * - 兰帖（`scrolls`，§15-3 / R-8）：**无期限 —— 无论 `now` 推多远一律不剔除**（`expires_at` 恒 `null`）；
  *   仅做**脏数据收口**（`qty` 非法 / `NaN` / 负数 / 已扣尽一律归 0 就地剔除，**不写流水**）；
- * - 收口不变量 `0 ≤ fragments ≤ 9` 与 `0 ≤ scroll_fragments ≤ 99`（脏数据里越界的碎片顺带立即合成，
- *   不落中间态）。
+ * - 收口不变量 `0 ≤ fragments ≤ 9`（脏数据里越界的碎片顺带立即合成，不落中间态）；
+ *   兰帖残页（`scroll_fragments`）**无上限、不自动合成**（2026-09-26 裁定）⇒ 只做非负整数收口。
  * @returns {Array<{asset:string, lot_id:string, qty:number, expires_at:string}>} 被剔除的批次
  */
 export function sweep(user, now = new Date()) {
@@ -348,9 +365,9 @@ export function sweep(user, now = new Date()) {
   // 下面的自动合成分支（那里以该值为循环界）
   user.fragments = toNonNegInt(user.fragments);
   if (user.fragments >= FRAGMENT_SYNTH_THRESHOLD) addFragments(user, 0, now);
-  // 兰帖残页同口径收口（R-2 / R-13）：0 ≤ scroll_fragments ≤ 99，越界顺带立即合成，不落中间态
+  // 兰帖残页收口（判据 C / 2026-09-26 裁定）：只做非负整数收口 —— **不自动合成、无上限、不截断**
+  // （脏数据里的残页原样留在标量字段里，等用户手动合成；历史流水 / 批次一律不动）
   user.scroll_fragments = toNonNegInt(user.scroll_fragments);
-  if (user.scroll_fragments >= SCROLL_FRAGMENT_SYNTH_THRESHOLD) addScrollFragments(user, 0, now);
   return removed;
 }
 
@@ -388,48 +405,79 @@ export function addFragments(user, n, now = new Date()) {
   return { fragments: user.fragments, synthesized: seed_lots.length, seed_lots };
 }
 
-// ---- §15-2 / §15-4 兰帖残页累加 · 自动合成 · 分解（R-2 / R-6 / R-7 / R-13） ----
+// ---- §15-2 / §15-4 兰帖残页累加 · 手动合成 · 分解（R-6 / R-7；合成口径 2026-09-26 裁定改为手动） ----
 
 /**
- * 兰帖残页累加 + 满 100 立即合成（R-2 / R-13，与 `addFragments` 逐条同构）：
- * `scroll_fragments += n` → 每满 100 立即合成 1 张成品兰帖（每张一个新 ScrollLot：100 片、
- * `expires_at = null`（永久，**显式传入**）、`source = 'scroll_synth'`），碎片取余；合成写一条
- * `scroll_synth` 流水（`delta` 含 `scroll_fragments` 与 `scrolls` **两个键**的变动量）。
- * 累加与合成在同一份 user 记录内**一次完成** —— **不存在「碎片 100 片、兰帖未生成」的中间态**。
+ * 兰帖残页累加（**纯累加，不自动合成** —— 2026-09-26 Kevin 当面裁定）：
+ * `scroll_fragments += n`，**照收、不拒绝、不截断、不设上限**。
+ *
+ * 「满 100 自动合成 1 张」的分支已按 2026-09-26 裁定**取消**，合成一律改由用户**手动**触发
+ * （唯一实现 = 下方 `synthesizeScroll`，入口 = 行囊残页格属性提示层【合成】按钮，一次 1 张）。
+ *
+ * 兼容登记：本函数**保留既有导出名与调用签名**（`invite.js` / `friend-ops.js` / `economy-ops.js`
+ * 仍照原样调用、传 `now`）；返回对象形状不变，但 `synthesized` 恒 `0`、`scroll_lots` 恒 `[]`。
+ * 历史 `source: 'scroll_synth'` 批次与历史流水**一律保留**（存量不迁移、不改写、不删）。
  * @returns {{scroll_fragments:number, synthesized:number, scroll_lots:object[]}}
  */
 export function addScrollFragments(user, n, now = new Date()) {
+  // `now`（第三参）为**签名保留**：既有调用方一律仍传它（本函数已无任何批次 / 流水写入，不读该值）
+  void now;
   const add = toNonNegInt(n);
   user.scroll_fragments = toNonNegInt(user.scroll_fragments) + add;
+  // `synthesized` / `scroll_lots` 为**兼容保留键**：自动合成已于 2026-09-26 裁定取消 ⇒ 恒 0 / 恒空。
+  return { scroll_fragments: user.scroll_fragments, synthesized: 0, scroll_lots: [] };
+}
+
+/**
+ * 兰帖残页**手动合成**（2026-09-26 Kevin 裁定）—— 与 `decomposeScroll` 对偶：一次 `count` 张，
+ * 每张**恰好消耗** `SCROLL_PIECES_PER_SCROLL`（100）片残页，**余数原样保留**（绝不出小数张）。
+ *
+ * - `count` 缺省 `1`；**只接受正整数**（`toNonNegInt` 收口后 ≤ 0 ⇒ 409，不产生任何写入）；
+ * - 不足 `count × 100` 片 ⇒ **409 整单拒绝**（复用 `assetInsufficient`，`unit = 'scroll_fragments'`，
+ *   文案「资产不足，需 N 片兰帖残页，当前 M 片」）—— **零写入**（标量、批次、流水一律不动）；
+ * - 成功：`scroll_fragments -= count × 100`；每张一个新 ScrollLot（100 片、`expires_at = null` 永久
+ *   **显式传入**、`source = 'scroll_synth'`）；写**一条** `Tx{type:'scroll_synth'}` 流水（`delta` 含
+ *   `scroll_fragments` 与 `scrolls` 两个键、`desc` 逐字见下）；
+ * - **免费**：不扣竹片、不走 `edit_fee`、不写 `edit_fee` 流水；不动 `jiazu_market` / 挂单 / 注销路径。
+ * @returns {{synthesized:number, pieces:number, scroll_fragments:number, scroll_lots:object[]}}
+ */
+export function synthesizeScroll(user, count = 1, now = new Date()) {
+  const n = toNonNegInt(count); // 外部值收口（判据 C）：非有限 / 非法 / ≤ 0 一律归 0
+  const pieces = n * SCROLL_PIECES_PER_SCROLL;
+  const current = toNonNegInt(user.scroll_fragments);
+  if (n <= 0 || current < pieces) {
+    // 409 整单拒绝：**一字节不写**（标量 / 批次 / 流水全不动）
+    const e = assetInsufficient(pieces, current, 'scroll_fragment');
+    // ⚠️ 文案 / 机器可读 `unit` 必须**显式覆写**（同 `economy-ops.js` 的 `scrollFragmentsInsufficient` 手法）：
+    //   账本 `ASSET_LABEL` / `ASSET_UNIT` 只登记 `seed` / `bamboo` / `jade` / `scroll` 四键（按片计量的内部口径，
+    //   不得改）⇒ 直接透出 `'scroll_fragment'` 会命中 `assetInsufficient` 的 seed 兜底，报成
+    //   「需 N颗石榴籽」这种**答非所问**的资产名。`unit` 取复数键 `scroll_fragments` —— 与
+    //   `economy-ops.js` 落下的同名字段、与前端 `SHORTAGE_UNIT_BY_KEY`（量词「片」）**同字面**。
+    e.message = `资产不足，需 ${pieces} 片兰帖残页，当前 ${current} 片`;
+    e.unit = 'scroll_fragments';
+    throw e;
+  }
+  user.scroll_fragments = current - pieces;
   const scroll_lots = [];
-  // **一次性结算**（同 addFragments，Zang 裁定 (b)）：times = floor(碎片 / 100) 先算后落，循环次数由有界整数
-  // 决定；不再 `while (user.scroll_fragments >= 阈值)` 重读自己（Infinity 时该条件恒真 ⇒ 无界循环）。
-  const times = Math.floor(user.scroll_fragments / SCROLL_FRAGMENT_SYNTH_THRESHOLD);
-  if (times > 0) {
-    user.scroll_fragments -= times * SCROLL_FRAGMENT_SYNTH_THRESHOLD;
-    for (let i = 0; i < times; i += 1) {
-      scroll_lots.push(
-        addLot(user, 'scroll', SCROLL_PIECES_PER_SCROLL, {
-          source: SCROLL_SOURCE_SYNTH,
-          expires_at: null, // §15-3：永久必须显式传入，绝无「默认永久」
-          now,
-        }),
-      );
-    }
-    recordTx(
-      user,
-      {
-        type: 'scroll_synth',
-        delta: {
-          scroll_fragments: -scroll_lots.length * SCROLL_FRAGMENT_SYNTH_THRESHOLD,
-          scrolls: scroll_lots.length * SCROLL_PIECES_PER_SCROLL,
-        },
-        desc: `兰帖残页满 ${SCROLL_FRAGMENT_SYNTH_THRESHOLD} 自动合成 ${scroll_lots.length} 张兰帖`,
-      },
-      now,
+  for (let i = 0; i < n; i += 1) {
+    scroll_lots.push(
+      addLot(user, 'scroll', SCROLL_PIECES_PER_SCROLL, {
+        source: SCROLL_SOURCE_SYNTH,
+        expires_at: null, // §15-3：永久必须显式传入，绝无「默认永久」
+        now,
+      }),
     );
   }
-  return { scroll_fragments: user.scroll_fragments, synthesized: scroll_lots.length, scroll_lots };
+  recordTx(
+    user,
+    {
+      type: 'scroll_synth',
+      delta: { scroll_fragments: -pieces, scrolls: pieces },
+      desc: `手动合成 ${n} 张${ASSET_LABEL.scroll}（消耗 ${pieces} 片兰帖残页）`,
+    },
+    now,
+  );
+  return { synthesized: n, pieces, scroll_fragments: user.scroll_fragments, scroll_lots };
 }
 
 /**
@@ -437,9 +485,13 @@ export function addScrollFragments(user, n, now = new Date()) {
  * - **为什么返 99 而不是 100（R-7 理由）**：返还 100 片会在返还瞬间触发「满 100 自动合成」⇒ 分解成为
  *   **空操作**（分完又合回去）；返 99 片即可避开「分解即合成」回环。**与玉的免费无损耗口径并存、不互套**
  *   （玉产出籽批次不触发自动合成，兰帖产出碎片标量会触发）。
+ *   ⚠️ 口径沿革（2026-09-26 Kevin 裁定）：残页**自动合成已取消**、改为手动合成（`synthesizeScroll`）
+ *   ⇒ 「返 100 即空操作」的旧机理已不成立；**本函数与 `SCROLL_DECOMPOSE_REFUND = 99` 的取值一字不改**
+ *   （留 1 片损耗的既有裁定照旧生效，避免改动存量产出比例）。
  * - 唯一删除条件 = **数量不足**：`Σ scrolls[].qty < n × 100` → **409 整单拒绝**（一片不扣、不返还、无流水）。
  * - 扣减走 `chargeLots`（`qty=0` 的批次留待下一次 `sweep` 移除，§5-2-3）；兰帖批次恒永久 → 排序全为 `null`。
  * @returns {{decomposed:number, pieces:number, refunded:number, scroll_fragments:number, synthesized:number, taken:object[]}}
+ *   （`synthesized` 恒 `0` —— 自动合成已取消，仅作兼容保留键）
  */
 export function decomposeScroll(user, n = 1, now = new Date()) {
   const count = toNonNegInt(n); // 外部值收口（判据 C）：非有限 / 非法一律归 0
@@ -457,7 +509,7 @@ export function decomposeScroll(user, n = 1, now = new Date()) {
       now,
     );
   }
-  const after = addScrollFragments(user, refunded, now);
+  const after = addScrollFragments(user, refunded, now); // 纯累加（不再自动合成 ⇒ `synthesized` 恒 0）
   return {
     decomposed: count,
     pieces,

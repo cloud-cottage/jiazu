@@ -1,18 +1,20 @@
 /**
  * 兰帖物品域单测（P4 第一段）— lib/economy-ledger.js 的兰帖残页 + 兰帖（纯模块，不含路由）
  * 规格：docs/economy.spec.md §15-1–§15-6（物品域扩展）/ §4-1 存储契约 / §4-6 枚举 /
- *   §5-1 碎片自动合成（兰帖同构）/ §5-2 FIFO + 整单拒绝 / §5-4 惰性结算 / §5-7 唯一写入路径；
+ *   §5-1 籽域碎片自动合成（**仅籽域**；兰帖残页 2026-09-26 Kevin 裁定改为**手动**合成）/
+ *   §5-2 FIFO + 整单拒绝 / §5-4 惰性结算 / §5-7 唯一写入路径；
  *   冻结口径 R-1 / R-2 / R-3 / R-6 / R-7 / R-8 / R-9 / R-10 / R-11 / R-12 / R-13（Zang 裁定 v2，Kevin 已裁 R-6）。
  *
  * 覆盖：
- *  ① 新增常量取值（99 / 100 / 100 / 99）与**既有常量一字未改**（365 / 365 / 9 / 10 / 10）
- *  ② 兰帖残页 99 不合成、99 + 1 → **立即合成 1 张（100 片）+ 碎片归零**，无「碎片 100 待合成」中间态
- *  ③ 余数分支：+150 → 1 枚 + 余 50；99 + 150 → 2 枚 + 余 49；脏数据 250 → 2 枚 + 余 50（sweep 收口）
- *  ④ 合成流水 `scroll_synth`：`delta` 同时含 `scroll_fragments` 与 `scrolls` 两个键、中文 desc
+ *  ① 新增常量取值（999 / 100 / 100 / 99）与**既有常量一字未改**（365 / 365 / 9 / 10 / 10）
+ *  ② 兰帖残页**纯累加**：99 / 99 + 1 = 100 **一律不合成**（无批次、无流水、无「满 100 自动」一说）
+ *  ③ 手动合成门槛（`synthesizeScroll`）：250 → 合 1 张 → 残页 150；恰好 100 → 合后残页 0；
+ *     99 → 409 整单拒绝（**零写入**，逐字节比对）
+ *  ④ 合成流水 `scroll_synth`（手动路径专有）：`delta` 同时含 `scroll_fragments` 与 `scrolls` 两个键、中文 desc
  *  ⑤ 兰帖永久：`sweep` 在任意远未来**都不剔除**兰帖批次、不写 expire 流水（R-8）
  *  ⑥ 兰帖脏数据收口：qty 非法 / NaN / 负数 / 0 / 空对象 / null → 归 0 就地剔除，不写流水，无 null / NaN
  *  ⑦ 批次构造纪律（R-3）：`expires_at` 缺省 → 抛错；传有期限值 → 抛错；显式 `null` → 永久
- *  ⑧ 分解正对照（R-7）：1 张 → 返 99 碎片，**不会立即回环成新的成品兰帖**；多张分解的超阈值分支正确回环
+ *  ⑧ 分解正对照（R-7）：1 张 → 返 99 碎片，**不再回环**（残页纯累加）；多张分解同样不回环
  *  ⑨ 分解流水 `scroll_decompose`（一条）+ 不足 → 409 整单拒绝（一片不扣 / 不返还 / 无流水）
  *  ⑩ summarize 新增 6 个出参逐字与取值 + **既有出参键集与取值一字未改**（含玉归属双口径）
  *  ⑪ R-1：源码中**不存在** `bamboo_fragments`；`Tx.type` 白名单 19 项既有 + 2 项新增，未知类型仍抛错
@@ -88,9 +90,9 @@ const hasBadNumber = (v) =>
 
 // ==================== ① 常量 ====================
 
-test('常量：兰帖域四项取值（99 / 100 / 100 / 99）与既有常量一字未改', () => {
-  assert.equal(el.SCROLL_FRAGMENT_CAP, 99, '兰帖残页上限 = 99');
-  assert.equal(el.SCROLL_FRAGMENT_SYNTH_THRESHOLD, 100, '兰帖残页合成阈值 = 100');
+test('常量：兰帖域四项取值（999 / 100 / 100 / 99）与既有常量一字未改', () => {
+  assert.equal(el.SCROLL_FRAGMENT_CAP, 999, '兰帖残页**单格容纳上限** = 999（展示层口径，非拒绝阈值）');
+  assert.equal(el.SCROLL_FRAGMENT_SYNTH_THRESHOLD, 100, '兰帖残页**手动合成门槛** = 100（不再是自动触发阈值）');
   assert.equal(el.SCROLL_PIECES_PER_SCROLL, 100, '每张成品兰帖 = 100 片');
   assert.equal(el.SCROLL_DECOMPOSE_REFUND, 99, '分解返还 = 99 碎片（留 1 片损耗）');
   assert.equal(el.SOURCE_FRIEND_REWARD, 'friend_reward', '好友奖励来源字面');
@@ -105,9 +107,9 @@ test('常量：兰帖域四项取值（99 / 100 / 100 / 99）与既有常量一�
   assert.equal(el.EXPIRING_DEFAULT_DAYS, 30);
 });
 
-// ==================== ②③④ 碎片累加 + 自动合成 ====================
+// ==================== ②③④ 碎片纯累加 + 手动合成 ====================
 
-test('兰帖残页：99 不合成；99 + 1 → 立即合成 1 张（100 片）+ 碎片归零（无中间态）', () => {
+test('兰帖残页纯累加：99 / 99 + 1 = 100 片**一律不自动合成**（无批次、无流水）', () => {
   const u = newUser();
   assert.equal(el.addScrollFragments(u, 99, T0).synthesized, 0, '99 不合成');
   assert.equal(u.scroll_fragments, 99);
@@ -115,54 +117,153 @@ test('兰帖残页：99 不合成；99 + 1 → 立即合成 1 张（100 片）+ 
   assert.equal(txsOf(u, 'scroll_synth').length, 0, '未合成 → 无流水');
 
   const r = el.addScrollFragments(u, 1, T0);
-  assert.equal(r.synthesized, 1, '99 + 1 立即合成 1 枚');
-  assert.equal(r.scroll_fragments, 0, '碎片取余 = 0');
-  assert.equal(u.scroll_fragments, 0, '同一份 user 记录内已归零（不存在「碎片 100 待合成」中间态）');
-  assert.equal(u.scrolls.length, 1, '同一写入内兰帖已生成');
-  assert.equal(el.sumLots(u.scrolls), 100, '1 张 = 100 片');
-  assert.equal(u.scrolls[0].qty, 100);
-  assert.equal(u.scrolls[0].expires_at, null, '恒永久');
-  assert.equal(u.scrolls[0].source, el.SCROLL_SOURCE_SYNTH);
-  assert.ok(/^sc_/.test(u.scrolls[0].id), `兰帖批次 id 前缀：${u.scrolls[0].id}`);
-  assert.ok(u.scroll_fragments < el.SCROLL_FRAGMENT_SYNTH_THRESHOLD, '不变量 0 ≤ scroll_fragments < 100');
+  assert.equal(r.synthesized, 0, '2026-09-26 裁定：满 100 也不自动合成');
+  assert.deepEqual(r.scroll_lots, [], '`scroll_lots` 恒空（兼容保留键）');
+  assert.equal(r.scroll_fragments, 100, '残页原样累加到 100 片');
+  assert.equal(u.scroll_fragments, 100, '同一份 user 记录内即为 100 片（无任何中间态）');
+  assert.equal(u.scrolls.length, 0, '不产生任何成品兰帖批次');
+  assert.equal(el.sumLots(u.scrolls), 0);
+  assert.equal(txsOf(u, 'scroll_synth').length, 0, '不得写任何合成流水');
+  assert.equal(u.txs.length, 0, '整条链路零流水');
 });
 
-test('兰帖残页余数分支：+150 → 1 张 + 余 50；99 + 150 → 2 张 + 余 49', () => {
+test('兰帖残页余数分支：+150 → 150 片（0 张）；99 + 150 → 249 片（0 张）；脏数据 250 经 sweep 也不合成', () => {
   const a = newUser();
   const ra = el.addScrollFragments(a, 150, T0);
-  assert.equal(ra.synthesized, 1);
-  assert.equal(a.scroll_fragments, 50);
-  assert.equal(el.sumLots(a.scrolls), 100);
-  assert.equal(ra.scroll_lots.length, 1);
+  assert.equal(ra.synthesized, 0, '150 片不合成');
+  assert.equal(a.scroll_fragments, 150);
+  assert.equal(el.sumLots(a.scrolls), 0);
+  assert.deepEqual(ra.scroll_lots, []);
 
   const b = newUser();
   el.addScrollFragments(b, 99, T0);
   const rb = el.addScrollFragments(b, 150, T0); // 99 + 150 = 249
-  assert.equal(rb.synthesized, 2, '249 → 合成 2 枚');
-  assert.equal(b.scroll_fragments, 49, '余数 49');
-  assert.equal(el.sumLots(b.scrolls), 200);
-  assert.equal(b.scrolls.length, 2, '每张一个新批次');
+  assert.equal(rb.synthesized, 0, '249 片不合成');
+  assert.equal(b.scroll_fragments, 249);
+  assert.equal(el.sumLots(b.scrolls), 0);
+  assert.equal(b.scrolls.length, 0, '不产生任何批次（与「每张一个新批次」只在手动合成时成立）');
 
   const c = newUser();
-  c.scroll_fragments = 250; // 脏数据越界 → sweep 收口立即合成，不落中间态
+  c.scroll_fragments = 250; // 脏数据（旧口径下会被 sweep 顺带合成，本口径下不再）
   el.sweep(c, T0);
-  assert.equal(c.scroll_fragments, 50);
-  assert.equal(el.sumLots(c.scrolls), 200);
-  assert.equal(txsOf(c, 'scroll_synth').length, 1, '一次 sweep 只写一条合成流水');
+  assert.equal(c.scroll_fragments, 250, 'sweep 只做非负整数收口，不自动合成、不截断');
+  assert.equal(c.scrolls.length, 0);
+  assert.equal(txsOf(c, 'scroll_synth').length, 0, 'sweep 不得写合成流水');
 });
 
-test('合成流水 scroll_synth：一条，delta 同时含 scroll_fragments 与 scrolls，中文 desc', () => {
+test('手动合成流水 scroll_synth：一条，delta 逐字 {scroll_fragments:-200, scrolls:200}，desc 逐字', () => {
   const u = newUser();
-  el.addScrollFragments(u, 249, T0);
+  el.addScrollFragments(u, 350, T0);
+  const r = el.synthesizeScroll(u, 2, T0);
+  assert.equal(r.synthesized, 2, '一次 2 张');
+  assert.equal(r.pieces, 200, '消耗 2 × 100 = 200 片');
+  assert.equal(r.scroll_fragments, 150, '350 − 200 = 150（余数原样保留）');
+  assert.equal(r.scroll_lots.length, 2, '每张一个新批次');
   const synths = txsOf(u, 'scroll_synth');
-  assert.equal(synths.length, 1, '合成与碎片累加同一写入、只写一条流水');
+  assert.equal(synths.length, 1, '一条流水（不是每张一条）');
   const t = synths[0];
   assert.deepEqual(Object.keys(t.delta).sort(), ['scroll_fragments', 'scrolls'], 'delta 恰含两个键');
-  assert.equal(t.delta.scroll_fragments, -200, '碎片按张数扣减');
-  assert.equal(t.delta.scrolls, 200, '兰帖按片入账');
+  assert.deepEqual(t.delta, { scroll_fragments: -200, scrolls: 200 }, 'delta 逐字（片）');
   assert.equal(t.ts, T0.toISOString());
-  assert.ok(/兰帖残页满 100 自动合成 2 张兰帖/.test(t.desc), `desc 中文说明：${t.desc}`);
+  assert.equal(t.desc, '手动合成 2 张兰帖（消耗 200 片兰帖残页）', `desc 逐字：${t.desc}`);
   assert.ok(/^tx_/.test(t.id));
+  for (const lot of r.scroll_lots) {
+    assert.equal(lot.qty, 100, '单张 = 100 片');
+    assert.equal(lot.expires_at, null, '恒永久（显式 null）');
+    assert.equal(lot.source, el.SCROLL_SOURCE_SYNTH);
+  }
+});
+
+test('手动合成门槛边界：99 ⇒ 409 零写入；恰好 100 ⇒ 合后残页 0；250 ⇒ 合 1 张后残页 150', () => {
+  // ① 99 片 ⇒ 409 整单拒绝（零写入：整份记录逐字节比对）
+  const a = newUser();
+  el.addScrollFragments(a, 99, T0);
+  const snap = JSON.stringify(a);
+  let err;
+  try {
+    el.synthesizeScroll(a, 1, T0);
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, '99 片不足 1 张必须抛错');
+  assert.equal(err.status, 409);
+  assert.equal(err.code, el.ASSET_INSUFFICIENT);
+  assert.equal(err.need, 100, 'need = 需求**片**数（1 张 = 100 片）');
+  assert.equal(err.current, 99, 'current = 当前**片**数');
+  assert.equal(err.unit, 'scroll_fragments', '机器可读 unit = 复数键（与前端 SHORTAGE_UNIT_BY_KEY 同字面）');
+  assert.equal(err.message, '资产不足，需 100 片兰帖残页，当前 99 片', '文案逐字（量词按兰帖残页，不得退化成石榴籽）');
+  assert.equal(JSON.stringify(a), snap, '零写入：整份记录（标量 / 批次 / 流水）逐字节未变');
+
+  // ② 恰好 100 片 ⇒ 合 1 张、残页归 0
+  const b = newUser();
+  el.addScrollFragments(b, 100, T0);
+  const r1 = el.synthesizeScroll(b, 1, T0);
+  assert.equal(r1.synthesized, 1);
+  assert.equal(r1.pieces, 100);
+  assert.equal(r1.scroll_fragments, 0, '恰好 100 ⇒ 合后残页 0（边界用法）');
+  assert.equal(b.scroll_fragments, 0);
+  assert.equal(el.sumLots(b.scrolls), 100);
+  assert.equal(b.scrolls.length, 1);
+
+  // ③ 250 片 ⇒ 手动合 1 张 ⇒ 残页 150 / 兰帖 +100 / 流水逐字
+  const c = newUser();
+  el.addScrollFragments(c, 250, T0);
+  const beforePieces = el.sumLots(c.scrolls);
+  const r2 = el.synthesizeScroll(c, 1, T0);
+  assert.equal(r2.synthesized, 1);
+  assert.equal(c.scroll_fragments, 150, '250 − 100 = 150');
+  assert.equal(el.sumLots(c.scrolls), beforePieces + 100, '成品兰帖 +100 片');
+  assert.equal(c.scrolls.length, 1);
+  const t2 = txsOf(c, 'scroll_synth')[0];
+  assert.deepEqual(t2.delta, { scroll_fragments: -100, scrolls: 100 }, 'delta 逐字（-100 / +100）');
+  assert.equal(t2.desc, '手动合成 1 张兰帖（消耗 100 片兰帖残页）', 'desc 逐字');
+
+  // ④ count 收口后 ≤ 0（0 / 负数 / NaN / 非法字符串 / null）⇒ 409 零写入
+  //    （路由层另有 400 INVALID_COUNT 前置：非正整数一律先拦；此处验账本层收口后绝不落任何写入）
+  const d = newUser();
+  d.scroll_fragments = 500; // 残页够合 5 张 ⇒ 只有「收口后为 0」才会 409（可证非误判）
+  const dSnap = JSON.stringify(d);
+  for (const bad of [0, -1, -100, NaN, 'abc', null]) {
+    assert.throws(
+      () => el.synthesizeScroll(d, bad, T0),
+      (e) => e.status === 409 && e.code === el.ASSET_INSUFFICIENT,
+      `count=${String(bad)} 必须 409 整单拒绝`,
+    );
+    assert.equal(JSON.stringify(d), dSnap, `count=${String(bad)} 零写入`);
+  }
+
+  // ⑤ count 缺省 = 1（与路由层同口径）：显式传 undefined 走默认参数 ⇒ 合 1 张，不是错误
+  const e1 = newUser();
+  el.addScrollFragments(e1, 100, T0);
+  const rDef = el.synthesizeScroll(e1, undefined, T0);
+  assert.equal(rDef.synthesized, 1, 'count 缺省 ⇒ 恰好 1 张');
+  assert.equal(e1.scroll_fragments, 0);
+
+  // ⑥ 非整数 1.5 直调账本 ⇒ 收口向下取整为 1 张（路由层 400 INVALID_COUNT 已前置拦，仅直调可达；
+  //    此为 `toNonNegInt` 收口口径的既有实现，本单不改口径，故按实现断言）
+  const f1 = newUser();
+  el.addScrollFragments(f1, 250, T0);
+  const rFloor = el.synthesizeScroll(f1, 1.5, T0);
+  assert.equal(rFloor.synthesized, 1, 'toNonNegInt(1.5) = 1（向下取整）');
+  assert.equal(rFloor.pieces, 100);
+  assert.equal(f1.scroll_fragments, 150, '250 − 100 = 150');
+});
+
+test('存量兼容（存量不迁移）：历史 source=\'scroll_synth\' 批次仍可被 chargeLots 按片扣减', () => {
+  const u = newUser();
+  // 手搓一条「历史自动合成」形态的批次（恒永久 + source='scroll_synth'），不重跑合成
+  const legacy = el.addLot(u, 'scroll', 300, { expires_at: null, source: el.SCROLL_SOURCE_SYNTH, now: T0 });
+  assert.equal(legacy.source, 'scroll_synth');
+  const charged = el.chargeLots(u.scrolls, 100, 'scroll');
+  assert.equal(charged.ok, true);
+  assert.deepEqual(charged.taken, [{ id: legacy.id, qty: 100, expires_at: null }], '存量批次照常参与 FIFO 扣减');
+  assert.equal(el.sumLots(u.scrolls), 200, '扣减就地生效（本模块口径：qty=0 留待 sweep）');
+  assert.equal(u.scroll_fragments, 0, '扣减不产生残页');
+  // 存量批次与新手动合成批次同形同源字面（下游按 source 判定者不受影响）
+  const freshUser = newUser();
+  el.addScrollFragments(freshUser, 100, T0); // 手动合成前置：恰好 100 片残页
+  const fresh = el.synthesizeScroll(freshUser, 1, T0);
+  assert.equal(u.scrolls.find((l) => l.id === legacy.id).source, fresh.scroll_lots[0].source);
 });
 
 // ==================== ⑤ 永久性（sweep 不剔除） ====================
@@ -258,41 +359,42 @@ test('兰帖批次：expires_at 必须显式传 null —— 缺省抛错、传�
 
 // ==================== ⑧⑨ 分解 ====================
 
-test('分解正对照（R-7）：1 张 → 返 99 碎片，且不会立即回环成新的成品兰帖', () => {
+test('分解正对照（R-7）：1 张 → 返 99 片残页，且**不回环**（残页纯累加）', () => {
   const u = newUser();
-  el.addScrollFragments(u, 100, T0); // 1 张（100 片）+ 碎片 0
+  mkScroll(u, 100); // 前置 1 张（100 片）；本口径下残页累加不再产出批次 ⇒ 批次用构造器造
   assert.equal(el.sumLots(u.scrolls), 100);
+  assert.equal(u.scroll_fragments, 0, '前置：残页为 0');
 
   const r = el.decomposeScroll(u, 1, T0);
   assert.equal(r.decomposed, 1);
   assert.equal(r.pieces, 100);
   assert.equal(r.refunded, 99, '返还 99（留 1 片损耗）');
-  assert.equal(r.synthesized, 0, '**不**立即回环成新枚');
+  assert.equal(r.synthesized, 0, '**不**回环成新张（兼容保留键恒 0）');
   assert.equal(el.sumLots(u.scrolls), 0, '兰帖已扣尽（qty=0 批次留待 sweep）');
-  assert.equal(u.scroll_fragments, 99, '碎片态 99，未满 100');
-  assert.ok(u.scroll_fragments < el.SCROLL_FRAGMENT_SYNTH_THRESHOLD);
+  assert.equal(u.scroll_fragments, 99, '残页态 99（不足 100，须用户手动合成）');
   assert.equal(r.taken.length, 1);
   assert.equal(r.taken[0].qty, 100);
 
   el.sweep(u, T0);
   assert.equal(u.scrolls.length, 0, 'qty=0 批次由 sweep 移除（§5-2-3）');
-  assert.equal(u.scroll_fragments, 99, 'sweep 不改变碎片');
+  assert.equal(u.scroll_fragments, 99, 'sweep 不改变残页（也不自动合成）');
 });
 
-test('分解多张：超阈值的返还按同一写入自动合成（回环仅发生在碎片确实满 100 时）', () => {
+test('分解多张：返全额留在残页标量（198 片不回环），只剩未分解的成品兰帖', () => {
   const u = newUser();
   mkScroll(u, 300); // 3 张
   const r = el.decomposeScroll(u, 2, T0); // 200 片 → 返 198
   assert.equal(r.refunded, 198);
-  assert.equal(r.synthesized, 1, '198 满 100 → 现场合成 1 枚');
-  assert.equal(u.scroll_fragments, 98);
-  assert.equal(el.sumLots(u.scrolls), 200, '剩 100 片 + 新合成 100 片');
-  assert.equal(u.scrolls.length, 2);
+  assert.equal(r.synthesized, 0, '198 片不再自动合成（2026-09-26 裁定取消自动合成）');
+  assert.equal(u.scroll_fragments, 198, '返还全额留在残页标量');
+  assert.equal(el.sumLots(u.scrolls), 100, '只剩未分解的 1 张');
+  assert.equal(u.scrolls.length, 1, '不新增任何批次');
+  assert.equal(txsOf(u, 'scroll_synth').length, 0, '分解路径零合成流水');
 });
 
-test('分解流水 scroll_decompose：合成 / 分解各写一条对应流水；不足 → 409 整单拒绝', () => {
+test('分解流水 scroll_decompose：分解写一条对应流水；不足 → 409 整单拒绝', () => {
   const u = newUser();
-  el.addScrollFragments(u, 100, T0); // 写 1 条 scroll_synth
+  mkScroll(u, 100); // 1 张（残页另置 0）
   const before = JSON.stringify(u);
   const r = el.decomposeScroll(u, 1, T0);
   assert.equal(r.synthesized, 0);
@@ -301,12 +403,12 @@ test('分解流水 scroll_decompose：合成 / 分解各写一条对应流水；
   assert.deepEqual(dec[0].delta, { scroll_fragments: 99, scrolls: -100 });
   assert.equal(dec[0].ts, T0.toISOString());
   assert.ok(/分解 1 张兰帖（100 片），返还 99 片兰帖残页/.test(dec[0].desc), dec[0].desc);
-  assert.equal(txsOf(u, 'scroll_synth').length, 1, '合成流水仍是 1 条（无额外）');
+  assert.equal(txsOf(u, 'scroll_synth').length, 0, '分解路径不得写合成流水（合成只由手动路径产生）');
+  assert.notEqual(JSON.stringify(u), before, '（正对照：成功分解会改状态）');
 
   // 数量不足 → 409 整单拒绝（一片不扣、碎片不变、无流水）
   const v = newUser();
   mkScroll(v, 99);
-  el.addScrollFragments(v, 0, T0);
   const snap = JSON.stringify(v.scrolls);
   const fb = JSON.stringify(v.txs);
   let err;
@@ -325,7 +427,6 @@ test('分解流水 scroll_decompose：合成 / 分解各写一条对应流水；
   assert.equal(JSON.stringify(v.scrolls), snap, '一片未扣');
   assert.equal(JSON.stringify(v.txs), fb, '无流水');
   assert.equal(v.scroll_fragments, 0, '碎片不变');
-  assert.notEqual(JSON.stringify(v), before, '（正对照：成功分解会改状态）');
 });
 
 // ==================== ⑩ summarize 读口径 ====================
@@ -389,7 +490,7 @@ test('summarize：新增 6 个出参逐字与取值正确，既有出参键集�
 
   // 新增出参（R-11）
   assert.equal(s.scroll_fragments, 42);
-  assert.equal(s.scroll_fragment_cap, 99);
+  assert.equal(s.scroll_fragment_cap, 999, '兰帖残页**单格容纳上限** = 999（展示层口径，非拒绝阈值）');
   assert.equal(s.scrolls_total_pieces, 250);
   assert.equal(s.scrolls_item_count, 2, '向下取整整格数：floor(250 / 100)');
   assert.equal(s.scroll_lot_count, 2);
@@ -513,16 +614,14 @@ test('withAssets：兰帖写入只经 mutator，回读一致；mutator 抛错 �
     el.addScrollFragments(u, 249, T0);
     return el.summarize(u, T0);
   });
-  assert.equal(wrote.scroll_fragments, 49);
-  assert.equal(wrote.scrolls_total_pieces, 200);
+  assert.equal(wrote.scroll_fragments, 249, '残页纯累加（2026-09-26 裁定：不再顺带合成）');
+  assert.equal(wrote.scrolls_total_pieces, 0, '累加不产生任何成品兰帖');
 
   const back = await el.getAssets(PHONE);
-  assert.equal(back.scroll_fragments, 49, '回读一致');
-  assert.equal(el.sumLots(back.scrolls), 200);
-  assert.equal(back.scrolls.length, 2);
-  assert.equal(back.scrolls[0].expires_at, null);
-  assert.equal(back.scrolls[0].source, 'scroll_synth');
-  assert.equal(txsOf(back, 'scroll_synth').length, 1);
+  assert.equal(back.scroll_fragments, 249, '回读一致');
+  assert.equal(el.sumLots(back.scrolls), 0);
+  assert.equal(back.scrolls.length, 0, '无成品兰帖批次（合成只由手动路径产生）');
+  assert.equal(txsOf(back, 'scroll_synth').length, 0, '纯累加不写任何合成流水');
 
   // 落盘位置 = /tmp 副本（绝不在真源里创建）
   assert.ok(fs.existsSync(path.join(TMP, 'collections', 'jiazu_assets.json')), '副本集合文件已写入');
@@ -537,26 +636,47 @@ test('withAssets：兰帖写入只经 mutator，回读一致；mutator 抛错 �
   const after = await el.getAssets(PHONE);
   assert.equal(JSON.stringify(after), snapshot, '抛错后资产逐字节未变（整单拒绝）');
 
-  // 成功分解同样经 mutator 落库（另起一个干净账号：碎片 0 → 分解返 99 后仍为碎片态）
+  // 手动合成（249 片 ⇒ 合 1 张）同样只经 mutator 落库：残页 149 + 1 个批次 + 1 条合成流水
+  const syn = await el.withAssets(PHONE, (u) => el.synthesizeScroll(u, 1, T0));
+  assert.equal(syn.synthesized, 1);
+  assert.equal(syn.pieces, 100);
+  const backSyn = await el.getAssets(PHONE);
+  assert.equal(backSyn.scroll_fragments, 149, '249 − 100 = 149（余数原样保留）');
+  assert.equal(el.sumLots(backSyn.scrolls), 100);
+  assert.equal(backSyn.scrolls.length, 1);
+  assert.equal(backSyn.scrolls[0].expires_at, null, '合成批次恒永久（显式 null）');
+  assert.equal(backSyn.scrolls[0].source, 'scroll_synth');
+  assert.equal(txsOf(backSyn, 'scroll_synth').length, 1, '手动合成写 1 条流水（唯一合成出口）');
+
+  // 残页不足的手动合成同样整单拒绝（99 张 = 9900 片 ≫ 149 片）→ 一字节不回写
+  const snapSyn = JSON.stringify(backSyn);
+  await assert.rejects(
+    () => el.withAssets(PHONE, (u) => el.synthesizeScroll(u, 99, T0)),
+    (e) => e.status === 409 && e.code === el.ASSET_INSUFFICIENT && e.unit === 'scroll_fragments',
+  );
+  assert.equal(JSON.stringify(await el.getAssets(PHONE)), snapSyn, '残页不足：整份记录（标量 / 批次 / 流水）逐字节未变');
+
+  // 成功分解同样经 mutator 落库（另起一个干净账号：先造 1 张成品兰帖 → 分解返 99 片，不复合成）
   const PHONE2 = '16600009502';
-  await el.withAssets(PHONE2, (u) => el.addScrollFragments(u, 100, T0)); // 1 张（100 片）+ 碎片 0
+  await el.withAssets(PHONE2, (u) => el.addLot(u, 'scroll', 100, { expires_at: null, source: 'admin', now: T0 })); // 1 张（100 片）
   const dec = await el.withAssets(PHONE2, (u) => el.decomposeScroll(u, 1, T0));
   assert.equal(dec.refunded, 99);
-  assert.equal(dec.synthesized, 0, '干净基线：返 99 不触发回环');
+  assert.equal(dec.synthesized, 0, '返 99 不触发任何合成（自动合成已取消）');
   const back2 = await el.getAssets(PHONE2);
-  assert.equal(back2.scroll_fragments, 99);
+  assert.equal(back2.scroll_fragments, 99, '返还 99 片原样留在残页标量');
   assert.equal(el.sumLots(back2.scrolls), 0);
   assert.equal(txsOf(back2, 'scroll_decompose').length, 1);
+  assert.equal(txsOf(back2, 'scroll_synth').length, 0, '分解路径零合成流水（不回环）');
 
-  // 已有碎片时返还 99 会按同一写入自动合成（49 + 99 = 148 → 1 张 + 余 48）
+  // 已有残页时返还 99 片**同样不合成**（149 + 99 = 248，绝不回环）
   const dec2 = await el.withAssets(PHONE, (u) => el.decomposeScroll(u, 1, T0));
   assert.equal(dec2.refunded, 99);
-  assert.equal(dec2.synthesized, 1);
+  assert.equal(dec2.synthesized, 0, '返还不再触发任何自动合成');
   const back3 = await el.getAssets(PHONE);
-  assert.equal(back3.scroll_fragments, 48, '49 + 99 - 100 = 48');
-  assert.equal(el.sumLots(back3.scrolls), 200, '原 2 张扣 1 张 + 现场合成 1 张');
+  assert.equal(back3.scroll_fragments, 248, '149 + 99 = 248（纯累加，不再 −100 合成）');
+  assert.equal(el.sumLots(back3.scrolls), 0, '唯一 1 张已扣尽');
   assert.equal(txsOf(back3, 'scroll_decompose').length, 1, 'PHONE 只成功分解 1 次（409 那次一字节未写）');
-  assert.equal(txsOf(back3, 'scroll_synth').length, 2, '首次累加 1 条 + 本次返还触发 1 条');
+  assert.equal(txsOf(back3, 'scroll_synth').length, 1, '合成流水仍只有手动合成那 1 条');
 });
 
 // ==================== ⑬ 既有籽域回归 ====================
@@ -593,7 +713,7 @@ test('回归：籽域碎片 9 / 10 / 10 口径与 sweep 剔除过期籽批次均
   assert.equal(x.fragments, 0);
   assert.equal(x.seeds.length, 0);
   assert.equal(txsOf(x, 'fragment_synth').length, 0);
-  assert.equal(txsOf(x, 'scroll_synth').length, 1);
+  assert.equal(txsOf(x, 'scroll_synth').length, 0, '残页纯累加：不写合成流水（合成只由手动路径产生）');
 });
 
 // ==================== ⑭ 真源 ====================
@@ -662,6 +782,57 @@ test('D-1①：Infinity / -Infinity / NaN 注入碎片字段 → 一律归 0、�
   assert.equal(el.addFragments(z, jsonInf(), T0).synthesized, 0);
   assert.equal(z.fragments, 0);
 
+  // 手动合成 `synthesizeScroll`：count 非有限 / 非法（收口后为 0）⇒ 409 整单拒绝、**零写入**
+  // （循环界 = 收口后的 `n`，Infinity 绝不会变成无界循环或凭它造出批次）
+  const q = newUser();
+  q.scroll_fragments = 500; // 够合 5 张 ⇒ 只有「收口后为 0」才会 409，可排除误判
+  const qSnap = JSON.stringify(q);
+  for (const bad of [jsonInf(), -Infinity, NaN]) {
+    let qErr;
+    try {
+      el.synthesizeScroll(q, bad, T0);
+    } catch (e) {
+      qErr = e;
+    }
+    assert.ok(qErr, `synthesizeScroll(count=${String(bad)}) 必须抛错（收口为 0 ⇒ 不足）`);
+    assert.equal(qErr.status, 409);
+    assert.equal(qErr.code, el.ASSET_INSUFFICIENT);
+    assert.ok(Number.isFinite(qErr.need) && Number.isFinite(qErr.current), 'need / current 必须有限（绝不透出 Infinity）');
+    assert.equal(JSON.stringify(q), qSnap, `count=${String(bad)} 零写入`);
+  }
+  assert.equal(el.synthesizeScroll(q, 1, T0).synthesized, 1, '同一条记录随后仍可正常手动合成 1 张（零写入 ≠ 弄坏状态）');
+  assert.equal(q.scroll_fragments, 400);
+
+  // 残页字段自身为 Infinity ⇒ 收口为 0 ⇒ 1 张也不足（409），且不得产出任何批次
+  const qInf = newUser();
+  qInf.scroll_fragments = jsonInf();
+  let qInfErr;
+  try {
+    el.synthesizeScroll(qInf, 1, T0);
+  } catch (e) {
+    qInfErr = e;
+  }
+  assert.ok(qInfErr, '残页 Infinity ⇒ 收口 0 ⇒ 409');
+  assert.equal(qInfErr.status, 409);
+  assert.equal(qInfErr.need, 100);
+  assert.equal(qInfErr.current, 0, 'current 收口为 0（绝不吐 Infinity）');
+  assert.equal(qInf.scrolls.length, 0, '不得凭 Infinity 产出任何兰帖批次');
+  assert.equal(el.sumLots(qInf.scrolls), 0);
+  assert.equal(txsOf(qInf, 'scroll_synth').length, 0, '无合成流水');
+  // 409 零写入 ⇒ 脏值仍原样留在标量字段里（这正是「一字节不写」的直接证据），等下一次 sweep 惰性收口
+  assert.equal(qInf.scroll_fragments, jsonInf(), '零写入：脏值未被顺手改写');
+  el.sweep(qInf, T0);
+  assert.equal(qInf.scroll_fragments, 0, 'sweep 非负整数收口：非有限值归 0');
+
+  // 批次脏数据：qty 非有限时的手动合成同样不产出脏批次（前置残页必须是有限值）
+  const qBad = newUser();
+  qBad.scroll_fragments = jsonInf();
+  qBad.scrolls = [{ id: 'sc_qinf', qty: jsonInf(), expires_at: null }];
+  el.sweep(qBad, T0);
+  assert.equal(qBad.scroll_fragments, 0);
+  assert.equal(qBad.scrolls.length, 0);
+  assert.ok(Number.isFinite(el.sumLots(qBad.scrolls)));
+
   // -Infinity / NaN 同口径（判据 C：非有限一律归 0）
   for (const bad of [-Infinity, NaN, jsonInf()]) {
     const a = newUser();
@@ -698,7 +869,7 @@ test('D-1①：Infinity / -Infinity / NaN 注入碎片字段 → 一律归 0、�
   assert.ok(Number.isFinite(s2.seeds_total));
 
   // 全链路产物不得出现任何 NaN / ±Infinity
-  for (const uu of [u, v, w, x, y, z, badLot, seedLot]) {
+  for (const uu of [u, v, w, x, y, z, q, qInf, badLot, seedLot]) {
     assert.ok(Number.isFinite(uu.fragments) && Number.isFinite(uu.scroll_fragments), '标量字段有限');
     for (const t of uu.txs || []) {
       for (const d of Object.values(t.delta || {})) {
@@ -711,10 +882,19 @@ test('D-1①：Infinity / -Infinity / NaN 注入碎片字段 → 一律归 0、�
 test('D-1②：一次极大增量（1e6）在有界时间内完成且结果自洽（张数 / 拼片数对得上）', () => {
   const t0 = Date.now();
 
-  // 兰帖域：1e6 片 → 10000 张，每张一个新批次 + 一条合成流水（形状 / 字段名未变）
+  // 兰帖域：1e6 片残页先**纯累加**（零批次 / 零流水）→ 再**手动**合 10000 张
+  // （每张一个新批次 + 一条合成流水；形状 / 字段名未变，循环界 = 收口后的 n）
   const u = newUser();
-  const r = el.addScrollFragments(u, 1e6, T0);
+  const acc = el.addScrollFragments(u, 1e6, T0);
+  assert.equal(acc.synthesized, 0, '纯累加不合成');
+  assert.deepEqual(acc.scroll_lots, []);
+  assert.equal(u.scroll_fragments, 1e6, '1e6 片原样留在残页标量');
+  assert.equal(u.scrolls.length, 0);
+  assert.equal(txsOf(u, 'scroll_synth').length, 0, '累加不写流水');
+
+  const r = el.synthesizeScroll(u, 10000, T0);
   assert.equal(r.synthesized, 10000, '1e6 片 → 10000 枚');
+  assert.equal(r.pieces, 1e6, '消耗 10000 × 100 = 1e6 片');
   assert.equal(r.scroll_lots.length, 10000);
   assert.equal(u.scroll_fragments, 0, '余数 0');
   assert.equal(el.sumLots(u.scrolls), 1e6, '片数对得上（张数 × 100）');
@@ -724,6 +904,7 @@ test('D-1②：一次极大增量（1e6）在有界时间内完成且结果自�
   assert.equal(u.scrolls[0].source, el.SCROLL_SOURCE_SYNTH);
   const synths = txsOf(u, 'scroll_synth');
   assert.equal(synths.length, 1, '一条合成流水（口径未变）');
+  assert.deepEqual(synths[0].delta, { scroll_fragments: -1e6, scrolls: 1e6 }, 'delta 按片逐字');
 
   // 籽域姊妹路径
   const v = newUser();

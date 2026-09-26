@@ -27,7 +27,6 @@ import { colAll, colGet, colSet } from './store.js';
 import {
   BAMBOO_TTL_DAYS,
   FRAGMENT_SYNTH_THRESHOLD,
-  SCROLL_FRAGMENT_SYNTH_THRESHOLD,
   SCROLL_PIECES_PER_SCROLL,
   SEED_TTL_DAYS,
   addFragments,
@@ -521,7 +520,8 @@ function scrollsInsufficient(needPieces, currentPieces) {
  * §A2（六类资产，2026-09-26 裁定）：`jades` 之后追加 **兰帖 `scrolls`**（键值以**片**计，
  * 1 张 = 100 片；正向 `addLot(..., { expires_at: null })`（**必须显式 null**，无「默认永久」口径）、
  * 负向按张预检后 `chargeLots(..., 'scroll')`）与 **兰帖残页 `scroll_fragments`**（正向走账本
- * `addScrollFragments`（满 100 自动合成 1 张，**不拒绝、不截断**，同 `fragments` 先例）、负向预检后标量扣减）。
+ * `addScrollFragments`（**纯累加：照收、不拒绝、不截断、不自动合成** —— 自动合成 2026-09-26 裁定取消，
+ * 合成改由用户手动触发 `/assets/scroll/synthesize`）、负向预检后标量扣减）。
  *
  * 副作用顺序（同一请求内）：① `jiazu_assets`（批次 / FIFO 扣减 / 碎片取余）→
  * ② `jiazu_ops_logs` 追加 `OpsLog` → ③ 目标用户 `txs` 追加 `Tx{type:'admin_grant'}`。
@@ -600,7 +600,8 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     // 碎片正向：走账本同一函数（`fragments += n` → 满 10 立即合成，§5.1 校验 7 / 单测 #5）
     let synthesized = 0;
     if (delta.fragments > 0) synthesized = addFragments(user, delta.fragments, now).synthesized;
-    // 兰帖残页正向：走账本同一函数（满 100 立即合成 1 张，**不拒绝、不截断**，同 fragments 先例）
+    // 兰帖残页正向：走账本同一函数（**纯累加：照收、不拒绝、不截断、不自动合成**；
+    // 自动合成 2026-09-26 裁定取消 ⇒ 合成由用户手动触发 `/assets/scroll/synthesize`）
     if (delta.scroll_fragments > 0) addScrollFragments(user, delta.scroll_fragments, now);
 
     // —— 负向落账 ——
@@ -623,10 +624,8 @@ export async function grantAssets(operator, input = {}, now = new Date()) {
     if (Math.floor(Number(user.fragments) || 0) >= FRAGMENT_SYNTH_THRESHOLD) {
       synthesized += addFragments(user, 0, now).synthesized;
     }
-    // 兰帖残页同口径收口（脏数据 ≥ 100 ⇒ 顺带合成，不落「残页 100 未合成」中间态）
-    if (Math.floor(Number(user.scroll_fragments) || 0) >= SCROLL_FRAGMENT_SYNTH_THRESHOLD) {
-      addScrollFragments(user, 0, now);
-    }
+    // 兰帖残页：**不再做任何「越界顺带合成」收口**（2026-09-26 裁定取消自动合成、无上限口径）
+    // ⇒ 残页原样留在标量字段，等用户手动合成（`addScrollFragments` 已成为纯累加）
 
     // —— 用户侧流水（§5.1 副作用 3）——
     const tx = recordTx(

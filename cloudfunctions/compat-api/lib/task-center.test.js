@@ -119,9 +119,17 @@ const bamboosOf = (phone) => assetsOf(phone).then((u) => L.sumLots(u.bamboos));
 const scrollFragsOf = (phone) => assetsOf(phone).then((u) => u.scroll_fragments);
 const piecesOf = (phone) => assetsOf(phone).then((u) => L.sumLots(u.scrolls));
 const seed = (phone, patch) => L.withAssets(phone, (u) => Object.assign(u, patch));
-/** 造 N 张成品兰帖（N × 100 片 → ledger 自动合成 N 个 qty=100 的批） */
+/**
+ * 造 N 张成品兰帖（N × 100 片残页 → 手动合成 N 个 qty=100 的批）。
+ * 2026-09-26 裁定：残页**自动合成已取消** ⇒ 先纯累加、再一次性手动合成；
+ * 产出与旧「自动合成」口径**等价**（N 个 qty=100 批次 / source='scroll_synth' / 残页余 0 /
+ * 且恰 1 条 scroll_synth 流水），故下游断言语义不变。
+ */
 const giveScrolls = (phone, n, now) =>
-  L.withAssets(phone, (u) => L.addScrollFragments(u, n * L.SCROLL_PIECES_PER_SCROLL, now));
+  L.withAssets(phone, (u) => {
+    L.addScrollFragments(u, n * L.SCROLL_PIECES_PER_SCROLL, now); // 纯累加（零批次 / 零流水）
+    return L.synthesizeScroll(u, n, now); // 手动合成 N 张（唯一合成出口）
+  });
 /** 造一条**当日**流水（走唯一写路径 recordTx；type 必须在白名单内） */
 const mkTx = (phone, tx, now) => L.withAssets(phone, (u) => L.recordTx(u, tx, now));
 

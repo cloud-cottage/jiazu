@@ -906,6 +906,9 @@ async function handleRequest(event) {
     //   POST /friends/renew/cancel                 {relation_token}
     //   POST /friends/dissolve                     {relation_token}
     //   POST /assets/scroll/decompose              {count}（调 ledger 既有 decomposeScroll；兰帖【分解】路由本轮建）
+    //   POST /assets/scroll/synthesize             {count?}（调 ledger 新增 synthesizeScroll；兰帖残页【手动合成】
+    //                                              路由本轮建 —— 2026-09-26 裁定取消「满 100 自动合成」，
+    //                                              手动合成为唯一合成入口；count 缺省 1）
     // 鉴权：一律 Bearer 登录（未登录 401，**不降级 guest**；非关系当事人由 friends.js 守卫 → 403 语义）；
     // 入参标识一律 `relation_token`（裁定 3：不透明句柄，出参**不出**明文手机号 / 不出关系 _id）。
     // 本段**必须注册在树编辑闸门之前**（与 /assets/* /market/* /messages 同段，闸门会先拦「缺少 X-Tree-Id」）。
@@ -915,7 +918,8 @@ async function handleRequest(event) {
     if (
       pathname === '/friends' ||
       pathname.startsWith('/friends/') ||
-      pathname === '/assets/scroll/decompose'
+      pathname === '/assets/scroll/decompose' ||
+      pathname === '/assets/scroll/synthesize'
     ) {
       const friendOps = await import('./lib/friend-ops.js');
       /** 好友域 / 兰帖分解的统一出参壳（lib 的返回壳 → HTTP） */
@@ -1019,6 +1023,42 @@ async function handleRequest(event) {
           const body = {
             ok: false,
             error: { code: e?.code || 'SCROLL_DECOMPOSE_FAILED', status: Number(e?.status) || 409, message: e?.message || '兰帖分解失败' },
+          };
+          if (e?.detail !== undefined) body.error.detail = e.detail;
+          return send(Number(e?.status) || 409, body);
+        }
+      }
+
+      // 兰帖残页【手动合成】（2026-09-26 Kevin 裁定：取消「满 100 自动合成」⇒ 手动合成为**唯一**合成入口）：
+      //   POST /assets/scroll/synthesize  {count?}  缺省 1（一次 count 张，每张恰好消耗 100 片残页、余数保留）
+      // 鉴权 / 错误壳 / 错误码体例与相邻 `/assets/scroll/decompose` 对称：
+      //   未登录 401 `FRIEND_UNAUTHORIZED`；count 非正整数 400 `INVALID_COUNT`；
+      //   残页不足 `count × 100` ⇒ 409 `ASSET_INSUFFICIENT`（文案「资产不足，需 N 片兰帖残页，当前 M 片」）**零写入**。
+      // **免费**：不扣竹片、不走 `edit_fee`、不写 `edit_fee` 流水；**不动** `jiazu_market` / 挂单 / 注销路径。
+      // 唯一实现 = 账本 `synthesizeScroll`（不另写一套记账）；资产入口先 `sweep` 惰性结算（§5-4-1，照 /assets/summary 体例）。
+      if (pathname === '/assets/scroll/synthesize' && method === 'POST') {
+        const u = await authUser(headers);
+        if (!u) return send(401, { ok: false, error: { code: 'FRIEND_UNAUTHORIZED', status: 401, message: '未登录或登录已过期' } });
+        const raw = parseBody(event).count;
+        const count = raw === undefined || String(raw).trim() === '' ? 1 : Number(raw);
+        if (!Number.isInteger(count) || count <= 0) {
+          return send(400, { ok: false, error: { code: 'INVALID_COUNT', status: 400, message: 'count 必须为正整数（1 张 = 100 片）' } });
+        }
+        try {
+          const now = new Date();
+          const r = await ledger.mutateAssets(u.phone, (user) => {
+            ledger.sweep(user, now); // 资产入口先惰性结算（§5-4-1）
+            return ledger.synthesizeScroll(user, count, now); // 唯一实现 = 账本导出（不另写一套）
+          });
+          return send(200, { ok: true, message: '兰帖已合成', data: r });
+        } catch (e) {
+          // 系统级失败 → 500 + 通用文案（绝不回显 e.message / 路径 / stack）
+          if (isSystemFailure(e)) {
+            return send(500, { ok: false, error: { code: 'INTERNAL_ERROR', status: 500, message: eco.INTERNAL_ERROR_TEXT } });
+          }
+          const body = {
+            ok: false,
+            error: { code: e?.code || 'SCROLL_SYNTHESIZE_FAILED', status: Number(e?.status) || 409, message: e?.message || '兰帖合成失败' },
           };
           if (e?.detail !== undefined) body.error.detail = e.detail;
           return send(Number(e?.status) || 409, body);

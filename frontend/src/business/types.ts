@@ -408,7 +408,7 @@ export interface ScrollLot {
   qty: number;
   /** **恒 `null`** = 永久有效（类型保留 `string | null` 只为与既有批次形状同构） */
   expires_at: string | null;
-  /** 来源（如 `scroll_synth` = 碎片满 100 自动合成 / `admin` = 运营发放） */
+  /** 来源（如 `scroll_synth` = 残页**手动**合成（2026-09-26 裁定：自动合成已取消）/ `admin` = 运营发放） */
   source: string;
   /** 创建时刻（ISO 字符串） */
   created_at: string;
@@ -416,9 +416,9 @@ export interface ScrollLot {
 
 /** 兰帖域 `summarize` 追加出参（前端**只读展示**，不二次推导、不重算上限） */
 export interface ScrollSummaryFields {
-  /** 兰帖残页（0–99 片；满 100 片由**后端**自动合成 1 张兰帖，前端只展示） */
+  /** 兰帖残页（每 999 片 1 格；满 100 片须**用户在行囊残页格点【合成】**手动合成 1 张兰帖，前端只展示、不重算） */
   scroll_fragments: number;
-  /** 兰帖碎片上限（服务端常量，当前 99） */
+  /** 兰帖残页**单格容纳上限**（服务端常量，当前 999 = 展示层口径，**非拒绝阈值**） */
   scroll_fragment_cap: number;
   /** 兰帖总片数 */
   scrolls_total_pieces: number;

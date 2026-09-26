@@ -194,9 +194,16 @@ async function activeRelation(T0) {
   return { a, b, id: rid(a, b), token: T(rid(a, b)), T0, expires: acc.relation.expires_at };
 }
 
-/** 发 N 张成品兰帖（N × 100 碎片 → ledger 自动合成 N 个 qty=100 的 ScrollLot） */
+/**
+ * 发 N 张成品兰帖（N × 100 片残页 → **手动**合成 N 个 qty=100 的 ScrollLot）。
+ * 2026-09-26 裁定：残页自动合成已取消 ⇒ 纯累加 + 一次性手动合成；产出与旧口径**等价**
+ * （N 个 qty=100 批次 / source='scroll_synth' / 残页余 0 / 恰 1 条 scroll_synth 流水）。
+ */
 async function giveScrolls(phone, n, now) {
-  return L.withAssets(phone, (user) => L.addScrollFragments(user, n * L.SCROLL_PIECES_PER_SCROLL, now));
+  return L.withAssets(phone, (user) => {
+    L.addScrollFragments(user, n * L.SCROLL_PIECES_PER_SCROLL, now); // 纯累加（零批次 / 零流水）
+    return L.synthesizeScroll(user, n, now); // 手动合成 N 张（唯一合成出口）
+  });
 }
 
 const pieces = async (phone) => L.sumLots((await L.getAssets(phone)).scrolls);

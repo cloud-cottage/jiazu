@@ -787,7 +787,7 @@ test('grant 六类矩阵·兰帖（§A2）：正向按片入批次（source=admi
   assertInvariants(await readAssets(phone), 'grant 兰帖');
 });
 
-test('grant 六类矩阵·兰帖残页（§A2）：正向走账本 addScrollFragments（满 100 自动合成 1 张、不拒绝不截断）+ 负向不足 409（文案按片）+ 脏数据 ≥100 顺带收口', async () => {
+test('grant 六类矩阵·兰帖残页（§A2）：正向走账本 addScrollFragments（**纯累加**：照收 / 不拒绝 / 不截断 / 不自动合成）+ 负向不足 409（文案按片）+ 脏数据 150 也不再顺带合成', async () => {
   const phone = await newUser();
   await seedAssets(phone, { fragments: 0, seeds: [], bamboos: [], jades: [], scrolls: [], scroll_fragments: 0, txs: [], signin_date: '' });
   const before = { assets: await readAssets(phone), logs: await logsOf() };
@@ -804,32 +804,30 @@ test('grant 六类矩阵·兰帖残页（§A2）：正向走账本 addScrollFrag
   assert.deepEqual(await readAssets(phone), before.assets, '不足：一字节不变');
   assert.deepEqual(await logsOf(), before.logs, '不足：不写审计日志');
 
-  // ② 正向：250 片 → 当场合成 2 张（200 片）+ 余 50 片（不拒绝、不截断）
+  // ② 正向：250 片 → **纯累加**（照收、不拒绝、不截断、不自动合成）⇒ 残页 250 片、零成品兰帖、零合成流水
   const okBody = jsonBody(await grant({ target_phone: phone, delta: { scroll_fragments: 250 }, reason: '好友奖励补发' }));
-  assert.equal(okBody.summary.scroll_fragments, 50, '250 片 → 合成 2 张后余 50 片');
-  assert.equal(okBody.summary.scrolls_total_pieces, 200, '合成 2 张 = 200 片');
+  assert.equal(okBody.summary.scroll_fragments, 250, '250 片原样入账（不再顺带合成）');
+  assert.equal(okBody.summary.scrolls_total_pieces, 0, '不产生任何成品兰帖');
   const after = await readAssets(phone);
-  assert.equal(after.scrolls.length, 2, '每张一个新批次（同一写入内完成）');
-  for (const lot of after.scrolls) {
-    assert.equal(lot.qty, 100);
-    assert.equal(lot.source, 'scroll_synth');
-    assert.equal(lot.expires_at, null, '合成批次恒永久（显式 null）');
-  }
-  assert.ok(after.txs.some((t) => t.type === 'scroll_synth'), '自动合成写 scroll_synth 流水');
+  assert.equal(after.scrolls.length, 0, '无任何成品兰帖批次（合成只由用户手动路径产生）');
+  assert.equal(el.sumLots(after.scrolls), 0);
+  assert.ok(!after.txs.some((t) => t.type === 'scroll_synth'), '纯累加不得写 scroll_synth 流水');
   const log = (await logsOf()).find((l) => l.id === okBody.summary.log_id);
   assert.deepEqual(log.delta, { scroll_fragments: 250 }, 'OpsLog 含新键 scroll_fragments（原样 250，不折算）');
 
-  // ③ 负向扣减（标量，片）：50 − 50 = 0，绝不为负；成品兰帖不受影响
+  // ③ 负向扣减（标量，片）：250 − 50 = 200，绝不为负；成品兰帖不受影响
   const ok = jsonBody(await grant({ target_phone: phone, delta: { scroll_fragments: -50 }, reason: '纠错扣残页' }));
-  assert.equal(ok.summary.scroll_fragments, 0);
-  assert.equal(ok.summary.scrolls_total_pieces, 200, '扣残页不动成品兰帖');
+  assert.equal(ok.summary.scroll_fragments, 200, '250 − 50 = 200 片');
+  assert.equal(ok.summary.scrolls_total_pieces, 0, '扣残页不动成品兰帖');
 
-  // ④ 脏数据 ≥ 100：顺带合成，不落「残页 100 未合成」中间态
+  // ④ 脏数据 150 片：**不再顺带合成**（grant 已无越界收口）⇒ 原样保留，等用户手动合成
   await el.mutateAssets(phone, (u) => { u.scroll_fragments = 150; });
   const healed = jsonBody(await grant({ target_phone: phone, delta: { seeds: 1 }, reason: '脏数据收口' }));
-  assert.equal(healed.summary.scroll_fragments, 50, '150 残页 ⇒ 顺带合成 1 张 + 余 50');
-  assert.equal(healed.summary.scrolls_total_pieces, 300);
-  assert.equal((await readAssets(phone)).scrolls.length, 3);
+  assert.equal(healed.summary.scroll_fragments, 150, '150 残页原样保留（不自动合成、不截断）');
+  assert.equal(healed.summary.scrolls_total_pieces, 0);
+  const healedAssets = await readAssets(phone);
+  assert.equal(healedAssets.scrolls.length, 0, '脏数据不落任何成品兰帖批次');
+  assert.ok(!healedAssets.txs.some((t) => t.type === 'scroll_synth'), '脏数据收口不写合成流水');
 });
 
 test('GET /admin/assets/logs（§5.3）：ts 倒序 + 同刻「后写在前」定序确定、operator / phone 过滤可叠加、limit 默认 50 上限 200；401 / 403', async () => {
@@ -925,7 +923,7 @@ test('GET /admin/assets/user（§5.4）：资产总览字段对齐 /assets/summa
   assert.equal(body.jade_list[0].expires_at, null);
   assert.equal(body.signin_date, '2026-09-15');
   assert.equal(body.scroll_fragments, 0, '§A4 追加出参：兰帖残页片数');
-  assert.equal(body.scroll_fragment_cap, 99, '§A4 追加出参：兰帖残页上限（= 服务端常量）');
+  assert.equal(body.scroll_fragment_cap, 999, '§A4 追加出参：兰帖残页**单格容纳上限**（= 服务端常量，展示层口径）');
   assert.equal(body.scrolls_total_pieces, 0, '§A4 追加出参：兰帖总片数');
   assert.equal(body.scrolls_item_count, 0, '§A4 追加出参：兰帖整张数（= 片总数 / 100 向下取整）');
   assert.deepEqual(body.scroll_lots, [], '§A4 追加出参：兰帖批次数组');

@@ -18,6 +18,9 @@
  *       `SCROLL_FRAGMENT_CAP` / `SCROLL_FRAGMENT_SYNTH_THRESHOLD` / `SCROLL_PIECES_PER_SCROLL`
  *       一律从 `./economy-ledger.js` 导入（**真源导出名为 `SCROLL_PIECES_PER_SCROLL`**，
  *       冻结单所写 `SCROLL_PIECES_PER_ITEM` 在真源中不存在，见报告 §2）。
+ *       ⚠️ 取值沿革（2026-09-26 Kevin 裁定）：`SCROLL_FRAGMENT_CAP` = **单格容纳上限 / 展示层口径**
+ *       （`99` → `999`，**不是拒绝阈值**）；`SCROLL_FRAGMENT_SYNTH_THRESHOLD` 保持 `100` =
+ *       **手动合成门槛**（自动合成已取消 ⇒ 本模块只累加、不判合成）。
  *   I-9 不改 `assets` / 好友路由相关文件。
  *
  * 分层：纯函数（不发 IO）= `countInviteRewardsToday` / `inviteDocId` / `inviteCodeFormatOk`；
@@ -169,7 +172,7 @@ export async function grantInviteReward(inviterPhone, inviteePhone, now = new Da
     }
     // 9 石榴籽碎片（`addFragments`：满 10 自动合成，9 片不会触发）
     addFragments(user, INVITE_REWARD_FRAGMENTS, now);
-    // 11 兰帖残页（I-7 依赖：真源导出，本模块不写第二版）
+    // 11 兰帖残页（I-7 依赖：真源导出，本模块不写第二版；**纯累加 —— 自动合成 2026-09-26 裁定取消**）
     addScrollFragments(user, INVITE_REWARD_SCROLL_FRAGMENTS, now);
     const tx = recordTx(
       user,

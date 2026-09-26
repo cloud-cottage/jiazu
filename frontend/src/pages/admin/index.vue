@@ -273,7 +273,7 @@
               </view>
               <view class="snap-row">
                 <text class="snap-label">兰帖残页</text>
-                <text class="snap-value">{{ snapshot.scroll_fragments ?? 0 }} / {{ snapshot.scroll_fragment_cap ?? 99 }} 片</text>
+                <text class="snap-value">{{ snapshot.scroll_fragments ?? 0 }} / {{ snapshot.scroll_fragment_cap ?? 999 }} 片</text>
               </view>
               <view class="snap-row">
                 <text class="snap-label">最近签到</text>
