@@ -389,7 +389,7 @@ function lotItems(
       badge: true,
       tooltipLines: [
         `${rest} ${KIND_QTY_UNIT[kind]}`,
-        '本格为余数 · 不足 1 个完整道具',
+        '本格为余数 · 不足 1 格',
         `最近到期 ${formatAssetDate(expiresAt)}`,
         KIND_CONVERT[kind],
       ],

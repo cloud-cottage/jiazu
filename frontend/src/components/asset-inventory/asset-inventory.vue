@@ -8,7 +8,7 @@
       <text class="inv-count">{{ occupiedTotal }} / {{ SLOT_COUNT }} 格</text>
     </view>
     <text class="inv-hint">
-      6 × 6 栏位 · 每格 1 个道具 · 拖曳可调整显示顺序（仅当前页面有效，刷新后恢复默认）
+      6 × 6 栏位 · 拖曳可调整显示顺序（仅当前页面有效，刷新后恢复默认）
     </text>
 
     <!-- 6×6 道具栏：坐标命中（H5 走文档级鼠标事件，小程序走 touch 事件），空格不参与任何交互 -->

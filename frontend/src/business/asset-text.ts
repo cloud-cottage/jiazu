@@ -22,6 +22,12 @@
  *   不在组件里散落中文字面；
  * - 兰帖**永久有效**（`ScrollLot.expires_at` 恒 `null`）⇒ 本模块只给「永久有效」，
  *   不提供任何「有效期至 / 最近到期」拼装（口径：兰帖不得排入到期排序或到期提示行）。
+ *
+ * 量词单点（2026-09-26 扩充）：**资产不足（`ASSET_INSUFFICIENT`）明细行的量词**也只在本模块定义 ——
+ * - 后端 `unit` 键 → 中文量词 = `SHORTAGE_UNIT_BY_KEY`；拼装行 = `shortageLine()`；
+ * - 「颗」/「枚」的唯一字面 = `SEED_QTY_UNIT` / `JADE_QTY_UNIT`（新增）；片类复用既有
+ *   `SEED_FRAGMENT_UNIT` / `BAMBOO_PIECES_UNIT` / `SCROLL_PIECES_UNIT`；
+ * - `person-manage-panel.vue` 只传后端 `unit` 键，**组件内不得自带量词字面**（未知 / 缺失键 → 只出数字）。
  */
 import type { Jade } from './api';
 
@@ -117,7 +123,7 @@ export function scrollDecomposeHintLine(piecesPerItem: number, refundPerItem: nu
  * 实测同体例：**250 片 ⇒ 3 格 / 2 张**。行囊内**一律以格数**渲染占格与逐格角标。
  */
 export function scrollCaliberLine(cells: number, items: number, piecesPerItem: number): string {
-  return `行囊口径：占 ${cells} 格（含余数格）· 整道具 ${items} 张（1 张 = ${piecesPerItem} 片）—— 格数与张数不同数，勿混`;
+  return `行囊口径：占 ${cells} 格（含余数格）· 整格 ${items} 张（1 张 = ${piecesPerItem} 片）—— 格数与张数不同数，勿混`;
 }
 
 /** 余数格（不足 1 张成品兰帖）⇒【分解】未达标原因（**必须显示出来，不得静默**） */
@@ -201,6 +207,53 @@ export const SCROLL_PIECES_UNIT = '片';
  * ②③ 现均**引用本常量**（`inventory.ts` 已从本模块导入；方向与 `SCROLL_NAME` / `SCROLL_FRAGMENT_NAME` 一致，不成环）。
  */
 export const SCROLL_ITEM_UNIT = '张';
+
+// ============ 资产不足（`ASSET_INSUFFICIENT`）明细行量词**单点** ============
+
+/**
+ * 石榴籽的**数量量词**（**唯一字面**「颗」）—— 立支籽不足明细行等一律引用本常量，
+ * 组件内**不得再写「颗」字面**。
+ * 注：`business/inventory.ts` 的 `KIND_QTY_UNIT.seed` 是**行囊格内单位表**（另一条链路），
+ * 本轮（量词收敛单）未纳入；新增组件一律引用本单点。
+ */
+export const SEED_QTY_UNIT = '颗';
+
+/**
+ * 石榴籽玉的**数量量词**（**唯一字面**「枚」）；同上，组件一律引用本常量。
+ */
+export const JADE_QTY_UNIT = '枚';
+
+/**
+ * 后端 `unit` 键（**逐字**）→ 中文量词（**单点**；`docs/economy-fee.spec.md` §6 的 `need`/`current`/`unit`）。
+ * - `fragments` = 石榴籽碎片、`bamboos` = 竹片、`scrolls` = 兰帖、`scroll_fragments` = 兰帖残页 ⇒ 一律「片」
+ *   （复用既有常量，不另写「片」字面）；
+ * - `seeds` = 石榴籽 ⇒ `SEED_QTY_UNIT`；`jade`（**单数键，既有字面**）= 石榴籽玉 ⇒ `JADE_QTY_UNIT`；
+ * - ⚠️ `scrolls` 在 `e3a1fa0` 之后 `need` / `current` **恒为片数** ⇒ 量词固定「片」，
+ *   **不得**用「张」（「张」是**整格数**的量词，见 `SCROLL_ITEM_UNIT`：1 张 = 100 片）；
+ * - **未知 / 缺失键**不在本表 ⇒ 调用方只出数字，**绝不默认回退「颗」**。
+ */
+export const SHORTAGE_UNIT_BY_KEY: Record<string, string> = {
+  fragments: SEED_FRAGMENT_UNIT,
+  seeds: SEED_QTY_UNIT,
+  bamboos: BAMBOO_PIECES_UNIT,
+  jade: JADE_QTY_UNIT,
+  scrolls: SCROLL_PIECES_UNIT,
+  scroll_fragments: SEED_FRAGMENT_UNIT,
+};
+
+/**
+ * 资产不足明细行（**唯一拼装点**）：`本次需 X <量词>，当前可用 Y <量词>`。
+ * - 量词按后端 `unit` 键查 `SHORTAGE_UNIT_BY_KEY`；**未知 / 缺失键 ⇒ 不加量词、只出数字**
+ *   （绝不回退「颗」），此时不留悬空空格（`本次需 X，当前可用 Y`）；
+ * - 数字缺失（`undefined` / `null`）→ `—`（与既有 `?? '—'` 口径一致）；
+ * - **前端不展示英文 `unit` 键**（旧英文后缀拼接已删）。
+ */
+export function shortageLine(need: unknown, current: unknown, unitKey: string | undefined): string {
+  const q = SHORTAGE_UNIT_BY_KEY[String(unitKey ?? '')] || '';
+  const num = (v: unknown) => (v === undefined || v === null ? '—' : String(v));
+  const withUnit = (v: unknown) => (q ? `${num(v)} ${q}` : num(v));
+  return `本次需 ${withUnit(need)}，当前可用 ${withUnit(current)}`;
+}
 
 // ============ 资产变动（delta）文案**单点**（资产页流水 + 后台资产变动日志共用） ============
 

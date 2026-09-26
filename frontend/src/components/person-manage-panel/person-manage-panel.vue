@@ -57,7 +57,7 @@
           :loading="splitting"
           @click="confirmSplit"
         >{{ splitting ? '处理中...' : '⛔ 移除并新建家族树' }}</t-button>
-        <!-- 立支（docs/branch-clan-ops.spec.md §6-1 / §9-1）：本树普通节点 N → 新家族树始祖（一次 9999 颗石榴籽）
+        <!-- 立支（docs/branch-clan-ops.spec.md §6-1 / §9-1）：本树普通节点 N → 新家族树始祖（一次 BRANCH_FEE_SEEDS 石榴籽，量词单点见 asset-text.ts 的 SEED_QTY_UNIT）
              显示条件 = canEstablishBranch（写权 + 树 kind='family' + 非始祖位 + 非镜像节点）；L1/L2/L3 文案 = §9-2 定稿 -->
         <t-button
           v-if="canEstablishBranch"
@@ -273,6 +273,7 @@ import {
   fetchTreeMetaRemote,
 } from '@/business/api';
 import { isAssetInsufficientError, goMyAssets } from '@/business/asset-guide';
+import { shortageLine, SEED_QTY_UNIT } from '@/business/asset-text';
 import { isAuthenticated, authState, getAuthToken } from '@/business/auth';
 import { personIdDisplay } from '@/business/format';
 import {
@@ -770,7 +771,7 @@ async function confirmSplit() {
 // ---- 立支（普通节点 → 新家族树始祖；docs/branch-clan-ops.spec.md §6-1 / §9-1 / §9-2）----
 
 /**
- * 立支单价默认值（颗石榴籽）：真源在后端 `jiazu_wallets.config.branch_fee_seeds`（默认 9999，§5-4），
+ * 立支单价默认值（石榴籽；量词**不写死** —— 一律经 `asset-text.ts` 的 `SEED_QTY_UNIT`）：真源在后端 `jiazu_wallets.config.branch_fee_seeds`（默认 9999，§5-4），
  * 前端只用于**提交前**确认文案的明示数字；实际扣费以后端响应 `fee.amount` 为准。
  */
 const BRANCH_FEE_SEEDS = 9999;
@@ -794,7 +795,7 @@ const canEstablishBranch = computed(
     !props.isMirror,
 );
 
-/** 预读当前石榴籽可用量（L1 的「当前可用【XX】颗」；读失败 → 占位写「以实际扣费为准」，不阻塞） */
+/** 预读当前石榴籽可用量（L1 的「当前可用【XX】<量词>」，量词经 `asset-text.ts` 的 `SEED_QTY_UNIT`；读失败 → 占位写「以实际扣费为准」，不阻塞） */
 async function readSeedBalance(): Promise<number | null> {
   try {
     const summary = await fetchAssetsSummary();
@@ -813,7 +814,7 @@ function establishConfirmText(name: string, balance: number | null): string {
   return [
     '⚠️ 立支确认',
     `本次将把「${name}」立为新家族树的始祖：其上级祖先链将整体上移并入本家族宗谱；原家族树保留「${name}」及其全部后代（始祖改为「${name}」）。`,
-    `本次操作将消耗${BRANCH_FEE_SEEDS}颗石榴籽，消耗时优先扣除您账户内即将最先到期的石榴籽，消耗后不可退回（当前可用${balanceText}颗）。`,
+    `本次操作将消耗${BRANCH_FEE_SEEDS}${SEED_QTY_UNIT}石榴籽，消耗时优先扣除您账户内即将最先到期的石榴籽，消耗后不可退回（当前可用${balanceText}${SEED_QTY_UNIT}）。`,
     '是否确认立支？',
   ].join('\n');
 }
@@ -834,9 +835,8 @@ function seedShortageLines(e: unknown): string[] {
   const err = e as { need?: number; current?: number; unit?: string; howToGet?: string[] } | undefined;
   const lines: string[] = [];
   if (err?.need !== undefined || err?.current !== undefined || err?.unit !== undefined) {
-    lines.push(
-      `本次需 ${err?.need ?? '—'} 颗，当前可用 ${err?.current ?? '—'} 颗${err?.unit ? `（单位：${err.unit}）` : ''}`,
-    );
+    // 量词一律走后端 `unit` 键 → `asset-text.ts` 单点（本组件不写量词字面、不展示英文键）
+    lines.push(shortageLine(err?.need, err?.current, err?.unit));
   }
   const provided = err?.howToGet;
   const items = Array.isArray(provided) && provided.length ? provided.join(' / ') : HOW_TO_GET_SEEDS;
@@ -875,7 +875,7 @@ async function confirmEstablishBranch() {
     const newTitle = await resolveNewTreeTitle(res.new_tree_id);
     // L2 立支成功（定稿文案逐字；数字取本次响应）
     uni.showToast({
-      title: `立支成功：新家族树「${newTitle}」（${res.new_tree_id}）已建立，共上移${res.moved_ancestors}位祖先、${res.moved_families}个家族，本次消耗 ${res.fee?.amount ?? BRANCH_FEE_SEEDS} 颗石榴籽，余 ${res.fee?.balance_after ?? '—'} 颗`,
+      title: `立支成功：新家族树「${newTitle}」（${res.new_tree_id}）已建立，共上移${res.moved_ancestors}位祖先、${res.moved_families}个家族，本次消耗 ${res.fee?.amount ?? BRANCH_FEE_SEEDS} ${SEED_QTY_UNIT}石榴籽，余 ${res.fee?.balance_after ?? '—'} ${SEED_QTY_UNIT}`,
       icon: 'none',
       duration: 4000,
     });
