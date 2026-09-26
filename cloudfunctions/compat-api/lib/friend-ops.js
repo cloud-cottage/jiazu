@@ -969,7 +969,8 @@ export async function dissolveFriend(relationToken, by, now = new Date(), reason
  * 三类奖励的落账口径（**入账一律走 ledger 的导出**；`delta` 键名照 ledger 的 `Tx.delta` 体例）：
  *   seed_fragments   → `addFragments`（满 10 自动合成，ledger 自理）
  *   bamboo_pieces    → `addLot('bamboo', n, { source })`（365 天批次）
- *   scroll_fragments → `addScrollFragments`（满 100 自动合成 1 张兰帖，ledger 自理）
+ *   scroll_fragments → `addScrollFragments`（**纯累加：照收、不拒绝、不截断、不合成** —— 自动合成已于
+ *                      2026-09-26 裁定取消，合成改由用户手动触发 `synthesizeScroll`，ledger 自理）
  */
 const GRANT = {
   seed_fragments: { delta: 'fragments', label: '石榴籽碎片', add: (user, n, now) => addFragments(user, n, now) },

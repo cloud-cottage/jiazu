@@ -185,7 +185,7 @@ test('③ I-4 发奖：邀请人得 9 石榴籽碎片 + 11 兰帖残页；被邀
   assert.equal(after.fragments, 9, '石榴籽碎片 = 9');
   assert.equal(after.scroll_fragments, 11, '兰帖残页 = 11');
   assert.equal(after.seeds.length, 0, '9 片不触发碎片自动合成');
-  assert.equal(after.scrolls.length, 0, '11 片不触发兰帖自动合成');
+  assert.equal(after.scrolls.length, 0, '11 片不合成兰帖（手动合成门槛 100 片；自动合成已取消）');
 
   const txs = inviteTxs(after);
   assert.equal(txs.length, 1);

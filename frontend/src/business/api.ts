@@ -2785,7 +2785,7 @@ export interface AdminAssetSnapshot {
   jade_list?: Jade[];
   /** 兰帖残页片数（§A4 追加；字段名逐字取自后端 `summarize()`） */
   scroll_fragments?: number;
-  /** 兰帖残页上限（服务端常量，当前 99） */
+  /** 兰帖残页**单格容纳上限**（服务端常量，当前 999 = 展示层口径，**非拒绝阈值**） */
   scroll_fragment_cap?: number;
   /** 兰帖总片数 */
   scrolls_total_pieces?: number;

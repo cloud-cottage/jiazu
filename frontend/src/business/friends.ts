@@ -449,9 +449,9 @@ export interface ScrollDecomposeResult {
   pieces: number;
   /** 返还的兰帖残页片数（= `decomposed × 99`，每张留 1 片损耗） */
   refunded: number;
-  /** 分解后的兰帖碎片总量（满 100 由后端自动合成 1 张兰帖） */
+  /** 分解后的兰帖残页片数（照收、不拒绝、不截断；满 100 片须由用户在行囊残页格点【合成】**手动**合成 1 张） */
   scroll_fragments: number;
-  /** 本次返还触发的自动合成张数（= 后端返回的 `synthesized`） */
+  /** 本次返还触发的合成张数（= 后端返回的 `synthesized`）——自动合成已取消 ⇒ 该键**恒 `0`**，仅作兼容保留项 */
   synthesized: number;
   /** 被扣减的兰帖批次（FIFO 明细；本模块只透传，不做展示拼装） */
   taken: Array<{ id: string; qty: number; expires_at: string }>;
