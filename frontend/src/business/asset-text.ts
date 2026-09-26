@@ -225,9 +225,18 @@ export const JADE_QTY_UNIT = '枚';
 
 /**
  * 后端 `unit` 键（**逐字**）→ 中文量词（**单点**；`docs/economy-fee.spec.md` §6 的 `need`/`current`/`unit`）。
+ * **本表恰七键**（**恰含单数 `scroll` 与复数 `scrolls`**），其中**两个兰帖键（`scroll` / `scrolls`）同分母为片**
+ * —— 即查这两键时后端给的 `need` / `current` **均为片值** ⇒ 量词一律「片」（**不得**用「张」：「张」是
+ * **整格数**的**另一个量**的量词，见 `SCROLL_ITEM_UNIT`：1 张 = 100 片）。
  * - `fragments` = 石榴籽碎片、`bamboos` = 竹片、`scrolls` = 兰帖、`scroll_fragments` = 兰帖残页 ⇒ 一律「片」
  *   （复用既有常量，不另写「片」字面）；
  * - `seeds` = 石榴籽 ⇒ `SEED_QTY_UNIT`；`jade`（**单数键，既有字面**）= 石榴籽玉 ⇒ `JADE_QTY_UNIT`；
+ * - ⚠️ `scroll`（**单数键 · 防御性补全 · Kevin 2026-09-26 拍定「焊死」**）：
+ *   `cloudfunctions/compat-api/lib/economy-fee.js` 的 `insufficientBody()` 在 `chargeLots(..., 'scroll')`
+ *   路径（`lib/friend-ops.js` 的兰帖分解预检）会**原样透出** `unit = 'scroll'`（**单数**，只对 `bamboo` / `seed`
+ *   做归一，不改 `scroll`）；该路径**现不可达响应体**（三处调用点均不输出 `unit`）⇒ 本键只为该链路将来可达时
+ *   UI **不丢量词**（否则明细行退化为「本次需 9，当前可用 3」），**零行为变更**。口径与 `scrolls` **同**：
+ *   与单数键同口径的 `need` / `current` 是**片值** ⇒ 量词 = `SCROLL_PIECES_UNIT`（「片」），**不得**用「张」；
  * - ⚠️ `scrolls` 在 `e3a1fa0` 之后 `need` / `current` **恒为片数** ⇒ 量词固定「片」，
  *   **不得**用「张」（「张」是**整格数**的量词，见 `SCROLL_ITEM_UNIT`：1 张 = 100 片）；
  * - **未知 / 缺失键**不在本表 ⇒ 调用方只出数字，**绝不默认回退「颗」**。
@@ -237,6 +246,7 @@ export const SHORTAGE_UNIT_BY_KEY: Record<string, string> = {
   seeds: SEED_QTY_UNIT,
   bamboos: BAMBOO_PIECES_UNIT,
   jade: JADE_QTY_UNIT,
+  scroll: SCROLL_PIECES_UNIT,
   scrolls: SCROLL_PIECES_UNIT,
   scroll_fragments: SEED_FRAGMENT_UNIT,
 };
