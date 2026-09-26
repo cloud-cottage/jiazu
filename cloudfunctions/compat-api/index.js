@@ -68,6 +68,9 @@ import { computeAccess, isHiddenFamily, accessToPayload, computePersonDepth } fr
 // 发源地结构化（docs/geo-origin.spec.md）：路由层只做「未知码 → 400」与「反查生成展示串」两件事；
 // 码表随云函数包内联（lib/geo.js 静态 import lib/geo/divisions.json），无运行期读盘 / 无环境变量。
 import { isKnownOriginCode, resolveOrigin } from './lib/geo.js';
+// 行政区划热度排序（裁定 R1–R8 / 冻结口径 D1–D3）：路由层只做「取聚合值 → 200」一件事，
+// 计票 / 前缀级联 / 24h 缓存 / 降级一律在 lib/geo-hot.js（真源派生 · 纯读 · 零写入）。
+import { getGeoHot } from './lib/geo-hot.js';
 // 出生地 / 居住地（契约 v2）：路由层只做「上限 400（C10）」「读响应形状（C7）」「始祖放行（C6）」
 // 「tree-meta 镜像回写（C8）」四件事，形状归一 / 展示串一律复用 lib/person-places.js（不另写一套）。
 import {
@@ -573,6 +576,15 @@ async function handleRequest(event) {
         origin: patch.origin,
         source: { handle: person.handle, gramps_id: person.gramps_id || '', name: person.name || '' },
       });
+    }
+
+    // ================= 行政区划热度（只读 · 无需鉴权 · 无需 X-Tree-Id）=================
+    // `GET /geo/hot` → 200 `{ v, generated_at, counts, direct[, failed] }`（口径 = lib/geo-hot.js 文件头）。
+    // 作用面 = 选择器三级列表的**展示顺序**（前端按码取票，不改码表 / 不改真源）。
+    // **降级不抛**（裁定 R7）：计算失败返上一次成功值 / 空表，恒 200、无 UI 提示。
+    // **必须注册在树编辑闸门之前**（闸门 = 下方 `缺少 X-Tree-Id`；同段先例 = /search/global / /assets/*）。
+    if (pathname === '/geo/hot' && method === 'GET') {
+      return send(200, await getGeoHot());
     }
 
     // ================= 等级 =================

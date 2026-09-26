@@ -2057,6 +2057,34 @@ export async function setTreeOrigin(
   return res.json();
 }
 
+// ---- 行政区划热度（只读、无需鉴权、无需 X-Tree-Id；docs/geo-origin.spec.md「热度排序」） ----
+
+/** `GET /geo/hot` 响应：`counts` = 前缀级联票（码 → 票数），`direct` = 恰在该级的票；两表只含票数 > 0 的码 */
+export interface GeoHot {
+  v: number;
+  /** 上次成功计算时间（ISO）；从未成功过 → `null` */
+  generated_at: string | null;
+  counts: Record<string, number>;
+  direct: Record<string, number>;
+}
+
+/**
+ * 拉取行政区划热度票表（`GET /geo/hot`）。本函数**只负责取数**（不缓存、不重试）。
+ * **失败一律返回 `null`**（网络异常 / 非 2xx / 响应缺 `counts`）—— 调用方（发源地选择器）据此静默回原序，
+ * 错误绝不抛到页面（口径见 plan R7 降级）。
+ */
+export async function fetchGeoHot(): Promise<GeoHot | null> {
+  try {
+    const res = await fetch(`${API_BASE}/geo/hot`);
+    if (!res.ok) return null;
+    const body = (await res.json()) as GeoHot | null;
+    if (!body || !body.counts || typeof body.counts !== 'object') return null;
+    return body;
+  } catch {
+    return null;
+  }
+}
+
 // ---- 统计 ----
 
 export async function fetchTreeStats(treeId: string): Promise<{

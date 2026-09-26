@@ -20,7 +20,7 @@
  *   ⑬  v4③ 终态后不得复活（confirm / accept / renew 一律拒；再 sweep 也不复活）
  *   ⑭  F-D sweepFriends 惰性落盘（仅落变更）+ **不注册定时任务**（源码判据）
  *   ⑮  F-A **不自写第二版记账**（源码判据：无资产集合字面、入账只走 ledger 导出）
- *   ⑯  注册数 33 与磁盘 *.test.js 数一致、「已注册但磁盘缺失」0 条、磁盘未注册 0 条
+ *   ⑯  注册数 35 与磁盘 *.test.js 数一致、「已注册但磁盘缺失」0 条、磁盘未注册 0 条
  *   ⑰  真源零写入：config/tree-meta.json 与 migrate-output/（trees + details + collections）全量 md5 前后一致
  *   ⑱  **裁定 3**：**全部路由面出参**不得出现 11 位明文手机号（正则 `1[3-9]\d{9}` 扫 JSON）+ 无 `relation_id` 字段名
  *       ＋ `relation_token` 形状逐字（`fr_` + 16 hex）＋ 反查（token → 关系 `_id`）＋ 形状不符即 404
@@ -839,19 +839,19 @@ test('F-A 只做编排：资产只经 ledger 的 withAssets/导出读写（无�
   assert.equal(SRC.includes('colAll('), true, 'sweepFriends / 句柄反查 需要全量遍历');
 });
 
-// ══ ⑯ 注册数 34 与磁盘一致 ══════════════════════════════════════════════════════
-// ⚠️ 本判据的基线必须跟随**磁盘真值**：上一单新增第 34 个测试文件（task-center.test.js）后，
-//    此处残留的旧基线 33 变成假红。基线口径 = 「package.json 注册数 = 磁盘 *.test.js 数 = 定额」，
-//    仍为**精确等值 + 双向零缺口 + 去重**（不放宽、不删除任何断言），只把定额改成实得真值 34。
-test('package.json 注册数 = 磁盘 *.test.js 数 = 34，且双向零缺口', async () => {
+// ══ ⑯ 注册数 35 与磁盘一致 ══════════════════════════════════════════════════════
+// ⚠️ 本判据的基线必须跟随**磁盘真值**：本单新增第 35 个测试文件（geo-hot.test.js）后，
+//    此处残留的旧基线 34 变成假红。基线口径 = 「package.json 注册数 = 磁盘 *.test.js 数 = 定额」，
+//    仍为**精确等值 + 双向零缺口 + 去重**（不放宽、不删除任何断言），只把定额改成实得真值 35。
+test('package.json 注册数 = 磁盘 *.test.js 数 = 35，且双向零缺口', async () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(REPO, 'package.json'), 'utf8'));
   const registered = pkg.scripts.test
     .split(/\s+/)
     .filter((x) => x.endsWith('.test.js'))
     .map((x) => path.basename(x));
   const onDisk = fs.readdirSync(HERE).filter((f) => f.endsWith('.test.js')).sort();
-  assert.equal(registered.length, 34, `注册数应为 34，实得 ${registered.length}`);
-  assert.equal(onDisk.length, 34, `磁盘 *.test.js 应为 34，实得 ${onDisk.length}`);
+  assert.equal(registered.length, 35, `注册数应为 35，实得 ${registered.length}`);
+  assert.equal(onDisk.length, 35, `磁盘 *.test.js 应为 35，实得 ${onDisk.length}`);
   assert.equal(new Set(registered).size, registered.length, '注册项不得重复');
   const missingOnDisk = registered.filter((f) => !onDisk.includes(f));
   const unregistered = onDisk.filter((f) => !registered.includes(f));

@@ -78,6 +78,15 @@
   </view>
 </template>
 
+<script lang="ts">
+/**
+ * 模块级单飞（与下方 `<script setup>` 同属一个模块作用域 ⇒ **多实例共用**）：
+ * 热度票表全进程至多拉取一次，面板后续展开 / 其他实例一律复用同一 promise（口径见 plan D4-3）。
+ * `null` = 尚未拉取（面板首次展开时置位，见 setup 内 `ensureHotLoaded()`）。
+ */
+let hotLoad: Promise<void> | null = null;
+</script>
+
 <script setup lang="ts">
 /**
  * 发源地三级联动选择器（uni-app 跨端：H5 + 小程序，无浏览器 DOM API）
@@ -95,11 +104,13 @@
  * - 展示串仅在面板内做**即时预览**，前端不拼展示串落库（真源在后端写路径）。
  */
 import { computed, ref } from 'vue';
+import { fetchGeoHot } from '@/business/api';
 import {
+  applyHotCounts,
   OVERSEAS_CODE,
-  provincesOf,
-  citiesOf,
-  countiesOf,
+  rankedProvinces,
+  rankedCities,
+  rankedCounties,
   isTerminalCity,
   resolveNames,
   pathOfCode,
@@ -130,9 +141,28 @@ const draftCounty = ref('');
 /** 已存码归一（真源 `origin_code` 可能缺失：`tree-meta` 老树为 `undefined`，不得透传进反查 / 提交） */
 const selectedCode = computed(() => props.modelValue || '');
 
-const provinces = computed(() => provincesOf());
-const cities = computed(() => citiesOf(draftProvince.value));
-const counties = computed(() => countiesOf(draftProvince.value, draftCity.value));
+/**
+ * 热度票表落地信号：`geo.ts` 内的票表是**模块级普通变量（非响应式）**，三列 computed 必须显式读取本 ref
+ * 才能在票表到达后自动重排（失败 / 无数据也 +1：三列回原序，与未装载同行为）。
+ */
+const hotTick = ref(0);
+
+/**
+ * 三列数据源 = ranked 副本（票数降序；同票 / 无票保持数据集原序；未装载 / 拉取失败 ⇒ 原序）。
+ * 各 computed 内 `void hotTick.value;` 是**显式重算依赖位点**（票表非响应式），非冗余语句。
+ */
+const provinces = computed(() => {
+  void hotTick.value;
+  return rankedProvinces();
+});
+const cities = computed(() => {
+  void hotTick.value;
+  return rankedCities(draftProvince.value);
+});
+const counties = computed(() => {
+  void hotTick.value;
+  return rankedCounties(draftProvince.value, draftCity.value);
+});
 const isOverseas = computed(() => draftProvince.value === OVERSEAS_CODE);
 /** 县级列表为空的地级（直筒子市）⇒ 止于第二级：不渲染第三列，但「确定到当前层级」照常可用 */
 const cityTerminal = computed(() => isTerminalCity(draftProvince.value, draftCity.value));
@@ -148,13 +178,36 @@ const legacyHint = computed(() =>
   !selectedCode.value && props.legacy ? `（历史文本：${props.legacy}）` : '',
 );
 
-/** 展开面板：按已存码反查各级选中项（无码 → 空选择） */
+/**
+ * 拉取并装载热度票表（口径 plan D4-3）：面板**首次展开**时触发；模块级单飞 `hotLoad` ⇒ 全进程至多一次请求，
+ * 后续展开 / 其他实例复用同一 promise。失败 / 无数据 ⇒ 装载 `null`（静默回原序）：无 loading、无提示、
+ * 不阻塞、无手动刷新入口。
+ */
+function ensureHotLoaded(): Promise<void> {
+  if (!hotLoad) {
+    hotLoad = (async () => {
+      let counts: Record<string, number> | null = null;
+      try {
+        const hot = await fetchGeoHot();
+        counts = hot ? hot.counts : null;
+      } catch {
+        counts = null;
+      }
+      applyHotCounts(counts);
+      hotTick.value += 1;
+    })();
+  }
+  return hotLoad;
+}
+
+/** 展开面板：按已存码反查各级选中项（无码 → 空选择）；首次展开顺带拉一次热度票表 */
 function openPanel() {
   const path = pathOfCode(selectedCode.value);
   draftProvince.value = path.province?.code || '';
   draftCity.value = path.city?.code || '';
   draftCounty.value = path.county?.code || '';
   panelOpen.value = true;
+  void ensureHotLoaded();
 }
 
 function pickProvince(p: GeoProvince) {

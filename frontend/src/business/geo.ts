@@ -193,3 +193,67 @@ function norm(code?: string | null): string {
   if (code === null || code === undefined) return '';
   return String(code).trim();
 }
+
+// ---- 热度排序（选择器列序；口径见 plan R5/R6/R7 —— 只影响展示顺序，不动码表 / 真源） ----
+
+/**
+ * 当前生效的热度票表（码 → 票数，**前缀级联口径**，即后端 `GET /geo/hot` 的 `counts`）。
+ * `null` = 未装载 / 已清空 ⇒ 所有 `ranked*()` 返回**原序副本**（降级：不报错、不阻塞、无 UI 提示）。
+ * 模块级普通变量（**非响应式**）：UI 侧需自备重算依赖位点（见 `geo-cascader.vue` 的 `hotTick`）。
+ */
+let hotCounts: Record<string, number> | null = null;
+
+/**
+ * 装载热度票表（`null` / 非对象 ⇒ 清空，回原序）。**只读入参**：不修改传入对象；
+ * 只收有限正数，其余（0 / 负数 / NaN / 非数字 / 未登记码）按无票处理，不报错。
+ */
+export function applyHotCounts(counts?: Record<string, number> | null): void {
+  if (!counts || typeof counts !== 'object') {
+    hotCounts = null;
+    return;
+  }
+  const next: Record<string, number> = {};
+  for (const code of Object.keys(counts)) {
+    const n = counts[code];
+    if (typeof n === 'number' && Number.isFinite(n) && n > 0) next[code] = n;
+  }
+  hotCounts = next;
+}
+
+/** 码 → 票数（未装载 / 无票 / 脏值 → 0） */
+function hotOf(code: string): number {
+  if (!hotCounts) return 0;
+  const n = hotCounts[code];
+  return typeof n === 'number' && n > 0 ? n : 0;
+}
+
+/**
+ * 票数降序 + **数据集原序下标升序**（显式次级键，不依赖引擎 `sort` 稳定性）产出**新数组副本**。
+ * 只读：只对副本排序，**绝不原地排序** `provincesOf()` / `citiesOf()` / `countiesOf()` 返回的共享索引数组。
+ */
+function rankByHot<T extends { code: string }>(list: T[]): T[] {
+  const copy = list.slice();
+  if (!hotCounts || copy.length < 2) return copy;
+  const order = new Map<string, number>();
+  copy.forEach((item, i) => order.set(item.code, i));
+  copy.sort((a, b) => {
+    const diff = hotOf(b.code) - hotOf(a.code);
+    return diff !== 0 ? diff : (order.get(a.code) as number) - (order.get(b.code) as number);
+  });
+  return copy;
+}
+
+/** 一级列表（热度已装载 ⇒ 票数降序；未装载 / 无数据 ⇒ 数据集原序）。**新数组副本**，共享索引不受影响。 */
+export function rankedProvinces(): GeoProvince[] {
+  return rankByHot(provincesOf());
+}
+
+/** 某省下的地级列表（与 `rankedProvinces()` 同口径；未知 / 空码 / 海外 ⇒ 空副本）。 */
+export function rankedCities(provinceCode?: string | null): GeoCity[] {
+  return rankByHot(citiesOf(provinceCode));
+}
+
+/** 某省某地级下的县级列表（与 `rankedProvinces()` 同口径；未知 / 空码 / 直筒子市 ⇒ 空副本）。 */
+export function rankedCounties(provinceCode?: string | null, cityCode?: string | null): GeoCounty[] {
+  return rankByHot(countiesOf(provinceCode, cityCode));
+}
