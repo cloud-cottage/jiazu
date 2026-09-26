@@ -750,8 +750,12 @@ export async function adminUserAssets(phone, now = new Date()) {
  * 账号注销（§7.2）：**先挂单前置，后清空资产**。
  * ① 存在 `status='open'` 市集挂单 → **409「请先撤销未成交挂单」**（`openListingGuard`；**不自动撤单、
  *    不改挂单状态、不清资产**，`sold` / `cancelled` / `expired` 无碍）；
- * ② 通过 → 先写一条 `type='account_clear'` 流水，再整体置空四类资产与 `signin_date`（**不可恢复**）；
+ * ② 通过 → 先写一条 `type='account_clear'` 流水，再整体置空六类资产与 `signin_date`（**不可恢复**）；
  * ③ **保留流水审计**（历史 `Tx` / `jiazu_ops_logs` / `jiazu_wallets` 不动）与 `jiazu_users` / `jiazu_anchors`。
+ *
+ * 六类口径（Kevin 2026-09-26 当面裁定，取代原「四类」写法）：`fragments` / `seeds` / `bamboos` / `jades`
+ * **+ `scrolls`（兰帖，以**片**计）/ `scroll_fragments`（兰帖残页）**。兰帖批次 `qty` 线上**一律以片计**，
+ * 故 `cleared.scrolls` / `delta.scrolls` 直接取 `sumLots`，**不做任何 ×100 / ÷100 换算**。
  *
  * @returns {Promise<{ok:true, phone:string, cleared:object, tx_id:string}>}
  */
@@ -765,13 +769,23 @@ export async function deleteAccount(phone, now = new Date()) {
       seeds: sumLots(user.seeds),
       bamboos: sumLots(user.bamboos),
       jades: (user.jades || []).length,
+      // 兰帖域（六类）：`scrolls` 以**片**计（`sumLots` 直取，无 ×100 换算）；残页同口径取非负整数
+      scrolls: sumLots(user.scrolls),
+      scroll_fragments: toNonNegInt(user.scroll_fragments),
     };
-    // ② 先写流水（审计记录保留），再整体置空
+    // ② 先写流水（审计记录保留），再整体置空；`delta` 符号保留、键名一律为真源资产键
     const tx = recordTx(
       user,
       {
         type: TX_ACCOUNT_CLEAR,
-        delta: { fragments: -cleared.fragments, seeds: -cleared.seeds, bamboos: -cleared.bamboos, jades: -cleared.jades },
+        delta: {
+          fragments: -cleared.fragments,
+          seeds: -cleared.seeds,
+          bamboos: -cleared.bamboos,
+          jades: -cleared.jades,
+          scrolls: -cleared.scrolls,
+          scroll_fragments: -cleared.scroll_fragments,
+        },
         ref: {},
         desc: '账号注销：清空个人资产（不可恢复）',
       },
@@ -781,6 +795,8 @@ export async function deleteAccount(phone, now = new Date()) {
     user.seeds = [];
     user.bamboos = [];
     user.jades = [];
+    user.scrolls = [];
+    user.scroll_fragments = 0;
     user.signin_date = '';
     return { ok: true, phone, cleared, tx_id: tx.id, txs_kept: (user.txs || []).length };
   });

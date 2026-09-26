@@ -153,7 +153,7 @@
       </t-cell-group>
     </view>
 
-    <!-- 账号注销（docs/economy-ops.spec.md §7）：清空四类资产、不可恢复；存在未成交挂单 → 后端 409 拒绝 -->
+    <!-- 账号注销（docs/economy-ops.spec.md §7）：清空六类资产、不可恢复；存在未成交挂单 → 后端 409 拒绝 -->
     <view v-if="isAuthenticated()" class="menu-card danger-card">
       <t-cell-group :bordered="false">
         <t-cell
@@ -179,6 +179,8 @@ import { fetchMyAnchor, requestLeave, fetchTreeMetaRemote, fetchMessages, delete
 import { fetchAssetsSummary, postSignin } from '@/business/api';
 import type { AssetsSummary } from '@/business/api';
 import { fetchFriends, scrollLockOf, type ScrollLockView } from '@/business/friends';
+// 注销确认弹窗的六类品类名引用单点常量（SCROLL_NAME='兰帖' / SCROLL_FRAGMENT_NAME='兰帖残页'，asset-text.ts）
+import { SCROLL_NAME, SCROLL_FRAGMENT_NAME } from '@/business/asset-text';
 import AssetInventory from '@/components/asset-inventory/asset-inventory.vue';
 
 const anchor = ref<{ tree_id: string; person_handle: string; updated_at: string } | null>(null);
@@ -467,7 +469,7 @@ function openDeleteAccount() {
   uni.showModal({
     title: '注销账号',
     content:
-      '注销后本账号的碎片、石榴籽、竹片、石榴籽玉将全部清空，且不可恢复；历史审计与流水保留。若账号存在未成交的市集挂单，需先自行撤销，否则注销会被拒绝。是否确认注销？',
+      `注销后本账号的碎片、石榴籽、竹片、石榴籽玉、${SCROLL_NAME}、${SCROLL_FRAGMENT_NAME}将全部清空，且不可恢复；历史审计与流水保留。若账号存在未成交的市集挂单，需先自行撤销，否则注销会被拒绝。是否确认注销？`,
     confirmText: '确认注销',
     cancelText: '取消',
     success: (res) => {

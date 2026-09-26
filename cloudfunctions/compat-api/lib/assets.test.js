@@ -78,6 +78,8 @@ const seedLot = (qty, expDays, id, source = 'admin') => ({
   created_at: new Date(NOW).toISOString(),
 });
 const bambooLot = (qty, expDays, id) => ({ id: id || el.nextLotId('bl'), qty, expires_at: isoPlus(expDays), source: 'admin', created_at: new Date(NOW).toISOString() });
+/** 兰帖批次（qty 以**片**计；`expires_at` 恒 `null` = 永久，必须显式传入，无「默认永久」口径） */
+const scrollLot = (qty, id) => ({ id: id || el.nextLotId('sc'), qty, expires_at: null, source: 'admin', created_at: new Date(NOW).toISOString() });
 const jade = (expires_at, id) => ({ id: id || el.nextLotId('jd'), expires_at, created_at: new Date(NOW).toISOString(), source: 'synthesis' });
 
 /** 落一组测试资产（走唯一写路径 mutateAssets） */
@@ -935,16 +937,23 @@ test('GET /admin/assets/user（§5.4）：资产总览字段对齐 /assets/summa
   assert.equal((await call('/admin/assets/user', 'GET', bearerAs(phone, 'user'), { phone })).statusCode, 403);
 });
 
-test('注销（§7 · K10）：无挂单 → 清空四类资产 + signin_date 清空 + account_clear 流水；审计 / 钱包 / 账号 / 锚点保留', async () => {
+test('注销（§7 · K10）：无挂单 → 清空六类资产 + signin_date 清空 + account_clear 流水；审计 / 钱包 / 账号 / 锚点保留', async () => {
   const phone = await newUser();
   await seedAssets(phone, {
     fragments: 5,
     seeds: [seedLot(3, 100, 'd_s1')],
     bamboos: [bambooLot(120, 100, 'd_b1')],
     jades: [jade(null, 'd_j1')],
+    // 六类（Kevin 2026-09-26 当面裁定）：兰帖 **250 片**（以片计，非整张）+ 兰帖残页 **50 片**（< 100 不合成）
+    scrolls: [scrollLot(250, 'd_sc1')],
+    scroll_fragments: 50,
     txs: [{ id: 'tx_history', type: 'signin', delta: { fragments: 1 }, ref: {}, desc: '历史签到' }],
     signin_date: '2026-09-15',
   });
+  // 前置：确实构造出非零的兰帖与兰帖残页（否则「清空」断言退化为断言零）
+  const seeded = await readAssets(phone);
+  assert.equal(el.sumLots(seeded.scrolls), 250, '前置：兰帖非零（250 片）');
+  assert.equal(seeded.scroll_fragments, 50, '前置：兰帖残页非零（50 片）');
   await grant({ target_phone: phone, delta: { seeds: 1 }, reason: '注销前流水留痕' });
   await store.colSet('jiazu_wallets', 'global', {
     users: { [phone]: { balance_cents: 1990 } },
@@ -960,18 +969,20 @@ test('注销（§7 · K10）：无挂单 → 清空四类资产 + signin_date �
   assert.equal(res.statusCode, 200);
   const body = jsonBody(res);
   assert.equal(body.ok, true);
-  assert.deepEqual(body.cleared, { fragments: 5, seeds: 4, bamboos: 120, jades: 1 });
+  assert.deepEqual(body.cleared, { fragments: 5, seeds: 4, bamboos: 120, jades: 1, scrolls: 250, scroll_fragments: 50 });
 
   const after = await readAssets(phone);
   assert.equal(after.fragments, 0);
   assert.deepEqual(after.seeds, []);
   assert.deepEqual(after.bamboos, []);
   assert.deepEqual(after.jades, []);
+  assert.deepEqual(after.scrolls, [], '兰帖清空（批次一条不剩）');
+  assert.equal(after.scroll_fragments, 0, '兰帖残页清空');
   assert.equal(after.signin_date, '', 'signin_date 清空');
   const clear = after.txs.find((t) => t.type === 'account_clear');
   assert.ok(clear, '必须写 account_clear 流水');
   assert.equal(clear.id, body.tx_id);
-  assert.deepEqual(clear.delta, { fragments: -5, seeds: -4, bamboos: -120, jades: -1 });
+  assert.deepEqual(clear.delta, { fragments: -5, seeds: -4, bamboos: -120, jades: -1, scrolls: -250, scroll_fragments: -50 });
   assert.ok(after.txs.some((t) => t.id === 'tx_history'), '历史 Tx 保留（审计不可恢复地清空 → 但流水保留）');
   assert.ok(after.txs.some((t) => t.type === 'admin_grant'), '注销前的 admin_grant 流水保留');
 
@@ -980,10 +991,10 @@ test('注销（§7 · K10）：无挂单 → 清空四类资产 + signin_date �
   assert.ok(await store.colGet('jiazu_users', phone), 'jiazu_users 保留');
   assert.equal((await call('/account/delete', 'POST', {})).statusCode, 401);
 
-  // 注销后仍可再次调用（幂等语义：资产已空，写一条 delta 全 0 的 account_clear 流水）
+  // 注销后仍可再次调用（幂等语义：六类资产已空，写一条 delta 六键全 0 的 account_clear 流水）
   const again = await call('/account/delete', 'POST', bearerAs(phone, 'user'));
   assert.equal(again.statusCode, 200);
-  assert.deepEqual(jsonBody(again).cleared, { fragments: 0, seeds: 0, bamboos: 0, jades: 0 });
+  assert.deepEqual(jsonBody(again).cleared, { fragments: 0, seeds: 0, bamboos: 0, jades: 0, scrolls: 0, scroll_fragments: 0 });
 });
 
 test('注销前置（K10）：存在 status=open 挂单 → 409「请先撤销未成交挂单」，资产 / 挂单 / 流水三者都不变；sold/cancelled/expired 无碍', async () => {

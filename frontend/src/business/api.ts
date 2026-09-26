@@ -2824,7 +2824,7 @@ export async function fetchAdminAssetsUser(phone: string): Promise<AdminAssetSna
 /** 注销路由（P4 新增；后端 `index.js` 已注册 `POST /account/delete`，且挂在树编辑闸门之前） */
 const DELETE_ACCOUNT_PATH = '/account/delete';
 
-/** 注销结果（`POST /account/delete`；`cleared` = 本次清空的四类资产留痕） */
+/** 注销结果（`POST /account/delete`；`cleared` = 本次清空的六类资产留痕） */
 export interface DeleteAccountResult {
   ok: boolean;
   phone: string;
@@ -2836,7 +2836,7 @@ export interface DeleteAccountResult {
 }
 
 /**
- * 注销账号：清空本人碎片 / 石榴籽 / 竹片 / 玉（写一条 `account_clear` 流水留痕），**不可恢复**；
+ * 注销账号：清空本人碎片 / 石榴籽 / 竹片 / 玉 / 兰帖 / 兰帖残页（写一条 `account_clear` 流水留痕），**不可恢复**；
  * 历史审计（`jiazu_ops_logs`、钱包流水、历史 `Tx`）与 `jiazu_users` / `jiazu_anchors` 保留。
  * - 存在 `status='open'` 市集挂单 → 后端 **409「请先撤销未成交挂单」**（原文上抛，前端不改写）；
  * - 未登录 → 401。
